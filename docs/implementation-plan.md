@@ -403,18 +403,18 @@ Exit criteria:
 
 Keep the package layout close to the engine pipeline:
 
-- `dev.duckdbjava.parser`
-- `dev.duckdbjava.ast`
-- `dev.duckdbjava.catalog`
-- `dev.duckdbjava.types`
-- `dev.duckdbjava.storage`
-- `dev.duckdbjava.binder`
-- `dev.duckdbjava.logical`
-- `dev.duckdbjava.optimizer`
-- `dev.duckdbjava.physical`
-- `dev.duckdbjava.execution`
-- `dev.duckdbjava.function`
-- `dev.duckdbjava.testing`
+- `dev.trentdb.parser`
+- `dev.trentdb.ast`
+- `dev.trentdb.catalog`
+- `dev.trentdb.types`
+- `dev.trentdb.storage`
+- `dev.trentdb.binder`
+- `dev.trentdb.logical`
+- `dev.trentdb.optimizer`
+- `dev.trentdb.physical`
+- `dev.trentdb.execution`
+- `dev.trentdb.function`
+- `dev.trentdb.testing`
 
 ## Immediate Next Steps
 

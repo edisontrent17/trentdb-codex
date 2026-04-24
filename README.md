@@ -1,4 +1,4 @@
-# duckdb-java
+# Trent Db
 
 Learning-oriented analytical database engine in Java, architecturally inspired by DuckDB and constrained to Postgres-like behavior for the supported subset.
 
