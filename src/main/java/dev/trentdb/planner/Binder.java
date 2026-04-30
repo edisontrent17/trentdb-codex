@@ -1,0 +1,280 @@
+package dev.trentdb.planner;
+
+import dev.trentdb.ast.BinaryExpression;
+import dev.trentdb.ast.BinaryOperator;
+import dev.trentdb.ast.ColumnReferenceExpression;
+import dev.trentdb.ast.ExplainStatement;
+import dev.trentdb.ast.Expression;
+import dev.trentdb.ast.FunctionCallExpression;
+import dev.trentdb.ast.LiteralExpression;
+import dev.trentdb.ast.LiteralKind;
+import dev.trentdb.ast.QualifiedName;
+import dev.trentdb.ast.SelectStatement;
+import dev.trentdb.ast.StarExpression;
+import dev.trentdb.ast.Statement;
+import dev.trentdb.catalog.Catalog;
+import dev.trentdb.catalog.CatalogException;
+import dev.trentdb.catalog.ColumnCatalogEntry;
+import dev.trentdb.catalog.TableCatalogEntry;
+import dev.trentdb.function.FunctionRegistry;
+import dev.trentdb.replacement.ReplacementScanRegistry;
+import dev.trentdb.transaction.Transaction;
+import dev.trentdb.types.LogicalType;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public final class Binder {
+    private final Catalog catalog;
+    private final FunctionRegistry functionRegistry;
+    private final ReplacementScanRegistry replacementScanRegistry;
+
+    public Binder(Catalog catalog) {
+        this(catalog, FunctionRegistry.withBuiltIns(), ReplacementScanRegistry.withBuiltIns());
+    }
+
+    public Binder(Catalog catalog, FunctionRegistry functionRegistry) {
+        this(catalog, functionRegistry, ReplacementScanRegistry.withBuiltIns());
+    }
+
+    public Binder(Catalog catalog, FunctionRegistry functionRegistry, ReplacementScanRegistry replacementScanRegistry) {
+        this.catalog = catalog;
+        this.functionRegistry = functionRegistry;
+        this.replacementScanRegistry = replacementScanRegistry;
+    }
+
+    public BoundStatement bind(Transaction transaction, Statement statement) {
+        if (statement instanceof ExplainStatement explain) {
+            return new BoundExplainStatement(bind(transaction, explain.statement()));
+        }
+        if (statement instanceof SelectStatement select) {
+            return bindSelect(transaction, select);
+        }
+        throw new BinderException("Unsupported statement for binding: " + statement.getClass().getSimpleName());
+    }
+
+    public BoundSelectStatement bindSelect(Transaction transaction, SelectStatement statement) {
+        if (!statement.from().joins().isEmpty()) {
+            throw new BinderException("JOIN is not supported yet");
+        }
+        if (!statement.groupBy().isEmpty()) {
+            throw new BinderException("GROUP BY is not supported yet");
+        }
+        if (!statement.orderBy().isEmpty()) {
+            throw new BinderException("ORDER BY is not supported yet");
+        }
+
+        var tableReference = statement.from().base();
+        var boundFrom = bindTableRef(transaction, tableReference);
+        var selectList = new ArrayList<BoundExpression>();
+        var selectNames = new ArrayList<String>();
+
+        for (var item : statement.selectItems()) {
+            bindSelectExpression(boundFrom, item.expression(), item.alias(), selectList, selectNames);
+        }
+
+        var where = statement.where() == null ? null : bindWhereExpression(boundFrom, statement.where());
+        return new BoundSelectStatement(boundFrom, selectList, selectNames, where, statement.limit());
+    }
+
+    private BoundTableRef bindTableRef(Transaction transaction, dev.trentdb.ast.TableReference tableReference) {
+        if (tableReference.isPath()) {
+            return BoundTableRef.replacement(replacementScanRegistry.replace(tableReference.path()), tableReference.alias());
+        }
+        try {
+            return new BoundTableRef(catalog.lookupTable(transaction, tableReference.name()), tableReference.alias());
+        } catch (CatalogException exception) {
+            throw exception;
+        }
+    }
+
+    private void bindSelectExpression(
+            BoundTableRef table,
+            Expression expression,
+            String alias,
+            ArrayList<BoundExpression> selectList,
+            ArrayList<String> selectNames
+    ) {
+        if (expression instanceof StarExpression) {
+            for (var column : columns(table)) {
+                selectList.add(new BoundColumnRefExpression(column));
+                selectNames.add(column.name());
+            }
+            return;
+        }
+        if (expression instanceof ColumnReferenceExpression columnReference) {
+            var column = bindExpression(table, columnReference);
+            selectList.add(column);
+            selectNames.add(alias == null ? ((BoundColumnRefExpression) column).name() : alias);
+            return;
+        }
+        var bound = bindExpression(table, expression);
+        selectList.add(bound);
+        selectNames.add(alias == null ? defaultSelectName(bound) : alias);
+    }
+
+    private BoundExpression bindWhereExpression(BoundTableRef table, Expression expression) {
+        var bound = bindExpression(table, expression);
+        if (!logicalType(bound).equals(LogicalType.BOOLEAN)) {
+            throw new BinderException("WHERE expression must evaluate to BOOLEAN but got " + typeName(logicalType(bound)));
+        }
+        return bound;
+    }
+
+    private BoundExpression bindExpression(BoundTableRef table, Expression expression) {
+        if (expression instanceof ColumnReferenceExpression columnReference) {
+            return new BoundColumnRefExpression(bindColumn(table, columnReference.name()));
+        }
+        if (expression instanceof LiteralExpression literal) {
+            return new BoundLiteralExpression(literalType(literal.kind()), literal.value());
+        }
+        if (expression instanceof FunctionCallExpression functionCall) {
+            return bindFunctionCall(table, functionCall);
+        }
+        if (expression instanceof BinaryExpression binary) {
+            return bindBinaryExpression(table, binary);
+        }
+        throw new BinderException("Unsupported expression: " + expression.getClass().getSimpleName());
+    }
+
+    private BoundBinaryExpression bindBinaryExpression(BoundTableRef table, BinaryExpression binary) {
+        var left = bindExpression(table, binary.left());
+        var right = bindExpression(table, binary.right());
+        return new BoundBinaryExpression(
+                left,
+                binary.operator(),
+                right,
+                bindBinaryType(binary.operator(), logicalType(left), logicalType(right))
+        );
+    }
+
+    private BoundFunctionExpression bindFunctionCall(BoundTableRef table, FunctionCallExpression functionCall) {
+        if (functionCall.starArgument()) {
+            throw new BinderException("Star arguments are not supported for scalar functions yet");
+        }
+
+        var arguments = new ArrayList<BoundExpression>(functionCall.arguments().size());
+        for (var argument : functionCall.arguments()) {
+            if (argument instanceof StarExpression) {
+                throw new BinderException("Star arguments are not supported for scalar functions yet");
+            }
+            arguments.add(bindExpression(table, argument));
+        }
+
+        var function = functionRegistry.bindScalar(
+                functionCall.name(),
+                arguments.stream().map(this::logicalType).toList()
+        );
+        return new BoundFunctionExpression(function, arguments);
+    }
+
+    private LogicalType logicalType(BoundExpression expression) {
+        return switch (expression) {
+            case BoundColumnRefExpression column -> column.logicalType();
+            case BoundLiteralExpression literal -> literal.logicalType();
+            case BoundFunctionExpression function -> function.logicalType();
+            case BoundBinaryExpression binary -> binary.logicalType();
+        };
+    }
+
+    private LogicalType bindBinaryType(BinaryOperator operator, LogicalType left, LogicalType right) {
+        return switch (operator) {
+            case EQUAL,
+                 NOT_EQUAL,
+                 LESS_THAN,
+                 LESS_THAN_OR_EQUAL,
+                 GREATER_THAN,
+                 GREATER_THAN_OR_EQUAL -> bindComparisonType(operator, left, right);
+            case AND,
+                 OR -> bindBooleanType(operator, left, right);
+            case ADD,
+                 SUBTRACT,
+                 MULTIPLY,
+                 DIVIDE -> bindArithmeticType(operator, left, right);
+        };
+    }
+
+    private LogicalType bindComparisonType(BinaryOperator operator, LogicalType left, LogicalType right) {
+        if (isNull(left) || isNull(right) || isComparable(left, right)) {
+            return LogicalType.BOOLEAN;
+        }
+        throw new BinderException("Operator " + operator + " cannot compare " + typeName(left) + " and " + typeName(right));
+    }
+
+    private LogicalType bindBooleanType(BinaryOperator operator, LogicalType left, LogicalType right) {
+        if ((left.equals(LogicalType.BOOLEAN) || isNull(left)) && (right.equals(LogicalType.BOOLEAN) || isNull(right))) {
+            return LogicalType.BOOLEAN;
+        }
+        throw new BinderException("Operator " + operator + " requires BOOLEAN operands but got " + typeName(left) + " and " + typeName(right));
+    }
+
+    private LogicalType bindArithmeticType(BinaryOperator operator, LogicalType left, LogicalType right) {
+        if ((isNumeric(left) || isNull(left)) && (isNumeric(right) || isNull(right))) {
+            if (operator == BinaryOperator.DIVIDE || left.equals(LogicalType.DOUBLE) || right.equals(LogicalType.DOUBLE)) {
+                return LogicalType.DOUBLE;
+            }
+            return LogicalType.BIGINT;
+        }
+        throw new BinderException("Operator " + operator + " requires numeric operands but got " + typeName(left) + " and " + typeName(right));
+    }
+
+    private boolean isComparable(LogicalType left, LogicalType right) {
+        if (isNumeric(left) && isNumeric(right)) {
+            return true;
+        }
+        return left.equals(right);
+    }
+
+    private boolean isNumeric(LogicalType logicalType) {
+        return logicalType.equals(LogicalType.INTEGER)
+                || logicalType.equals(LogicalType.BIGINT)
+                || logicalType.equals(LogicalType.DOUBLE);
+    }
+
+    private boolean isNull(LogicalType logicalType) {
+        return logicalType.equals(LogicalType.NULL);
+    }
+
+    private String defaultSelectName(BoundExpression expression) {
+        if (expression instanceof BoundColumnRefExpression column) {
+            return column.name();
+        }
+        if (expression instanceof BoundFunctionExpression function) {
+            return function.name();
+        }
+        return "?column?";
+    }
+
+    private String typeName(LogicalType logicalType) {
+        return logicalType.id().name();
+    }
+
+    private LogicalType literalType(LiteralKind kind) {
+        return switch (kind) {
+            case INTEGER -> LogicalType.BIGINT;
+            case DECIMAL -> LogicalType.DOUBLE;
+            case STRING -> LogicalType.TEXT;
+            case BOOLEAN -> LogicalType.BOOLEAN;
+            case NULL -> LogicalType.NULL;
+        };
+    }
+
+    private ColumnCatalogEntry bindColumn(BoundTableRef table, QualifiedName name) {
+        if (name.parts().size() != 1) {
+            throw new BinderException("Qualified column references are not supported yet: " + String.join(".", name.parts()));
+        }
+        for (var column : columns(table)) {
+            if (column.name().equals(name.last())) {
+                return column;
+            }
+        }
+        throw new CatalogException("Column not found: " + name.last());
+    }
+
+    private List<ColumnCatalogEntry> columns(BoundTableRef table) {
+        if (table.isReplacementScan()) {
+            return table.replacementScan().columns();
+        }
+        return table.table().columns();
+    }
+}

@@ -31,6 +31,7 @@ import dev.trentdb.parser.sql.PostgresSubsetSqlParser;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 final class AstBuilder extends PostgresSubsetSqlBaseVisitor<Object> {
     Statement build(PostgresSubsetSqlParser.SqlScriptContext context) {
@@ -111,9 +112,15 @@ final class AstBuilder extends PostgresSubsetSqlBaseVisitor<Object> {
     }
 
     @Override
-    public Object visitRelationPrimary(PostgresSubsetSqlParser.RelationPrimaryContext ctx) {
+    public Object visitNamedRelationPrimary(PostgresSubsetSqlParser.NamedRelationPrimaryContext ctx) {
         String alias = ctx.identifier() == null ? null : unquote(ctx.identifier().getText());
         return new TableReference(qualifiedName(ctx.qualifiedName()), alias);
+    }
+
+    @Override
+    public Object visitPathRelationPrimary(PostgresSubsetSqlParser.PathRelationPrimaryContext ctx) {
+        String alias = ctx.identifier() == null ? null : unquote(ctx.identifier().getText());
+        return TableReference.path(unquoteString(ctx.stringLiteral().getText()), alias);
     }
 
     @Override
@@ -348,7 +355,7 @@ final class AstBuilder extends PostgresSubsetSqlBaseVisitor<Object> {
         if (text.startsWith("\"")) {
             return text.substring(1, text.length() - 1).replace("\"\"", "\"");
         }
-        return text;
+        return text.toLowerCase(Locale.ROOT);
     }
 
     private String unquoteString(String text) {

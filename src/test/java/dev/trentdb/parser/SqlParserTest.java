@@ -14,11 +14,21 @@ class SqlParserTest {
 
     @Test
     void parsesCreateTable() {
-        var statement = parser.parse("CREATE TABLE people (id BIGINT, name TEXT)");
+        var statement = parser.parse("CREATE TABLE People (ID BIGINT, name TEXT)");
 
         var create = assertInstanceOf(CreateTableStatement.class, statement);
         assertEquals("people", create.name().last());
         assertEquals(2, create.columns().size());
+        assertEquals("id", create.columns().getFirst().name());
+    }
+
+    @Test
+    void preservesQuotedIdentifierCase() {
+        var statement = parser.parse("CREATE TABLE \"People\" (\"ID\" BIGINT)");
+
+        var create = assertInstanceOf(CreateTableStatement.class, statement);
+        assertEquals("People", create.name().last());
+        assertEquals("ID", create.columns().getFirst().name());
     }
 
     @Test
@@ -56,5 +66,13 @@ class SqlParserTest {
         var statement = parser.parse("EXPLAIN SELECT * FROM people");
 
         assertInstanceOf(ExplainStatement.class, statement);
+    }
+
+    @Test
+    void parsesPathRelation() {
+        var statement = parser.parse("SELECT * FROM 'people.csv'");
+
+        var select = assertInstanceOf(SelectStatement.class, statement);
+        assertEquals("people.csv", select.from().base().path());
     }
 }

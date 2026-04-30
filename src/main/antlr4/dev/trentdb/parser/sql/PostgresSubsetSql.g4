@@ -49,7 +49,8 @@ fromItem
     ;
 
 relationPrimary
-    : qualifiedName (AS? identifier)?
+    : qualifiedName (AS? identifier)?      #namedRelationPrimary
+    | stringLiteral (AS? identifier)?      #pathRelationPrimary
     ;
 
 joinClause
