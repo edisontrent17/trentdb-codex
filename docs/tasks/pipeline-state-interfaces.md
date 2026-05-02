@@ -6,7 +6,7 @@ Introduce DuckDB-shaped global/local state interfaces for physical pipeline exec
 
 ## Scope
 
-- add global/local state types for sources, intermediate operators, and sinks
+- add global/local state types for sources, regular operators, and sinks
 - add input records that carry state into execution methods
 - make `Pipeline` own global state
 - make `PipelineExecutor` create local state per execution instance

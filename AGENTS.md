@@ -2,7 +2,7 @@
 
 ## Project Intent
 
-This repository is a production-oriented analytical SQL database in Java, with DuckDB as the architectural reference and Postgres-like behavior as the semantic reference for the supported SQL subset.
+This repository is a production-oriented analytical SQL database in Java, with DuckDB as both the architectural reference and the semantic reference for the supported SQL subset.
 
 The implementation can advance incrementally, but subsystem boundaries should be designed for production requirements: correctness, durability, crash recovery, concurrency, observability, and stable long-term maintenance.
 
@@ -24,7 +24,7 @@ This is not a line-by-line port, but it should remain structurally recognizable 
 
 ## Behavior Rule
 
-For supported SQL, prefer Postgres-compatible behavior. If a feature is unsupported, fail explicitly rather than approximating it.
+For supported SQL, prefer DuckDB-compatible behavior. If a feature is unsupported, fail explicitly rather than approximating it.
 
 ## Durability Rule
 

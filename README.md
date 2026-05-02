@@ -1,19 +1,19 @@
 # Trent Db
 
-Production-oriented analytical SQL database in Java, using DuckDB as the architectural reference and Postgres-like behavior as the semantic reference for the supported SQL subset.
+Production-oriented analytical SQL database in Java, using DuckDB as both the architectural reference and the semantic reference for the supported SQL subset.
 
 ## Current scope
 
 The current implementation includes:
 
 - ANTLR-based SQL parser
-- Postgres-flavored subset grammar
+- DuckDB-compatible subset grammar
 - Internal AST layer decoupled from ANTLR
 - catalog metadata for schemas, tables, columns, and logical types
 - transaction and snapshot API placeholders for future MVCC visibility
 - in-memory table storage behind a storage manager boundary
 - DuckDB-shaped binder -> logical plan -> physical plan -> vectorized execution flow
-- push-style physical pipeline with source, intermediate operator, and sink interfaces
+- DuckDB-shaped physical operator model with source, operator, and sink behavior
 - replacement scan registry for native-feeling file path scans such as `SELECT * FROM 'people.csv'`
 - CLI entry point for exercising simple read queries
 
@@ -38,6 +38,7 @@ Supported execution coverage currently includes:
 - SQL three-valued boolean logic for `AND`, `OR`, and comparisons with `NULL`
 - scalar `lower(text)`
 - arithmetic expressions in `SELECT` and `WHERE`
+- `ORDER BY` with DuckDB default null ordering
 - streaming `LIMIT`
 - logical `EXPLAIN`
 
@@ -59,6 +60,6 @@ mvn exec:java
 
 ## Design rule
 
-For the supported subset, syntax and semantics should follow Postgres as closely as practical. Architecture should stay recognizable to someone familiar with DuckDB's parser, binder, logical planning, physical planning, and vectorized execution pipeline.
+For the supported subset, syntax and semantics should follow DuckDB as closely as practical. Architecture should stay recognizable to someone familiar with DuckDB's parser, binder, logical planning, physical planning, and vectorized execution pipeline.
 
 Unsupported features should fail explicitly during parsing, binding, or planning rather than degrade silently.

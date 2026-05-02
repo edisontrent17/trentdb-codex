@@ -35,7 +35,7 @@
 ## Notes
 
 - mirror DuckDB's metadata structure closely while designing for production hardening
-- prefer Postgres-compatible behavior for supported SQL
+- prefer DuckDB-compatible behavior for supported SQL
 - avoid shortcuts that collapse catalog layers too early
 - read-only operations can proceed without WAL
 - DDL and DML must go through write-aware boundaries so WAL and recovery can protect committed writes

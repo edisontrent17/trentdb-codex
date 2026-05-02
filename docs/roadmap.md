@@ -4,7 +4,7 @@
 
 Build incrementally, but keep production boundaries from the beginning.
 
-For supported features, target Postgres-like behavior. For architecture, follow DuckDB's end-to-end shape:
+For supported features, target DuckDB-compatible behavior. For architecture, follow DuckDB's end-to-end shape:
 
 `SQL -> AST -> bound tree -> logical plan -> optimized plan -> physical plan -> vectorized execution`
 
@@ -33,7 +33,7 @@ Near-term DuckDB areas to mirror:
 Deliverables:
 
 - Maven build with ANTLR integration
-- Postgres-flavored grammar for the initial subset
+- DuckDB-compatible grammar for the initial subset
 - Internal AST classes
 - Parser facade and parser tests
 
@@ -210,7 +210,7 @@ Status:
 
 Deliverables:
 
-- Postgres-style SQL behavior tests for the supported subset
+- DuckDB-style SQL behavior tests for the supported subset
 - plan-shape assertions for `EXPLAIN`
 - recovery tests for committed writes
 - corruption/partial-WAL handling tests
@@ -219,5 +219,5 @@ Deliverables:
 Status:
 
 - parser, binder, planner, and read execution tests are in place for the implemented subset
-- broader Postgres-style behavior tests, plan-shape tests, and execution edge cases are the near-term priority
+- broader DuckDB-style behavior tests, plan-shape tests, and execution edge cases are the near-term priority
 - recovery, corruption, and concurrency tests are deferred with persistence and MVCC

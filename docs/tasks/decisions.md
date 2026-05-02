@@ -16,12 +16,12 @@ Implications:
 
 ### SQL Semantics
 
-For supported SQL, prefer Postgres-compatible behavior.
+For supported SQL, prefer DuckDB-compatible behavior.
 
 Implications:
 
 - unsupported features should fail explicitly
-- identifier behavior should follow Postgres rules where supported
+- identifier, ordering, type coercion, function, and error behavior should follow DuckDB rules where supported
 - semantic behavior matters more than copying internal implementation details exactly
 
 ## 2026-04-27

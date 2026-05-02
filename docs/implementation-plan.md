@@ -2,23 +2,23 @@
 
 ## Goal
 
-Build a production-oriented analytical SQL database in Java that follows DuckDB's overall architecture while preserving Postgres-like SQL behavior for the supported subset.
+Build a production-oriented analytical SQL database in Java that follows DuckDB's overall architecture while preserving DuckDB-compatible SQL behavior for the supported subset.
 
 This project is not a line-by-line port. The target is:
 
 - DuckDB-shaped architecture
 - Java-native implementation choices
-- Postgres-compatible semantics for supported SQL
+- DuckDB-compatible semantics for supported SQL
 - deliberate scope control without throwaway shortcuts
 - production-grade correctness, durability, recovery, and maintainability as design goals
 
 ## Reference Systems
 
-DuckDB is the architectural reference. The checked-out source at `/home/ubuntu/duckdb` is the implementation guide for subsystem boundaries, data flow, and operator design.
+DuckDB is the architectural and behavior reference. The checked-out source at `/home/manoj/Projects/duckdb` is the implementation guide for subsystem boundaries, data flow, operator design, and supported SQL semantics.
 
-Postgres is the behavior reference. When behavior is visible to users, the default rule is:
+When behavior is visible to users, the default rule is:
 
-- match Postgres if the feature is supported
+- match DuckDB if the feature is supported
 - reject unsupported behavior explicitly
 - avoid "almost works" semantics
 
@@ -104,7 +104,7 @@ Status: implemented for the current subset; ongoing hardening remains
 
 Purpose:
 
-- own the Postgres-flavored subset grammar
+- own the DuckDB-compatible subset grammar
 - decouple ANTLR parse trees from internal engine structures
 
 Deliverables:
@@ -121,9 +121,9 @@ Constraints:
 
 DuckDB reference areas:
 
-- `/home/ubuntu/duckdb/src/parser`
-- `/home/ubuntu/duckdb/src/parser/statement`
-- `/home/ubuntu/duckdb/src/parser/expression`
+- `/home/manoj/Projects/duckdb/src/parser`
+- `/home/manoj/Projects/duckdb/src/parser/statement`
+- `/home/manoj/Projects/duckdb/src/parser/expression`
 
 ### 2. Catalog and Type System
 
@@ -145,17 +145,17 @@ Deliverables:
 - duplicate-object and missing-object error model
 - API shape for lookup under a transaction snapshot
 
-Postgres parity rules:
+DuckDB parity rules:
 
-- identifier lookup should respect unquoted lowercase folding
+- identifier lookup should match DuckDB behavior for supported cases
 - quoted identifiers must preserve case
-- basic type names should match Postgres naming where supported
+- basic type names should match DuckDB naming where supported
 
 DuckDB reference areas:
 
-- `/home/ubuntu/duckdb/src/catalog`
-- `/home/ubuntu/duckdb/src/common/types`
-- `/home/ubuntu/duckdb/src/function`
+- `/home/manoj/Projects/duckdb/src/catalog`
+- `/home/manoj/Projects/duckdb/src/common/types`
+- `/home/manoj/Projects/duckdb/src/function`
 
 ### 3. Execution Data Model
 
@@ -182,9 +182,9 @@ Implementation direction:
 
 DuckDB reference areas:
 
-- `/home/ubuntu/duckdb/src/common/vector`
-- `/home/ubuntu/duckdb/src/common/vector_operations`
-- `/home/ubuntu/duckdb/src/execution/expression_executor`
+- `/home/manoj/Projects/duckdb/src/common/vector`
+- `/home/manoj/Projects/duckdb/src/common/vector_operations`
+- `/home/manoj/Projects/duckdb/src/execution/expression_executor`
 
 ### 4. In-Memory Storage
 
@@ -214,8 +214,8 @@ Important constraint:
 
 DuckDB reference areas:
 
-- `/home/ubuntu/duckdb/src/storage/table`
-- `/home/ubuntu/duckdb/src/main/chunk_scan_state`
+- `/home/manoj/Projects/duckdb/src/storage/table`
+- `/home/manoj/Projects/duckdb/src/main/chunk_scan_state`
 
 ### 4a. Write-Ahead Log and Recovery
 
@@ -283,16 +283,16 @@ Deliverables:
 - scalar vs aggregate expression separation
 - implicit cast insertion for a small supported set
 
-Postgres parity rules:
+DuckDB parity rules:
 
 - column ambiguity should fail explicitly
 - invalid aggregate usage should fail explicitly
-- `GROUP BY` semantics should match Postgres for supported cases
+- `GROUP BY` semantics should match DuckDB for supported cases
 
 DuckDB reference areas:
 
-- `/home/ubuntu/duckdb/src/planner/binder`
-- `/home/ubuntu/duckdb/src/planner/expression_binder`
+- `/home/manoj/Projects/duckdb/src/planner/binder`
+- `/home/manoj/Projects/duckdb/src/planner/expression_binder`
 
 ### 6. Logical Planning
 
@@ -319,7 +319,7 @@ Design rule:
 
 DuckDB reference areas:
 
-- `/home/ubuntu/duckdb/src/planner/operator`
+- `/home/manoj/Projects/duckdb/src/planner/operator`
 
 ### 7. Optimizer
 
@@ -342,9 +342,9 @@ Non-goals for the first pass:
 
 DuckDB reference areas:
 
-- `/home/ubuntu/duckdb/src/optimizer`
-- `/home/ubuntu/duckdb/src/optimizer/pushdown`
-- `/home/ubuntu/duckdb/src/optimizer/rule`
+- `/home/manoj/Projects/duckdb/src/optimizer`
+- `/home/manoj/Projects/duckdb/src/optimizer/pushdown`
+- `/home/manoj/Projects/duckdb/src/optimizer/rule`
 
 ### 8. Physical Planning and Operators
 
@@ -371,9 +371,9 @@ Execution rule:
 
 DuckDB reference areas:
 
-- `/home/ubuntu/duckdb/src/execution/operator`
-- `/home/ubuntu/duckdb/src/execution/physical_plan`
-- `/home/ubuntu/duckdb/src/execution/nested_loop_join`
+- `/home/manoj/Projects/duckdb/src/execution/operator`
+- `/home/manoj/Projects/duckdb/src/execution/physical_plan`
+- `/home/manoj/Projects/duckdb/src/execution/nested_loop_join`
 
 ### 9. Function and Expression Execution
 
@@ -391,16 +391,16 @@ Deliverables:
 - aggregate state implementations
 - built-in scalar and aggregate function registry
 
-Postgres parity rules:
+DuckDB parity rules:
 
 - three-valued boolean logic must be preserved
 - null propagation must match SQL semantics
 
 DuckDB reference areas:
 
-- `/home/ubuntu/duckdb/src/execution/expression_executor`
-- `/home/ubuntu/duckdb/src/function/scalar`
-- `/home/ubuntu/duckdb/src/function/aggregate`
+- `/home/manoj/Projects/duckdb/src/execution/expression_executor`
+- `/home/manoj/Projects/duckdb/src/function/scalar`
+- `/home/manoj/Projects/duckdb/src/function/aggregate`
 
 ### 10. Explainability and Testing
 
@@ -489,7 +489,7 @@ Exit criteria:
 
 - `EXPLAIN` shows optimization effects clearly
 
-### Phase F: Postgres Compatibility Hardening
+### Phase F: DuckDB Compatibility Hardening
 
 Ship:
 
@@ -499,7 +499,7 @@ Ship:
 
 Exit criteria:
 
-- supported subset is stable enough for regression comparison against Postgres behavior
+- supported subset is stable enough for regression comparison against DuckDB behavior
 
 ## Suggested Java Package Layout
 
@@ -522,11 +522,11 @@ Keep the package layout close to the engine pipeline:
 
 The next implementation sequence should be:
 
-1. Add production-facing write interfaces for catalog and storage mutations before implementing durable DDL/DML.
-2. Design the WAL record model for `CREATE_TABLE`, `INSERT_VALUES` or `INSERT_CHUNK`, and `COMMIT`.
-3. Add recovery tests that define committed, uncommitted, and partially written WAL behavior.
+1. Add aggregate binding and execution for `count`, `sum`, `min`, `max`, and `avg`.
+2. Add `GROUP BY` planning and hash aggregate execution through bound, logical, physical, and execution layers.
+3. Add inner joins through explicit logical and physical join operators.
 4. Harden CSV replacement scans behind the generic replacement scan abstraction with quote-aware parsing and type inference.
-5. Add more SQL execution surface: `ORDER BY`, aggregates, and joins, each through bound/logical/physical layers.
+5. Connect `CREATE TABLE` and `INSERT ... VALUES` to in-memory catalog/storage write paths without advertising durable persistence.
 6. Introduce optimizer scaffolding after unoptimized execution behavior is covered by tests.
 
 ## Explicit Non-Goals For Now

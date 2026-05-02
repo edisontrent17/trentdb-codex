@@ -8,4 +8,4 @@ The near-term target is an in-memory analytical SQL engine. Persistence, WAL, cr
 
 This is not a tutorial project or throwaway prototype. Development may proceed incrementally, but subsystem boundaries must be suitable for production hardening: correctness, durability, crash recovery, concurrency, observability, and stable long-term maintenance.
 
-For supported SQL, Trent Db should prefer Postgres-compatible user-visible behavior. Unsupported features must fail explicitly rather than approximate semantics.
+For supported SQL, Trent Db should prefer DuckDB-compatible user-visible behavior. Unsupported features must fail explicitly rather than approximate semantics.

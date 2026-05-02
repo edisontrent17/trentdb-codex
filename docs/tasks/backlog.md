@@ -43,7 +43,7 @@
 ## Later
 
 - optimizer passes: constant folding, filter pushdown, projection pruning
-- richer Postgres-compatibility tests
+- richer DuckDB-compatibility tests
 - primitive-specialized vectors for fixed-width types
 - columnar append storage with segments and scan state
 - order/top-N physical operators

@@ -4,7 +4,7 @@
 
 Move execution behind a DuckDB-shaped physical plan and pipeline layer.
 
-Current execution runs directly from logical operators. This slice introduces an explicit physical planning boundary and a pipeline model with a source, intermediate operators, and a sink.
+Current execution runs directly from logical operators. This slice introduces an explicit physical planning boundary and a pipeline model with a source, regular operators, and a sink.
 
 ## Scope
 
@@ -36,7 +36,7 @@ Current execution runs directly from logical operators. This slice introduces an
 - [x] add physical operator package
 - [x] add `PhysicalOperator`
 - [x] add `PhysicalSource`
-- [x] add `PhysicalIntermediateOperator`
+- [x] add `PhysicalOperator` as the common physical operator abstraction
 - [x] add `PhysicalSink`
 - [x] add `PhysicalTableScan`
 - [x] add `PhysicalFilter`
