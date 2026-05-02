@@ -1,4 +1,4 @@
-grammar PostgresSubsetSql;
+grammar TrentDbSql;
 
 options {
     caseInsensitive = true;
@@ -253,7 +253,7 @@ QUOTED_IDENTIFIER
     ;
 
 IDENTIFIER
-    : [A-Za-z_] [A-Za-z0-9_$]*
+    : [a-z_] [a-z0-9_$]*
     ;
 
 WS
