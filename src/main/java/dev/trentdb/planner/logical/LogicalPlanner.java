@@ -21,6 +21,9 @@ public final class LogicalPlanner {
         if (statement.where() != null) {
             root = new LogicalFilter(statement.where(), root);
         }
+        if (!statement.orderBy().isEmpty()) {
+            root = new LogicalOrder(statement.orderBy(), root);
+        }
         root = new LogicalProjection(statement.selectList(), statement.selectNames(), root);
         if (statement.limit() != null) {
             root = new LogicalLimit(statement.limit(), root);

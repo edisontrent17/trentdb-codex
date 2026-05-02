@@ -3,7 +3,7 @@ package dev.trentdb.execution.physical;
 import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.SelectionVector;
 
-public final class PhysicalLimit implements PhysicalIntermediateOperator {
+public final class PhysicalLimit implements PhysicalOperator {
     private final long limit;
 
     public PhysicalLimit(long limit) {
@@ -17,7 +17,7 @@ public final class PhysicalLimit implements PhysicalIntermediateOperator {
 
     @Override
     public void execute(DataChunk input, OperatorInput operatorInput, PhysicalChunkConsumer downstream) {
-        var state = (LimitLocalState) operatorInput.localState();
+        LimitLocalState state = (LimitLocalState) operatorInput.localState();
         if (state.emitted >= limit) {
             if (!state.forwardedSchema) {
                 state.forwardedSchema = true;
@@ -26,7 +26,7 @@ public final class PhysicalLimit implements PhysicalIntermediateOperator {
             return;
         }
 
-        var remaining = limit - state.emitted;
+        long remaining = limit - state.emitted;
         if (input.cardinality() <= remaining) {
             state.emitted += input.cardinality();
             state.forwardedSchema = true;
@@ -34,8 +34,8 @@ public final class PhysicalLimit implements PhysicalIntermediateOperator {
             return;
         }
 
-        var selectedCount = Math.toIntExact(remaining);
-        var selection = new SelectionVector(selectedCount);
+        int selectedCount = Math.toIntExact(remaining);
+        SelectionVector selection = new SelectionVector(selectedCount);
         for (int index = 0; index < selectedCount; index++) {
             selection.setIndex(index, index);
         }

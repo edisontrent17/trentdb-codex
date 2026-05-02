@@ -1,6 +1,7 @@
 package dev.trentdb.execution.physical;
 
 import dev.trentdb.common.vector.DataChunk;
+import dev.trentdb.common.vector.Vector;
 import dev.trentdb.execution.QueryResult;
 
 import java.util.ArrayList;
@@ -16,8 +17,8 @@ public final class PhysicalResultCollector implements PhysicalSink {
             columns = chunk.names();
         }
         for (int rowIndex = 0; rowIndex < chunk.cardinality(); rowIndex++) {
-            var row = new ArrayList<>(chunk.vectors().size());
-            for (var vector : chunk.vectors()) {
+            ArrayList<Object> row = new ArrayList<>(chunk.vectors().size());
+            for (Vector vector : chunk.vectors()) {
                 row.add(vector.get(rowIndex));
             }
             rows.add(row);

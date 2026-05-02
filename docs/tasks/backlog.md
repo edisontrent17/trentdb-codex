@@ -1,41 +1,60 @@
 # Backlog
 
+## Current Direction
+
+- Build a production-quality in-memory analytical engine first.
+- Mirror DuckDB's parser -> binder -> logical operator -> physical operator -> vectorized execution shape.
+- Use `/home/manoj/Projects/duckdb` as the local architecture reference.
+- Defer WAL, crash recovery, persistence, and full multi-client MVCC.
+
 ## Next
 
-- define WAL-facing write operation interfaces before persistent writes
-- separate catalog write mutation APIs from direct in-memory registration
-- route `CREATE TABLE` through a write-aware catalog operation
-- route `INSERT ... VALUES` through a write-aware storage operation
-- draft WAL record model for `CREATE_TABLE`, `INSERT_VALUES` or `INSERT_CHUNK`, and `COMMIT`
-- define recovery behavior for complete committed records, incomplete transactions, and partial records
+- implement aggregate binding and execution for `count`, `sum`, `min`, `max`, and `avg`
+- add `GROUP BY` planning and hash aggregate execution
+- implement inner joins through explicit logical and physical join operators
+- add ambiguity handling for unqualified column references once joins are bound
 - harden CSV replacement scans with quote-aware parsing and type inference
+
+## Done
+
+- implement `ORDER BY` through parser AST, binder, logical planner, physical planner, and execution
+- add sort semantics tests for ascending, descending, null ordering, aliases, expression order keys, and select-list ordinals
+
+## DuckDB Reference Areas
+
+- `src/planner/operator/logical_order.cpp`
+- `src/planner/operator/logical_aggregate.cpp`
+- `src/planner/operator/logical_join.cpp`
+- `src/execution/operator/order`
+- `src/execution/operator/aggregate`
+- `src/execution/operator/join`
+- `src/execution/operator/csv_scanner`
 
 ## Soon
 
-- route `CREATE TABLE` and `INSERT` through explicit write APIs, even while backed by memory
-- draft MVCC visibility model for catalog entries and append-only table rows
-- add catalog version placeholders for DDL visibility
-- add row visibility placeholders to table scan state
-- implement `ORDER BY` through bound/logical/physical layers
-- implement aggregate binding and execution for `count`, `sum`, `min`, `max`, and `avg`
-- implement inner joins through explicit logical and physical join operators
+- connect `CREATE TABLE` AST to in-memory catalog registration through an execution-facing statement path
+- connect `INSERT ... VALUES` to in-memory table storage through an execution-facing statement path
+- add end-to-end tests for `CREATE TABLE`, `INSERT`, and subsequent `SELECT`
+- add casts and type coercion for the supported SQL subset
+- add `IS NULL` and `IS NOT NULL`
+- add physical `EXPLAIN` output in addition to logical output
+- add operator-level memory/accounting hooks
 
 ## Later
 
-- implement WAL append, flush, and recovery
-- add checkpoint manager
-- add full transaction manager and MVCC visibility rules
-- add catalog versioning for DDL
-- add row version cleanup/vacuum strategy
-- hash aggregate
-- hash join
-- order/top-N physical operators
 - optimizer passes: constant folding, filter pushdown, projection pruning
 - richer Postgres-compatibility tests
+- primitive-specialized vectors for fixed-width types
+- columnar append storage with segments and scan state
+- order/top-N physical operators
+- broader scalar function coverage
+- benchmark suite for scan, filter, projection, aggregate, join, and CSV scans
 
 ## Deferred
 
 - persistence
+- WAL and crash recovery
+- full MVCC and multi-client isolation
 - indexes
 - concurrency
 - distributed execution
