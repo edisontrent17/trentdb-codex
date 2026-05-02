@@ -2,11 +2,12 @@ package dev.trentdb.execution.physical;
 
 import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.SelectionVector;
+import dev.trentdb.common.vector.Vector;
 import dev.trentdb.execution.ExecutionException;
 import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundExpression;
 
-public final class PhysicalFilter implements PhysicalIntermediateOperator {
+public final class PhysicalFilter implements PhysicalOperator {
     private final BoundExpression predicate;
     private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
 
@@ -20,14 +21,14 @@ public final class PhysicalFilter implements PhysicalIntermediateOperator {
 
     @Override
     public void execute(DataChunk input, PhysicalChunkConsumer downstream) {
-        var predicateVector = expressionExecutor.execute(predicate, input);
-        var selection = new SelectionVector(input.cardinality());
+        Vector predicateVector = expressionExecutor.execute(predicate, input);
+        SelectionVector selection = new SelectionVector(input.cardinality());
         int selectedCount = 0;
         for (int index = 0; index < input.cardinality(); index++) {
             if (predicateVector.isNull(index)) {
                 continue;
             }
-            var value = predicateVector.get(index);
+            Object value = predicateVector.get(index);
             if (!(value instanceof Boolean booleanValue)) {
                 throw new ExecutionException("Predicate did not evaluate to BOOLEAN");
             }

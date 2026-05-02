@@ -8,7 +8,25 @@ For supported features, target Postgres-like behavior. For architecture, follow 
 
 `SQL -> AST -> bound tree -> logical plan -> optimized plan -> physical plan -> vectorized execution`
 
-Read-only features can advance without WAL. They should still be shaped around transaction snapshots so MVCC can provide consistent catalog and table visibility. Write features must go through explicit catalog/storage/transaction boundaries so WAL, recovery, and MVCC visibility can be added without redesigning call sites.
+The current product target is an in-memory analytical engine first. The priority is a correct DuckDB-shaped SQL pipeline, vectorized execution model, catalog, type system, storage abstractions, optimizer, and compatibility test suite. Persistence, WAL, crash recovery, and multi-client MVCC are explicitly deferred until the core analytical engine is substantially complete.
+
+Write APIs should still stay behind catalog/storage/transaction boundaries so durable storage can be added later without redesigning parser, binder, planner, or execution call sites. Do not start WAL work in the near-term roadmap.
+
+DuckDB source reference: `/home/manoj/Projects/duckdb`.
+
+Near-term DuckDB areas to mirror:
+
+- `src/planner/operator/logical_order.cpp`
+- `src/planner/operator/logical_aggregate.cpp`
+- `src/planner/operator/logical_join.cpp`
+- `src/planner/operator/logical_insert.cpp`
+- `src/planner/operator/logical_create_table.cpp`
+- `src/execution/operator/order`
+- `src/execution/operator/aggregate`
+- `src/execution/operator/join`
+- `src/execution/operator/schema`
+- `src/execution/operator/persistent`
+- `src/execution/operator/csv_scanner`
 
 ## Milestone 1: Parser and AST
 
@@ -43,15 +61,15 @@ Deliverables:
 
 - storage manager abstraction
 - table storage abstraction
-- explicit DDL/DML write APIs
+- explicit in-memory DDL/DML write APIs
 - in-memory implementation for early iteration
-- no direct durable mutation outside storage/catalog write boundaries
+- no parser, binder, planner, or execution code directly mutates table internals
 - transaction/snapshot types, initially trivial
 
 Status:
 
 - initial storage manager, in-memory table storage, transaction object, and snapshot placeholder are implemented
-- durable write APIs, WAL, and recovery are still pending
+- higher-level `CREATE TABLE` and `INSERT ... VALUES` execution paths are pending
 
 ## Milestone 4: MVCC-Aware Read Shape
 
@@ -95,7 +113,8 @@ Deliverables:
 Status:
 
 - implemented for single-table reads, replacement scans, star expansion, projection aliases, `WHERE`, scalar `lower`, arithmetic, `LIMIT`, and `EXPLAIN`
-- joins, aggregates, `ORDER BY`, casts, and ambiguity handling are pending
+- `ORDER BY` binding is implemented for expressions, aliases, and select-list positions
+- joins, aggregates, casts, and ambiguity handling are pending
 
 ## Milestone 7: Logical Planning
 
@@ -111,8 +130,8 @@ Deliverables:
 
 Status:
 
-- implemented for scan, filter, projection, limit, and explain
-- aggregate, join, order, and optimizer-facing rewrites are pending
+- implemented for scan, filter, projection, order, limit, and explain
+- aggregate, join, and optimizer-facing rewrites are pending
 
 ## Milestone 8: Execution Substrate
 
@@ -144,8 +163,8 @@ Deliverables:
 
 Status:
 
-- implemented for table/replacement scan, filter, projection, limit, explain, and result collection
-- hash aggregate, hash join, and order/top-N are pending
+- implemented for table/replacement scan, filter, projection, order, limit, explain, and result collection
+- hash aggregate, hash join, and top-N are pending
 
 ## Milestone 10: WAL and Recovery
 
@@ -159,7 +178,7 @@ Deliverables:
 
 Status:
 
-- pending
+- deferred; do not start until the in-memory analytical engine, optimizer, and compatibility suite are mature
 
 ## Milestone 11: Full MVCC and Isolation
 
@@ -173,7 +192,7 @@ Deliverables:
 
 Status:
 
-- pending
+- deferred; keep snapshot-shaped APIs, but do not implement full multi-client isolation yet
 
 ## Milestone 12: Optimizer
 
@@ -200,4 +219,5 @@ Deliverables:
 Status:
 
 - parser, binder, planner, and read execution tests are in place for the implemented subset
-- recovery, corruption, and concurrency tests are pending WAL/MVCC implementation
+- broader Postgres-style behavior tests, plan-shape tests, and execution edge cases are the near-term priority
+- recovery, corruption, and concurrency tests are deferred with persistence and MVCC

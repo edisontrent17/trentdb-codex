@@ -2,12 +2,17 @@ package dev.trentdb.execution.physical;
 
 import dev.trentdb.ast.ColumnDefinition;
 import dev.trentdb.ast.QualifiedName;
+import dev.trentdb.ast.Statement;
 import dev.trentdb.ast.TypeName;
 import dev.trentdb.catalog.Catalog;
+import dev.trentdb.catalog.TableCatalogEntry;
 import dev.trentdb.parser.SqlParser;
 import dev.trentdb.planner.Binder;
+import dev.trentdb.planner.BoundStatement;
+import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.planner.logical.LogicalPlanner;
 import dev.trentdb.storage.StorageManager;
+import dev.trentdb.transaction.Transaction;
 import dev.trentdb.transaction.TransactionManager;
 import org.junit.jupiter.api.Test;
 
@@ -22,9 +27,9 @@ class PhysicalPlannerTest {
 
     @Test
     void plansSourceOperatorsAndSink() {
-        var catalog = new Catalog();
-        var transaction = transactionManager.startTransaction();
-        var table = catalog.createTable(
+        Catalog catalog = new Catalog();
+        Transaction transaction = transactionManager.startTransaction();
+        TableCatalogEntry table = catalog.createTable(
                 transaction,
                 new QualifiedName(List.of("people")),
                 List.of(
@@ -32,19 +37,20 @@ class PhysicalPlannerTest {
                         new ColumnDefinition("name", TypeName.TEXT)
                 )
         );
-        var storageManager = new StorageManager();
+        StorageManager storageManager = new StorageManager();
         storageManager.createTable(table);
 
-        var statement = parser.parse("SELECT id FROM people WHERE id = 1");
-        var bound = new Binder(catalog).bind(transaction, statement);
-        var logical = new LogicalPlanner().plan(bound);
+        Statement statement = parser.parse("SELECT id FROM people WHERE id = 1 ORDER BY name");
+        BoundStatement bound = new Binder(catalog).bind(transaction, statement);
+        LogicalOperator logical = new LogicalPlanner().plan(bound);
 
-        var pipeline = new PhysicalPlanner(storageManager).plan(logical);
+        Pipeline pipeline = new PhysicalPlanner(storageManager).plan(logical);
 
         assertInstanceOf(PhysicalTableScan.class, pipeline.source());
-        assertEquals(2, pipeline.operators().size());
+        assertEquals(3, pipeline.operators().size());
         assertInstanceOf(PhysicalFilter.class, pipeline.operators().get(0));
-        assertInstanceOf(PhysicalProjection.class, pipeline.operators().get(1));
+        assertInstanceOf(PhysicalOrder.class, pipeline.operators().get(1));
+        assertInstanceOf(PhysicalProjection.class, pipeline.operators().get(2));
         assertInstanceOf(PhysicalResultCollector.class, pipeline.sink());
     }
 }

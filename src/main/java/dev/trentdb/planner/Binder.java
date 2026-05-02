@@ -8,10 +8,13 @@ import dev.trentdb.ast.Expression;
 import dev.trentdb.ast.FunctionCallExpression;
 import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.LiteralKind;
+import dev.trentdb.ast.OrderByItem;
 import dev.trentdb.ast.QualifiedName;
+import dev.trentdb.ast.SelectItem;
 import dev.trentdb.ast.SelectStatement;
 import dev.trentdb.ast.StarExpression;
 import dev.trentdb.ast.Statement;
+import dev.trentdb.ast.TableReference;
 import dev.trentdb.catalog.Catalog;
 import dev.trentdb.catalog.CatalogException;
 import dev.trentdb.catalog.ColumnCatalogEntry;
@@ -60,24 +63,22 @@ public final class Binder {
         if (!statement.groupBy().isEmpty()) {
             throw new BinderException("GROUP BY is not supported yet");
         }
-        if (!statement.orderBy().isEmpty()) {
-            throw new BinderException("ORDER BY is not supported yet");
-        }
 
-        var tableReference = statement.from().base();
-        var boundFrom = bindTableRef(transaction, tableReference);
-        var selectList = new ArrayList<BoundExpression>();
-        var selectNames = new ArrayList<String>();
+        TableReference tableReference = statement.from().base();
+        BoundTableRef boundFrom = bindTableRef(transaction, tableReference);
+        ArrayList<BoundExpression> selectList = new ArrayList<>();
+        ArrayList<String> selectNames = new ArrayList<>();
 
-        for (var item : statement.selectItems()) {
+        for (SelectItem item : statement.selectItems()) {
             bindSelectExpression(boundFrom, item.expression(), item.alias(), selectList, selectNames);
         }
 
-        var where = statement.where() == null ? null : bindWhereExpression(boundFrom, statement.where());
-        return new BoundSelectStatement(boundFrom, selectList, selectNames, where, statement.limit());
+        BoundExpression where = statement.where() == null ? null : bindWhereExpression(boundFrom, statement.where());
+        List<BoundOrderByItem> orderBy = bindOrderBy(boundFrom, statement.orderBy(), selectList, selectNames);
+        return new BoundSelectStatement(boundFrom, selectList, selectNames, where, orderBy, statement.limit());
     }
 
-    private BoundTableRef bindTableRef(Transaction transaction, dev.trentdb.ast.TableReference tableReference) {
+    private BoundTableRef bindTableRef(Transaction transaction, TableReference tableReference) {
         if (tableReference.isPath()) {
             return BoundTableRef.replacement(replacementScanRegistry.replace(tableReference.path()), tableReference.alias());
         }
@@ -96,29 +97,73 @@ public final class Binder {
             ArrayList<String> selectNames
     ) {
         if (expression instanceof StarExpression) {
-            for (var column : columns(table)) {
+            for (ColumnCatalogEntry column : columns(table)) {
                 selectList.add(new BoundColumnRefExpression(column));
                 selectNames.add(column.name());
             }
             return;
         }
         if (expression instanceof ColumnReferenceExpression columnReference) {
-            var column = bindExpression(table, columnReference);
+            BoundExpression column = bindExpression(table, columnReference);
             selectList.add(column);
             selectNames.add(alias == null ? ((BoundColumnRefExpression) column).name() : alias);
             return;
         }
-        var bound = bindExpression(table, expression);
+        BoundExpression bound = bindExpression(table, expression);
         selectList.add(bound);
         selectNames.add(alias == null ? defaultSelectName(bound) : alias);
     }
 
     private BoundExpression bindWhereExpression(BoundTableRef table, Expression expression) {
-        var bound = bindExpression(table, expression);
+        BoundExpression bound = bindExpression(table, expression);
         if (!logicalType(bound).equals(LogicalType.BOOLEAN)) {
             throw new BinderException("WHERE expression must evaluate to BOOLEAN but got " + typeName(logicalType(bound)));
         }
         return bound;
+    }
+
+    private List<BoundOrderByItem> bindOrderBy(
+            BoundTableRef table,
+            List<OrderByItem> orderBy,
+            List<BoundExpression> selectList,
+            List<String> selectNames
+    ) {
+        ArrayList<BoundOrderByItem> result = new ArrayList<>(orderBy.size());
+        for (OrderByItem item : orderBy) {
+            result.add(new BoundOrderByItem(bindOrderExpression(table, item.expression(), selectList, selectNames), item.direction()));
+        }
+        return result;
+    }
+
+    private BoundExpression bindOrderExpression(
+            BoundTableRef table,
+            Expression expression,
+            List<BoundExpression> selectList,
+            List<String> selectNames
+    ) {
+        if (expression instanceof LiteralExpression literal && literal.kind() == LiteralKind.INTEGER) {
+            int ordinal = Math.toIntExact((Long) literal.value());
+            if (ordinal < 1 || ordinal > selectList.size()) {
+                throw new BinderException("ORDER BY position " + ordinal + " is not in select list");
+            }
+            return selectList.get(ordinal - 1);
+        }
+        if (expression instanceof ColumnReferenceExpression columnReference && columnReference.name().parts().size() == 1) {
+            String alias = columnReference.name().last();
+            BoundExpression match = null;
+            for (int index = 0; index < selectNames.size(); index++) {
+                if (selectNames.get(index).equals(alias)) {
+                    if (match != null) {
+                        throw new BinderException("ORDER BY reference is ambiguous: " + alias);
+                    }
+                    match = selectList.get(index);
+                }
+            }
+            if (match != null) {
+                return match;
+            }
+        }
+        return bindExpression(table, expression);
     }
 
     private BoundExpression bindExpression(BoundTableRef table, Expression expression) {
@@ -138,8 +183,8 @@ public final class Binder {
     }
 
     private BoundBinaryExpression bindBinaryExpression(BoundTableRef table, BinaryExpression binary) {
-        var left = bindExpression(table, binary.left());
-        var right = bindExpression(table, binary.right());
+        BoundExpression left = bindExpression(table, binary.left());
+        BoundExpression right = bindExpression(table, binary.right());
         return new BoundBinaryExpression(
                 left,
                 binary.operator(),
@@ -153,15 +198,15 @@ public final class Binder {
             throw new BinderException("Star arguments are not supported for scalar functions yet");
         }
 
-        var arguments = new ArrayList<BoundExpression>(functionCall.arguments().size());
-        for (var argument : functionCall.arguments()) {
+        ArrayList<BoundExpression> arguments = new ArrayList<>(functionCall.arguments().size());
+        for (Expression argument : functionCall.arguments()) {
             if (argument instanceof StarExpression) {
                 throw new BinderException("Star arguments are not supported for scalar functions yet");
             }
             arguments.add(bindExpression(table, argument));
         }
 
-        var function = functionRegistry.bindScalar(
+        dev.trentdb.function.ScalarFunction function = functionRegistry.bindScalar(
                 functionCall.name(),
                 arguments.stream().map(this::logicalType).toList()
         );
@@ -263,7 +308,7 @@ public final class Binder {
         if (name.parts().size() != 1) {
             throw new BinderException("Qualified column references are not supported yet: " + String.join(".", name.parts()));
         }
-        for (var column : columns(table)) {
+        for (ColumnCatalogEntry column : columns(table)) {
             if (column.name().equals(name.last())) {
                 return column;
             }

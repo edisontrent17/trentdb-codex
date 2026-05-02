@@ -7,10 +7,12 @@ public record BoundSelectStatement(
         List<BoundExpression> selectList,
         List<String> selectNames,
         BoundExpression where,
+        List<BoundOrderByItem> orderBy,
         Long limit
 ) implements BoundStatement {
     public BoundSelectStatement {
         selectList = List.copyOf(selectList);
         selectNames = List.copyOf(selectNames);
+        orderBy = List.copyOf(orderBy);
     }
 }

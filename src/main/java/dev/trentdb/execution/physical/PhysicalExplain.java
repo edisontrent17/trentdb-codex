@@ -21,7 +21,7 @@ public final class PhysicalExplain implements PhysicalSource {
 
     @Override
     public void execute(PhysicalChunkConsumer consumer) {
-        var vector = new Vector(LogicalType.TEXT, new Object[]{new LogicalPlanPrinter().print(logicalPlan)});
+        Vector vector = new Vector(LogicalType.TEXT, new Object[]{new LogicalPlanPrinter().print(logicalPlan)});
         consumer.accept(new DataChunk(List.of("explain"), List.of(vector)));
     }
 }

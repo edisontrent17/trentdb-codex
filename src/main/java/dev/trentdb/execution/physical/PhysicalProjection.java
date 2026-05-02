@@ -1,12 +1,13 @@
 package dev.trentdb.execution.physical;
 
 import dev.trentdb.common.vector.DataChunk;
+import dev.trentdb.common.vector.Vector;
 import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundExpression;
 
 import java.util.List;
 
-public final class PhysicalProjection implements PhysicalIntermediateOperator {
+public final class PhysicalProjection implements PhysicalOperator {
     private final List<BoundExpression> expressions;
     private final List<String> names;
     private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
@@ -22,7 +23,7 @@ public final class PhysicalProjection implements PhysicalIntermediateOperator {
 
     @Override
     public void execute(DataChunk input, PhysicalChunkConsumer downstream) {
-        var vectors = expressions.stream().map(expression -> expressionExecutor.execute(expression, input)).toList();
+        List<Vector> vectors = expressions.stream().map(expression -> expressionExecutor.execute(expression, input)).toList();
         downstream.accept(new DataChunk(names, vectors));
     }
 }

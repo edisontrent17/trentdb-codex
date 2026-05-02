@@ -2,12 +2,18 @@ package dev.trentdb.execution;
 
 import dev.trentdb.ast.ColumnDefinition;
 import dev.trentdb.ast.QualifiedName;
+import dev.trentdb.ast.Statement;
 import dev.trentdb.ast.TypeName;
 import dev.trentdb.catalog.Catalog;
+import dev.trentdb.catalog.TableCatalogEntry;
 import dev.trentdb.parser.SqlParser;
 import dev.trentdb.planner.Binder;
+import dev.trentdb.planner.BoundStatement;
+import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.planner.logical.LogicalPlanner;
+import dev.trentdb.storage.InMemoryTableStorage;
 import dev.trentdb.storage.StorageManager;
+import dev.trentdb.transaction.Transaction;
 import dev.trentdb.transaction.TransactionManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -24,9 +30,9 @@ class QueryExecutorTest {
 
     @Test
     void executesSelectStar() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT * FROM people");
+        QueryResult result = execute(fixture, "SELECT * FROM people");
 
         assertEquals(List.of("id", "name"), result.columns());
         assertEquals(List.of(
@@ -37,9 +43,9 @@ class QueryExecutorTest {
 
     @Test
     void executesProjection() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT name, id FROM people");
+        QueryResult result = execute(fixture, "SELECT name, id FROM people");
 
         assertEquals(List.of("name", "id"), result.columns());
         assertEquals(List.of(
@@ -50,9 +56,9 @@ class QueryExecutorTest {
 
     @Test
     void executesProjectionAliases() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT name AS person_name, lower(name) lowered FROM people LIMIT 1");
+        QueryResult result = execute(fixture, "SELECT name AS person_name, lower(name) lowered FROM people LIMIT 1");
 
         assertEquals(List.of("person_name", "lowered"), result.columns());
         assertEquals(List.of(List.of("Alice", "alice")), result.rows());
@@ -60,9 +66,9 @@ class QueryExecutorTest {
 
     @Test
     void executesArithmeticProjection() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT id + 1 AS next_id, id * 2 doubled FROM people");
+        QueryResult result = execute(fixture, "SELECT id + 1 AS next_id, id * 2 doubled FROM people");
 
         assertEquals(List.of("next_id", "doubled"), result.columns());
         assertEquals(List.of(
@@ -73,9 +79,9 @@ class QueryExecutorTest {
 
     @Test
     void executesDivisionAsDouble() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT id / 2 AS half FROM people LIMIT 1");
+        QueryResult result = execute(fixture, "SELECT id / 2 AS half FROM people LIMIT 1");
 
         assertEquals(List.of("half"), result.columns());
         assertEquals(List.of(List.of(0.5d)), result.rows());
@@ -83,9 +89,9 @@ class QueryExecutorTest {
 
     @Test
     void executesFilter() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT id FROM people WHERE id = 1");
+        QueryResult result = execute(fixture, "SELECT id FROM people WHERE id = 1");
 
         assertEquals(List.of("id"), result.columns());
         assertEquals(List.of(List.of(1L)), result.rows());
@@ -93,9 +99,9 @@ class QueryExecutorTest {
 
     @Test
     void executesArithmeticFilter() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT name FROM people WHERE id + 1 = 2");
+        QueryResult result = execute(fixture, "SELECT name FROM people WHERE id + 1 = 2");
 
         assertEquals(List.of("name"), result.columns());
         assertEquals(List.of(List.of("Alice")), result.rows());
@@ -103,9 +109,9 @@ class QueryExecutorTest {
 
     @Test
     void executesLimit() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT * FROM people LIMIT 1");
+        QueryResult result = execute(fixture, "SELECT * FROM people LIMIT 1");
 
         assertEquals(List.of("id", "name"), result.columns());
         assertEquals(List.of(List.of(1L, "Alice")), result.rows());
@@ -113,9 +119,9 @@ class QueryExecutorTest {
 
     @Test
     void executesZeroLimit() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT * FROM people LIMIT 0");
+        QueryResult result = execute(fixture, "SELECT * FROM people LIMIT 0");
 
         assertEquals(List.of("id", "name"), result.columns());
         assertEquals(List.of(), result.rows());
@@ -123,19 +129,99 @@ class QueryExecutorTest {
 
     @Test
     void executesFilterBeforeLimit() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT id FROM people WHERE id > 0 LIMIT 1");
+        QueryResult result = execute(fixture, "SELECT id FROM people WHERE id > 0 LIMIT 1");
 
         assertEquals(List.of("id"), result.columns());
         assertEquals(List.of(List.of(1L)), result.rows());
     }
 
     @Test
-    void executesLowerFunction() {
-        var fixture = peopleFixture();
+    void executesOrderByAscending() {
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT lower(name) FROM people");
+        QueryResult result = execute(fixture, "SELECT id FROM people ORDER BY name ASC");
+
+        assertEquals(List.of("id"), result.columns());
+        assertEquals(List.of(List.of(1L), List.of(2L)), result.rows());
+    }
+
+    @Test
+    void executesOrderByDescending() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT id FROM people ORDER BY id DESC");
+
+        assertEquals(List.of("id"), result.columns());
+        assertEquals(List.of(List.of(2L), List.of(1L)), result.rows());
+    }
+
+    @Test
+    void executesOrderByAlias() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT name AS n FROM people ORDER BY n DESC");
+
+        assertEquals(List.of("n"), result.columns());
+        assertEquals(List.of(List.of("Bob"), List.of("Alice")), result.rows());
+    }
+
+    @Test
+    void executesOrderBySelectListPosition() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT name, id FROM people ORDER BY 2 DESC");
+
+        assertEquals(List.of("name", "id"), result.columns());
+        assertEquals(List.of(List.of("Bob", 2L), List.of("Alice", 1L)), result.rows());
+    }
+
+    @Test
+    void executesOrderByExpressionOutsideProjection() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT name FROM people ORDER BY id DESC");
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Bob"), List.of("Alice")), result.rows());
+    }
+
+    @Test
+    void executesOrderBeforeLimit() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT id FROM people ORDER BY id DESC LIMIT 1");
+
+        assertEquals(List.of("id"), result.columns());
+        assertEquals(List.of(List.of(2L)), result.rows());
+    }
+
+    @Test
+    void ordersNullsLastAscending() {
+        Fixture fixture = peopleWithNullFixture();
+
+        QueryResult result = execute(fixture, "SELECT id FROM people ORDER BY name ASC");
+
+        assertEquals(List.of("id"), result.columns());
+        assertEquals(List.of(List.of(1L), List.of(2L)), result.rows());
+    }
+
+    @Test
+    void ordersNullsLastDescending() {
+        Fixture fixture = peopleWithNullFixture();
+
+        QueryResult result = execute(fixture, "SELECT id FROM people ORDER BY name DESC");
+
+        assertEquals(List.of("id"), result.columns());
+        assertEquals(List.of(List.of(1L), List.of(2L)), result.rows());
+    }
+
+    @Test
+    void executesLowerFunction() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT lower(name) FROM people");
 
         assertEquals(List.of("lower"), result.columns());
         assertEquals(List.of(
@@ -146,9 +232,9 @@ class QueryExecutorTest {
 
     @Test
     void lowerPreservesNulls() {
-        var fixture = peopleWithNullFixture();
+        Fixture fixture = peopleWithNullFixture();
 
-        var result = execute(fixture, "SELECT lower(name) FROM people");
+        QueryResult result = execute(fixture, "SELECT lower(name) FROM people");
 
         assertEquals(List.of("lower"), result.columns());
         assertEquals(List.of(
@@ -159,9 +245,9 @@ class QueryExecutorTest {
 
     @Test
     void arithmeticPreservesNulls() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "SELECT id + NULL AS value FROM people LIMIT 1");
+        QueryResult result = execute(fixture, "SELECT id + NULL AS value FROM people LIMIT 1");
 
         assertEquals(List.of("value"), result.columns());
         assertEquals(List.of(java.util.Arrays.asList((Object) null)), result.rows());
@@ -169,9 +255,9 @@ class QueryExecutorTest {
 
     @Test
     void nullComparisonDoesNotPassFilter() {
-        var fixture = peopleWithNullFixture();
+        Fixture fixture = peopleWithNullFixture();
 
-        var result = execute(fixture, "SELECT id FROM people WHERE name = NULL");
+        QueryResult result = execute(fixture, "SELECT id FROM people WHERE name = NULL");
 
         assertEquals(List.of("id"), result.columns());
         assertEquals(List.of(), result.rows());
@@ -179,9 +265,9 @@ class QueryExecutorTest {
 
     @Test
     void orUsesSqlThreeValuedLogic() {
-        var fixture = peopleWithNullFixture();
+        Fixture fixture = peopleWithNullFixture();
 
-        var result = execute(fixture, "SELECT id FROM people WHERE name = 'Alice' OR name = NULL");
+        QueryResult result = execute(fixture, "SELECT id FROM people WHERE name = 'Alice' OR name = NULL");
 
         assertEquals(List.of("id"), result.columns());
         assertEquals(List.of(List.of(1L)), result.rows());
@@ -189,9 +275,9 @@ class QueryExecutorTest {
 
     @Test
     void andUsesSqlThreeValuedLogic() {
-        var fixture = peopleWithNullFixture();
+        Fixture fixture = peopleWithNullFixture();
 
-        var result = execute(fixture, "SELECT id FROM people WHERE name = 'Alice' AND NULL");
+        QueryResult result = execute(fixture, "SELECT id FROM people WHERE name = 'Alice' AND NULL");
 
         assertEquals(List.of("id"), result.columns());
         assertEquals(List.of(), result.rows());
@@ -199,9 +285,9 @@ class QueryExecutorTest {
 
     @Test
     void executesExplain() {
-        var fixture = peopleFixture();
+        Fixture fixture = peopleFixture();
 
-        var result = execute(fixture, "EXPLAIN SELECT id FROM people WHERE id = 1");
+        QueryResult result = execute(fixture, "EXPLAIN SELECT id FROM people WHERE id = 1");
 
         assertEquals(List.of("explain"), result.columns());
         assertEquals("""
@@ -214,25 +300,25 @@ class QueryExecutorTest {
 
     @Test
     void executesSelectFromCsvPath(@TempDir Path tempDir) throws Exception {
-        var csv = tempDir.resolve("people.csv");
+        Path csv = tempDir.resolve("people.csv");
         Files.writeString(csv, """
                 id,name
                 1,Alice
                 2,Bob
                 """);
 
-        var fixture = emptyFixture();
+        Fixture fixture = emptyFixture();
 
-        var result = execute(fixture, "SELECT name FROM '" + sqlString(csv.toString()) + "' WHERE id = '1'");
+        QueryResult result = execute(fixture, "SELECT name FROM '" + sqlString(csv.toString()) + "' WHERE id = '1'");
 
         assertEquals(List.of("name"), result.columns());
         assertEquals(List.of(List.of("Alice")), result.rows());
     }
 
     private QueryResult execute(Fixture fixture, String sql) {
-        var statement = parser.parse(sql);
-        var bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);
-        var logical = new LogicalPlanner().plan(bound);
+        Statement statement = parser.parse(sql);
+        BoundStatement bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);
+        LogicalOperator logical = new LogicalPlanner().plan(bound);
         return new QueryExecutor(fixture.storageManager).execute(logical);
     }
 
@@ -241,9 +327,9 @@ class QueryExecutorTest {
     }
 
     private Fixture peopleFixture() {
-        var catalog = new Catalog();
-        var transaction = transactionManager.startTransaction();
-        var table = catalog.createTable(
+        Catalog catalog = new Catalog();
+        Transaction transaction = transactionManager.startTransaction();
+        TableCatalogEntry table = catalog.createTable(
                 transaction,
                 new QualifiedName(List.of("people")),
                 List.of(
@@ -252,8 +338,8 @@ class QueryExecutorTest {
                 )
         );
 
-        var storageManager = new StorageManager();
-        var storage = storageManager.createTable(table);
+        StorageManager storageManager = new StorageManager();
+        InMemoryTableStorage storage = storageManager.createTable(table);
         storage.appendRow(List.of(1L, "Alice"));
         storage.appendRow(List.of(2L, "Bob"));
 
@@ -261,9 +347,9 @@ class QueryExecutorTest {
     }
 
     private Fixture peopleWithNullFixture() {
-        var catalog = new Catalog();
-        var transaction = transactionManager.startTransaction();
-        var table = catalog.createTable(
+        Catalog catalog = new Catalog();
+        Transaction transaction = transactionManager.startTransaction();
+        TableCatalogEntry table = catalog.createTable(
                 transaction,
                 new QualifiedName(List.of("people")),
                 List.of(
@@ -272,8 +358,8 @@ class QueryExecutorTest {
                 )
         );
 
-        var storageManager = new StorageManager();
-        var storage = storageManager.createTable(table);
+        StorageManager storageManager = new StorageManager();
+        InMemoryTableStorage storage = storageManager.createTable(table);
         storage.appendRow(List.of(1L, "Alice"));
         storage.appendRow(java.util.Arrays.asList(2L, null));
 
@@ -281,9 +367,9 @@ class QueryExecutorTest {
     }
 
     private Fixture emptyFixture() {
-        var catalog = new Catalog();
-        var transaction = transactionManager.startTransaction();
-        var storageManager = new StorageManager();
+        Catalog catalog = new Catalog();
+        Transaction transaction = transactionManager.startTransaction();
+        StorageManager storageManager = new StorageManager();
         return new Fixture(catalog, transaction, storageManager);
     }
 
