@@ -9,7 +9,7 @@ This project is not a line-by-line port. The target is:
 - DuckDB-shaped architecture
 - Java-native implementation choices
 - Postgres-compatible semantics for supported SQL
-- deliberate scope control without prototype-only shortcuts
+- deliberate scope control without throwaway shortcuts
 - production-grade correctness, durability, recovery, and maintainability as design goals
 
 ## Reference Systems
@@ -100,7 +100,7 @@ The first vertical slice is successful when a query can move from SQL text to a 
 
 ### 1. Parser and AST
 
-Status: started
+Status: implemented for the current subset; ongoing hardening remains
 
 Purpose:
 
@@ -126,6 +126,8 @@ DuckDB reference areas:
 - `/home/ubuntu/duckdb/src/parser/expression`
 
 ### 2. Catalog and Type System
+
+Status: initial implementation complete
 
 Purpose:
 
@@ -157,6 +159,8 @@ DuckDB reference areas:
 
 ### 3. Execution Data Model
 
+Status: initial vectorized substrate implemented
+
 Purpose:
 
 - establish the data structures every operator uses
@@ -164,8 +168,7 @@ Purpose:
 Deliverables:
 
 - `Vector`
-- `FlatVector`
-- `ConstantVector`
+- flat and constant vector behavior
 - `SelectionVector`
 - `DataChunk`
 - null mask representation
@@ -173,9 +176,9 @@ Deliverables:
 
 Implementation direction:
 
-- fixed-width vectors backed by primitive arrays
-- text values backed initially by `String[]`
-- chunks sized for readability first, then tunable later
+- current vectors use boxed Java values with explicit validity tracking
+- dictionary-style slicing is available for filtered chunks
+- primitive-specialized vectors are a future performance hardening step
 
 DuckDB reference areas:
 
@@ -184,6 +187,8 @@ DuckDB reference areas:
 - `/home/ubuntu/duckdb/src/execution/expression_executor`
 
 ### 4. In-Memory Storage
+
+Status: initial in-memory storage manager and table storage implemented
 
 Purpose:
 
@@ -263,6 +268,8 @@ Design rule:
 
 ### 5. Binder
 
+Status: implemented for single-table reads, replacement scans, projection, filters, aliases, scalar `lower`, arithmetic, `LIMIT`, and `EXPLAIN`
+
 Purpose:
 
 - resolve names and types and convert AST to a bound tree
@@ -288,6 +295,8 @@ DuckDB reference areas:
 - `/home/ubuntu/duckdb/src/planner/expression_binder`
 
 ### 6. Logical Planning
+
+Status: implemented for scan, filter, projection, limit, and explain
 
 Purpose:
 
@@ -339,6 +348,8 @@ DuckDB reference areas:
 
 ### 8. Physical Planning and Operators
 
+Status: implemented for table/replacement scan, filter, projection, limit, explain, and result collection
+
 Purpose:
 
 - lower logical operators into executable physical operators
@@ -365,6 +376,8 @@ DuckDB reference areas:
 - `/home/ubuntu/duckdb/src/execution/nested_loop_join`
 
 ### 9. Function and Expression Execution
+
+Status: implemented for column refs, literals, comparisons, SQL boolean logic, `lower(text)`, and arithmetic expressions
 
 Purpose:
 
@@ -393,7 +406,7 @@ DuckDB reference areas:
 
 Purpose:
 
-- keep the system debuggable and educational
+- keep the system debuggable and production-maintainable
 
 Deliverables:
 
@@ -425,6 +438,8 @@ Exit criteria:
 
 - SQL text reaches execution without bypassing binder or planner
 - `EXPLAIN` can print the logical and physical tree
+
+Status: complete for the current read path. Implemented single-table catalog scans, replacement scans, projection, aliases, `WHERE`, scalar `lower`, arithmetic, `LIMIT`, logical `EXPLAIN`, and vectorized physical execution.
 
 ### Phase B: DML and Base Storage
 
@@ -484,7 +499,7 @@ Ship:
 
 Exit criteria:
 
-- supported subset is stable enough for educational comparison against Postgres
+- supported subset is stable enough for regression comparison against Postgres behavior
 
 ## Suggested Java Package Layout
 
@@ -507,12 +522,12 @@ Keep the package layout close to the engine pipeline:
 
 The next implementation sequence should be:
 
-1. Finish parser hardening with negative tests and a few missing expression cases.
-2. Add the logical type system and catalog skeleton.
-3. Build the vector and `DataChunk` substrate before deep planner work.
-4. Add a binder for single-table queries.
-5. Implement a minimal logical planner and physical table scan path.
-6. Add end-to-end tests for `CREATE TABLE`, `INSERT`, and single-table `SELECT`.
+1. Add production-facing write interfaces for catalog and storage mutations before implementing durable DDL/DML.
+2. Design the WAL record model for `CREATE_TABLE`, `INSERT_VALUES` or `INSERT_CHUNK`, and `COMMIT`.
+3. Add recovery tests that define committed, uncommitted, and partially written WAL behavior.
+4. Harden CSV replacement scans behind the generic replacement scan abstraction with quote-aware parsing and type inference.
+5. Add more SQL execution surface: `ORDER BY`, aggregates, and joins, each through bound/logical/physical layers.
+6. Introduce optimizer scaffolding after unoptimized execution behavior is covered by tests.
 
 ## Explicit Non-Goals For Now
 
@@ -520,9 +535,8 @@ The next implementation sequence should be:
 - persistence
 - indexes
 - concurrency
-- extensions
 - distributed execution
 - full SQL coverage
 - exact internal parity with DuckDB's C++ implementation details
 
-These can be revisited later, but they should not dilute the first educational engine slice.
+These can be revisited later, but they should not dilute the production storage, transaction, and execution boundaries.

@@ -28,12 +28,12 @@ Implications:
 
 ### Production Goal
 
-The project is now production-oriented rather than educational.
+The project is production-oriented.
 
 Implications:
 
 - correctness, durability, recovery, concurrency, observability, and maintainability are first-class design goals
-- implementation remains incremental, but prototype-only shortcuts should not leak into public subsystem contracts
+- implementation remains incremental, but throwaway shortcuts should not leak into public subsystem contracts
 - read-only features may advance independently from WAL
 - durable writes must be designed around WAL and recovery before they are advertised as persistent
 

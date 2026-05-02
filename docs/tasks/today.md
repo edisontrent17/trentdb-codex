@@ -2,7 +2,7 @@
 
 ## Goals
 
-- pivot project intent from educational to production-oriented
+- formalize the project intent as production-oriented
 - preserve incremental delivery by separating read paths from write paths
 - document that WAL is required for durable DDL and DML, not read-only operations
 - document that reads still need MVCC snapshots for production consistency

@@ -19,6 +19,25 @@ Deepen read-only SQL support over in-memory catalog tables and CSV replacement s
 - Keep read paths WAL-free.
 - Keep replacement scans generic and avoid CSV-specific logical/physical operators.
 
+## Current Supported Read Behavior
+
+- `SELECT *` and explicit projection from catalog tables
+- file path replacement scans such as `SELECT * FROM 'people.csv'`
+- projection aliases
+- `WHERE` comparisons and SQL three-valued boolean logic
+- scalar `lower(text)`
+- arithmetic expressions in projections and predicates
+- streaming `LIMIT`
+- logical `EXPLAIN`
+
+## Remaining Read Gaps
+
+- quote-aware and type-aware CSV scanning
+- `ORDER BY`
+- aggregates and `GROUP BY`
+- joins
+- optimizer passes such as constant folding, filter pushdown, and projection pruning
+
 ## Tasks
 
 - [x] implement multiline CLI statement input ending in semicolon

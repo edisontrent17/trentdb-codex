@@ -19,14 +19,18 @@ DuckDB is not a tuple-at-a-time Volcano iterator engine. The first execution pat
 - evaluate literals vector-wise
 - evaluate comparison and boolean predicates vector-wise
 - evaluate `lower(text)` vector-wise
+- evaluate arithmetic expressions vector-wise
 - collect final chunks into a test-friendly `QueryResult`
 
 ## Supported Queries
 
 - `SELECT * FROM people`
 - `SELECT id, name FROM people`
+- `SELECT id + 1 AS next_id FROM people`
 - `SELECT id FROM people WHERE id = 1`
+- `SELECT name FROM people WHERE id + 1 = 2`
 - `SELECT lower(name) FROM people`
+- `SELECT * FROM people LIMIT 1`
 - `EXPLAIN SELECT id FROM people WHERE id = 1`
 
 ## Out of Scope
@@ -38,7 +42,6 @@ DuckDB is not a tuple-at-a-time Volcano iterator engine. The first execution pat
 - joins
 - aggregates
 - `ORDER BY`
-- `LIMIT`
 - specialized primitive vectors
 - selection vectors as a standalone abstraction
 
@@ -86,6 +89,14 @@ DuckDB is not a tuple-at-a-time Volcano iterator engine. The first execution pat
 - [x] make filter pass only exact `TRUE`
 - [x] add SQL three-valued logic for `AND` and `OR`
 - [x] rerun `mvn test`
+
+## Read SQL Follow-Up
+
+- [x] add streaming `PhysicalLimit`
+- [x] add projection aliases
+- [x] bind arithmetic expressions in `SELECT` and `WHERE`
+- [x] execute arithmetic expressions in vectorized projections and filters
+- [x] add tests for limit, aliases, arithmetic, and null propagation
 
 ## Notes
 

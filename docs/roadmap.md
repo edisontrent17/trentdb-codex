@@ -21,7 +21,7 @@ Deliverables:
 
 Status:
 
-- scaffolded
+- implemented for the current subset
 
 ## Milestone 2: Catalog and Types
 
@@ -32,6 +32,10 @@ Deliverables:
 - simple error model for duplicate/missing objects
 - API boundaries for read-only lookup versus write catalog mutation
 - lookup APIs that can accept transaction/snapshot context
+
+Status:
+
+- initial implementation complete
 
 ## Milestone 3: Storage and Write Boundaries
 
@@ -44,6 +48,11 @@ Deliverables:
 - no direct durable mutation outside storage/catalog write boundaries
 - transaction/snapshot types, initially trivial
 
+Status:
+
+- initial storage manager, in-memory table storage, transaction object, and snapshot placeholder are implemented
+- durable write APIs, WAL, and recovery are still pending
+
 ## Milestone 4: MVCC-Aware Read Shape
 
 Deliverables:
@@ -52,6 +61,11 @@ Deliverables:
 - catalog visibility hooks for DDL
 - table scan visibility hooks for row versions
 - tests proving a query reads through a stable snapshot API, even before concurrent MVCC is complete
+
+Status:
+
+- transaction/snapshot API shape exists
+- real catalog and row-version visibility rules are pending
 
 ## Milestone 5: In-Memory Columnar Storage
 
@@ -63,6 +77,11 @@ Deliverables:
 - basic variable-width storage strategy for text
 - initial row visibility metadata or a placeholder that preserves the API shape
 
+Status:
+
+- initial appendable in-memory table storage and chunk scans are implemented
+- primitive-specialized storage and real row visibility metadata are pending
+
 ## Milestone 6: Binder
 
 Deliverables:
@@ -72,6 +91,11 @@ Deliverables:
 - aggregate legality checks
 - alias resolution rules
 - catalog resolution through transaction/snapshot context
+
+Status:
+
+- implemented for single-table reads, replacement scans, star expansion, projection aliases, `WHERE`, scalar `lower`, arithmetic, `LIMIT`, and `EXPLAIN`
+- joins, aggregates, `ORDER BY`, casts, and ambiguity handling are pending
 
 ## Milestone 7: Logical Planning
 
@@ -85,6 +109,11 @@ Deliverables:
 - limit
 - explain
 
+Status:
+
+- implemented for scan, filter, projection, limit, and explain
+- aggregate, join, order, and optimizer-facing rewrites are pending
+
 ## Milestone 8: Execution Substrate
 
 Deliverables:
@@ -95,6 +124,11 @@ Deliverables:
 - expression evaluator
 
 This is the first deep execution milestone.
+
+Status:
+
+- implemented with `Vector`, `ValidityMask`, `SelectionVector`, dictionary slicing, `DataChunk`, and expression evaluation
+- primitive-specialized vectors remain a future performance step
 
 ## Milestone 9: Physical Operators
 
@@ -108,6 +142,11 @@ Deliverables:
 - hash aggregate
 - hash join
 
+Status:
+
+- implemented for table/replacement scan, filter, projection, limit, explain, and result collection
+- hash aggregate, hash join, and order/top-N are pending
+
 ## Milestone 10: WAL and Recovery
 
 Deliverables:
@@ -117,6 +156,10 @@ Deliverables:
 - startup recovery
 - crash/recovery tests
 - checkpoint interface
+
+Status:
+
+- pending
 
 ## Milestone 11: Full MVCC and Isolation
 
@@ -128,6 +171,10 @@ Deliverables:
 - atomic DDL/DML commit visibility
 - cleanup strategy for obsolete versions
 
+Status:
+
+- pending
+
 ## Milestone 12: Optimizer
 
 Deliverables:
@@ -135,6 +182,10 @@ Deliverables:
 - constant folding
 - filter pushdown
 - projection pruning
+
+Status:
+
+- pending
 
 ## Milestone 13: Compatibility and Reliability Tests
 
@@ -145,3 +196,8 @@ Deliverables:
 - recovery tests for committed writes
 - corruption/partial-WAL handling tests
 - concurrency tests once multi-client execution exists
+
+Status:
+
+- parser, binder, planner, and read execution tests are in place for the implemented subset
+- recovery, corruption, and concurrency tests are pending WAL/MVCC implementation
