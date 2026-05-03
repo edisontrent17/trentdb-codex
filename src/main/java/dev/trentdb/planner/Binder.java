@@ -8,6 +8,7 @@ import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.Expression;
 import dev.trentdb.ast.FunctionCallExpression;
+import dev.trentdb.ast.InExpression;
 import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.LiteralKind;
 import dev.trentdb.ast.OrderByItem;
@@ -214,6 +215,9 @@ public final class Binder {
         if (expression instanceof BetweenExpression between) {
             return bindBetweenExpression(table, between, allowAggregates);
         }
+        if (expression instanceof InExpression in) {
+            return bindInExpression(table, in, allowAggregates);
+        }
         if (expression instanceof CastExpression cast) {
             return bindCastExpression(table, cast, allowAggregates);
         }
@@ -251,6 +255,22 @@ public final class Binder {
                     + typeName(inputType) + " and " + typeName(upperType));
         }
         return new BoundBetweenExpression(input, lower, upper);
+    }
+
+    private BoundInExpression bindInExpression(BoundTableRef table, InExpression in, boolean allowAggregates) {
+        BoundExpression input = bindExpression(table, in.input(), allowAggregates);
+        LogicalType inputType = logicalType(input);
+        ArrayList<BoundExpression> candidates = new ArrayList<>(in.candidates().size());
+        for (Expression candidateExpression : in.candidates()) {
+            BoundExpression candidate = bindExpression(table, candidateExpression, allowAggregates);
+            LogicalType candidateType = logicalType(candidate);
+            if (!isNull(inputType) && !isNull(candidateType) && !isComparable(inputType, candidateType)) {
+                throw new BinderException("IN candidate cannot compare "
+                        + typeName(inputType) + " and " + typeName(candidateType));
+            }
+            candidates.add(candidate);
+        }
+        return new BoundInExpression(input, candidates, in.negated());
     }
 
     private BoundCastExpression bindCastExpression(BoundTableRef table, CastExpression cast, boolean allowAggregates) {
@@ -315,6 +335,7 @@ public final class Binder {
             case BoundBinaryExpression binary -> binary.logicalType();
             case BoundAggregateExpression aggregate -> aggregate.logicalType();
             case BoundBetweenExpression between -> between.logicalType();
+            case BoundInExpression in -> in.logicalType();
             case BoundCastExpression cast -> cast.logicalType();
             case BoundOutputColumnExpression output -> output.logicalType();
         };
@@ -447,6 +468,16 @@ public final class Binder {
                     || containsAggregate(between.upper());
             case BoundCastExpression cast -> containsAggregate(cast.child());
             case BoundColumnRefExpression ignored -> false;
+            case BoundInExpression in -> {
+                boolean result = containsAggregate(in.input());
+                for (BoundExpression candidate : in.candidates()) {
+                    if (containsAggregate(candidate)) {
+                        result = true;
+                        break;
+                    }
+                }
+                yield result;
+            }
             case BoundOutputColumnExpression ignored -> false;
             case BoundFunctionExpression function -> {
                 boolean result = false;

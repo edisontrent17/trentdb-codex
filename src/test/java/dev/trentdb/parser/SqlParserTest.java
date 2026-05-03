@@ -5,6 +5,7 @@ import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CreateTableStatement;
 import dev.trentdb.ast.ExplainStatement;
+import dev.trentdb.ast.InExpression;
 import dev.trentdb.ast.InsertStatement;
 import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.SelectStatement;
@@ -92,6 +93,17 @@ class SqlParserTest {
         assertInstanceOf(ColumnReferenceExpression.class, between.input());
         assertInstanceOf(LiteralExpression.class, between.lower());
         assertInstanceOf(LiteralExpression.class, between.upper());
+    }
+
+    @Test
+    void parsesInPredicate() {
+        Statement statement = parser.parse("SELECT id FROM people WHERE id NOT IN (1, 2)");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        InExpression in = assertInstanceOf(InExpression.class, select.where());
+        assertInstanceOf(ColumnReferenceExpression.class, in.input());
+        assertEquals(2, in.candidates().size());
+        assertEquals(true, in.negated());
     }
 
     @Test

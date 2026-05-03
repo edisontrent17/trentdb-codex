@@ -108,6 +108,46 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesInPredicate() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT name FROM people WHERE id IN (2, 3)");
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Bob")), result.rows());
+    }
+
+    @Test
+    void executesNotInPredicate() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT name FROM people WHERE id NOT IN (1, 3)");
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Bob")), result.rows());
+    }
+
+    @Test
+    void inPredicateWithNullCandidateUsesSqlThreeValuedLogic() {
+        Fixture fixture = peopleWithNullFixture();
+
+        QueryResult result = execute(fixture, "SELECT id FROM people WHERE name IN ('Alice', NULL)");
+
+        assertEquals(List.of("id"), result.columns());
+        assertEquals(List.of(List.of(1L)), result.rows());
+    }
+
+    @Test
+    void notInPredicateWithNullCandidateUsesSqlThreeValuedLogic() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT id FROM people WHERE name NOT IN ('Alice', NULL)");
+
+        assertEquals(List.of("id"), result.columns());
+        assertEquals(List.of(), result.rows());
+    }
+
+    @Test
     void executesLimit() {
         Fixture fixture = peopleFixture();
 
