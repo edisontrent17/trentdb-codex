@@ -9,16 +9,16 @@
 
 ## Next
 
-- implement aggregate binding and execution for `count`, `sum`, `min`, `max`, and `avg`
-- add `GROUP BY` planning and hash aggregate execution
 - implement inner joins through explicit logical and physical join operators
 - add ambiguity handling for unqualified column references once joins are bound
-- harden CSV replacement scans with quote-aware parsing and type inference
 
 ## Done
 
 - implement `ORDER BY` through parser AST, binder, logical planner, physical planner, and execution
 - add sort semantics tests for ascending, descending, null ordering, aliases, expression order keys, and select-list ordinals
+- implement aggregate binding and execution for `count`, `sum`, `min`, `max`, and `avg`
+- add `GROUP BY` planning and hash aggregate execution
+- run canonical TPC-H Q6 from generated SF 0.01 `lineitem` CSV data
 
 ## DuckDB Reference Areas
 
@@ -49,6 +49,8 @@
 - order/top-N physical operators
 - broader scalar function coverage
 - benchmark suite for scan, filter, projection, aggregate, join, and CSV scans
+- replace the current minimal CSV replacement scan typing with DuckDB-shaped CSV sniffing:
+  `CsvReaderOptions`, dialect detection, header detection, type detection, type refinement, and user type overrides
 
 ## Deferred
 
