@@ -8,6 +8,7 @@ public record LogicalType(LogicalTypeId id) {
     public static final LogicalType BIGINT = new LogicalType(LogicalTypeId.BIGINT);
     public static final LogicalType DOUBLE = new LogicalType(LogicalTypeId.DOUBLE);
     public static final LogicalType TEXT = new LogicalType(LogicalTypeId.TEXT);
+    public static final LogicalType DATE = new LogicalType(LogicalTypeId.DATE);
     public static final LogicalType NULL = new LogicalType(LogicalTypeId.NULL);
 
     public static LogicalType from(TypeName typeName) {
@@ -17,6 +18,7 @@ public record LogicalType(LogicalTypeId id) {
             case BIGINT -> BIGINT;
             case DOUBLE -> DOUBLE;
             case TEXT -> TEXT;
+            case DATE -> DATE;
         };
     }
 }

@@ -3,6 +3,7 @@ package dev.trentdb.parser;
 import dev.trentdb.ast.BinaryExpression;
 import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.ast.BetweenExpression;
+import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnDefinition;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CreateTableStatement;
@@ -280,6 +281,9 @@ final class AstBuilder {
         if (context instanceof TrentDbSqlParser.FunctionCallPrimaryContext functionCall) {
             return functionCall(functionCall.functionCall());
         }
+        if (context instanceof TrentDbSqlParser.CastPrimaryContext castPrimary) {
+            return castExpression(castPrimary.castExpression());
+        }
         if (context instanceof TrentDbSqlParser.ParenthesizedExpressionContext parenthesizedExpression) {
             return expression(parenthesizedExpression.expression());
         }
@@ -290,6 +294,10 @@ final class AstBuilder {
         boolean starArgument = context.STAR() != null;
         List<Expression> arguments = context.expressionList() == null ? List.of() : expressionList(context.expressionList());
         return new FunctionCallExpression(unquote(context.identifier().getText()), arguments, starArgument);
+    }
+
+    private CastExpression castExpression(TrentDbSqlParser.CastExpressionContext context) {
+        return new CastExpression(expression(context.expression()), typeName(context.typeName()));
     }
 
     private LiteralExpression literal(TrentDbSqlParser.LiteralContext context) {
@@ -327,6 +335,9 @@ final class AstBuilder {
         }
         if (context.TEXT_T() != null) {
             return TypeName.TEXT;
+        }
+        if (context.DATE_T() != null) {
+            return TypeName.DATE;
         }
         return TypeName.INT;
     }

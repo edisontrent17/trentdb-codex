@@ -3,6 +3,7 @@ package dev.trentdb.planner;
 import dev.trentdb.ast.BinaryExpression;
 import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.ast.BetweenExpression;
+import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.Expression;
@@ -198,6 +199,9 @@ public final class Binder {
         if (expression instanceof BetweenExpression between) {
             return bindBetweenExpression(table, between, allowAggregates);
         }
+        if (expression instanceof CastExpression cast) {
+            return bindCastExpression(table, cast, allowAggregates);
+        }
         throw new BinderException("Unsupported expression: " + expression.getClass().getSimpleName());
     }
 
@@ -232,6 +236,16 @@ public final class Binder {
                     + typeName(inputType) + " and " + typeName(upperType));
         }
         return new BoundBetweenExpression(input, lower, upper);
+    }
+
+    private BoundCastExpression bindCastExpression(BoundTableRef table, CastExpression cast, boolean allowAggregates) {
+        BoundExpression child = bindExpression(table, cast.child(), allowAggregates);
+        LogicalType targetType = LogicalType.from(cast.targetType());
+        LogicalType sourceType = logicalType(child);
+        if (!canCast(sourceType, targetType)) {
+            throw new BinderException("Cannot cast " + typeName(sourceType) + " to " + typeName(targetType));
+        }
+        return new BoundCastExpression(child, targetType);
     }
 
     private BoundExpression bindFunctionCall(BoundTableRef table, FunctionCallExpression functionCall, boolean allowAggregates) {
@@ -286,6 +300,7 @@ public final class Binder {
             case BoundBinaryExpression binary -> binary.logicalType();
             case BoundAggregateExpression aggregate -> aggregate.logicalType();
             case BoundBetweenExpression between -> between.logicalType();
+            case BoundCastExpression cast -> cast.logicalType();
         };
     }
 
@@ -335,6 +350,19 @@ public final class Binder {
             return true;
         }
         return left.equals(right);
+    }
+
+    private boolean canCast(LogicalType source, LogicalType target) {
+        if (source.equals(target) || source.equals(LogicalType.NULL)) {
+            return true;
+        }
+        if (target.equals(LogicalType.TEXT)) {
+            return true;
+        }
+        if (isNumeric(source) && isNumeric(target)) {
+            return true;
+        }
+        return source.equals(LogicalType.TEXT) && target.equals(LogicalType.DATE);
     }
 
     private boolean isNumeric(LogicalType logicalType) {
@@ -401,6 +429,7 @@ public final class Binder {
             case BoundBetweenExpression between -> containsAggregate(between.input())
                     || containsAggregate(between.lower())
                     || containsAggregate(between.upper());
+            case BoundCastExpression cast -> containsAggregate(cast.child());
             case BoundColumnRefExpression ignored -> false;
             case BoundFunctionExpression function -> {
                 boolean result = false;
