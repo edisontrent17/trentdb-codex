@@ -350,7 +350,7 @@ class QueryExecutorTest {
 
         Fixture fixture = emptyFixture();
 
-        QueryResult result = execute(fixture, "SELECT name FROM '" + sqlString(csv.toString()) + "' WHERE id = '1'");
+        QueryResult result = execute(fixture, "SELECT name FROM '" + sqlString(csv.toString()) + "' WHERE id = 1");
 
         assertEquals(List.of("name"), result.columns());
         assertEquals(List.of(List.of("Alice")), result.rows());
