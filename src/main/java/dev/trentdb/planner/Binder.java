@@ -2,6 +2,7 @@ package dev.trentdb.planner;
 
 import dev.trentdb.ast.BinaryExpression;
 import dev.trentdb.ast.BinaryOperator;
+import dev.trentdb.ast.BetweenExpression;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.Expression;
@@ -194,6 +195,9 @@ public final class Binder {
         if (expression instanceof BinaryExpression binary) {
             return bindBinaryExpression(table, binary, allowAggregates);
         }
+        if (expression instanceof BetweenExpression between) {
+            return bindBetweenExpression(table, between, allowAggregates);
+        }
         throw new BinderException("Unsupported expression: " + expression.getClass().getSimpleName());
     }
 
@@ -206,6 +210,28 @@ public final class Binder {
                 right,
                 bindBinaryType(binary.operator(), logicalType(left), logicalType(right))
         );
+    }
+
+    private BoundBetweenExpression bindBetweenExpression(
+            BoundTableRef table,
+            BetweenExpression between,
+            boolean allowAggregates
+    ) {
+        BoundExpression input = bindExpression(table, between.input(), allowAggregates);
+        BoundExpression lower = bindExpression(table, between.lower(), allowAggregates);
+        BoundExpression upper = bindExpression(table, between.upper(), allowAggregates);
+        LogicalType inputType = logicalType(input);
+        LogicalType lowerType = logicalType(lower);
+        LogicalType upperType = logicalType(upper);
+        if (!isNull(inputType) && !isNull(lowerType) && !isComparable(inputType, lowerType)) {
+            throw new BinderException("BETWEEN lower bound cannot compare "
+                    + typeName(inputType) + " and " + typeName(lowerType));
+        }
+        if (!isNull(inputType) && !isNull(upperType) && !isComparable(inputType, upperType)) {
+            throw new BinderException("BETWEEN upper bound cannot compare "
+                    + typeName(inputType) + " and " + typeName(upperType));
+        }
+        return new BoundBetweenExpression(input, lower, upper);
     }
 
     private BoundExpression bindFunctionCall(BoundTableRef table, FunctionCallExpression functionCall, boolean allowAggregates) {
@@ -259,6 +285,7 @@ public final class Binder {
             case BoundFunctionExpression function -> function.logicalType();
             case BoundBinaryExpression binary -> binary.logicalType();
             case BoundAggregateExpression aggregate -> aggregate.logicalType();
+            case BoundBetweenExpression between -> between.logicalType();
         };
     }
 
@@ -371,6 +398,9 @@ public final class Binder {
         return switch (expression) {
             case BoundAggregateExpression ignored -> true;
             case BoundBinaryExpression binary -> containsAggregate(binary.left()) || containsAggregate(binary.right());
+            case BoundBetweenExpression between -> containsAggregate(between.input())
+                    || containsAggregate(between.lower())
+                    || containsAggregate(between.upper());
             case BoundColumnRefExpression ignored -> false;
             case BoundFunctionExpression function -> {
                 boolean result = false;

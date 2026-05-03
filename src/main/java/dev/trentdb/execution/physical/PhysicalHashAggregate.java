@@ -5,6 +5,7 @@ import dev.trentdb.common.vector.Vector;
 import dev.trentdb.execution.ExecutionException;
 import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundAggregateExpression;
+import dev.trentdb.planner.BoundBetweenExpression;
 import dev.trentdb.planner.BoundBinaryExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
@@ -121,6 +122,7 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
     private LogicalType logicalType(BoundExpression expression) {
         return switch (expression) {
             case BoundAggregateExpression aggregate -> aggregate.logicalType();
+            case BoundBetweenExpression between -> between.logicalType();
             case BoundBinaryExpression binary -> binary.logicalType();
             case BoundColumnRefExpression column -> column.logicalType();
             case BoundFunctionExpression function -> function.logicalType();

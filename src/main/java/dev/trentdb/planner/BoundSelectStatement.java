@@ -35,6 +35,9 @@ public record BoundSelectStatement(
         return switch (expression) {
             case BoundAggregateExpression ignored -> true;
             case BoundBinaryExpression binary -> containsAggregate(binary.left()) || containsAggregate(binary.right());
+            case BoundBetweenExpression between -> containsAggregate(between.input())
+                    || containsAggregate(between.lower())
+                    || containsAggregate(between.upper());
             case BoundColumnRefExpression ignored -> false;
             case BoundFunctionExpression function -> {
                 boolean result = false;

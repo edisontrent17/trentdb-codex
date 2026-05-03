@@ -2,6 +2,7 @@ package dev.trentdb.parser;
 
 import dev.trentdb.ast.BinaryExpression;
 import dev.trentdb.ast.BinaryOperator;
+import dev.trentdb.ast.BetweenExpression;
 import dev.trentdb.ast.ColumnDefinition;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CreateTableStatement;
@@ -193,6 +194,13 @@ final class AstBuilder {
         }
         if (context instanceof TrentDbSqlParser.IsNotNullPredicateContext isNotNullPredicate) {
             return new NullCheckExpression(valueExpression(isNotNullPredicate.valueExpression()), true);
+        }
+        if (context instanceof TrentDbSqlParser.BetweenPredicateContext betweenPredicate) {
+            return new BetweenExpression(
+                    valueExpression(betweenPredicate.valueExpression(0)),
+                    valueExpression(betweenPredicate.valueExpression(1)),
+                    valueExpression(betweenPredicate.valueExpression(2))
+            );
         }
         if (context instanceof TrentDbSqlParser.ComparisonPredicateContext comparisonPredicate) {
             return new BinaryExpression(

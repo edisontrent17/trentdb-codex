@@ -4,6 +4,7 @@ import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.Vector;
 import dev.trentdb.planner.BoundAggregateExpression;
+import dev.trentdb.planner.BoundBetweenExpression;
 import dev.trentdb.planner.BoundBinaryExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
@@ -21,6 +22,7 @@ public final class ExpressionExecutor {
             case BoundColumnRefExpression column -> input.column(column.ordinal());
             case BoundLiteralExpression literal -> constant(literal.logicalType(), literal.value(), input.cardinality());
             case BoundFunctionExpression function -> function(function, input);
+            case BoundBetweenExpression between -> between(between, input);
             case BoundBinaryExpression binary -> binary(binary, input);
         };
     }
@@ -48,6 +50,27 @@ public final class ExpressionExecutor {
             return result;
         }
         throw new ExecutionException("Unsupported scalar function: " + function.name());
+    }
+
+    private Vector between(BoundBetweenExpression between, DataChunk input) {
+        Vector inputValues = execute(between.input(), input);
+        Vector lowerValues = execute(between.lower(), input);
+        Vector upperValues = execute(between.upper(), input);
+        Vector result = new Vector(between.logicalType(), input.cardinality());
+        for (int index = 0; index < input.cardinality(); index++) {
+            Object lowerComparison = compareNullableLess(
+                    inputValues.get(index),
+                    lowerValues.get(index),
+                    Comparison.GREATER_THAN_OR_EQUAL
+            );
+            Object upperComparison = compareNullableLess(
+                    inputValues.get(index),
+                    upperValues.get(index),
+                    Comparison.LESS_THAN_OR_EQUAL
+            );
+            result.set(index, and(lowerComparison, upperComparison));
+        }
+        return result;
     }
 
     private Vector binary(BoundBinaryExpression binary, DataChunk input) {
