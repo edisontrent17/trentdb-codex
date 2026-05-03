@@ -60,7 +60,7 @@ class PhysicalPlannerTest {
     }
 
     @Test
-    void plansJoinAsNestedLoopSource() {
+    void plansEquiJoinAsHashSource() {
         Catalog catalog = new Catalog();
         Transaction transaction = transactionManager.startTransaction();
         TableCatalogEntry people = catalog.createTable(
@@ -95,8 +95,8 @@ class PhysicalPlannerTest {
 
         Pipeline pipeline = new PhysicalPlanner(storageManager).plan(logical);
 
-        assertInstanceOf(PhysicalNestedLoopJoinSource.class, pipeline.source());
-        assertEquals(PhysicalOperatorType.NESTED_LOOP_JOIN, pipeline.source().type());
+        assertInstanceOf(PhysicalHashJoinSource.class, pipeline.source());
+        assertEquals(PhysicalOperatorType.HASH_JOIN, pipeline.source().type());
         assertEquals(3, pipeline.operators().size());
         assertInstanceOf(PhysicalFilter.class, pipeline.operators().get(0));
         assertEquals(PhysicalOperatorType.FILTER, pipeline.operators().get(0).type());
@@ -106,5 +106,45 @@ class PhysicalPlannerTest {
         assertEquals(PhysicalOperatorType.PROJECTION, pipeline.operators().get(2).type());
         assertInstanceOf(PhysicalResultCollector.class, pipeline.sink());
         assertEquals(PhysicalOperatorType.RESULT_COLLECTOR, pipeline.sink().type());
+    }
+
+    @Test
+    void plansNonEquiJoinAsNestedLoopSource() {
+        Catalog catalog = new Catalog();
+        Transaction transaction = transactionManager.startTransaction();
+        TableCatalogEntry people = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("people")),
+                List.of(
+                        new ColumnDefinition("id", TypeName.BIGINT),
+                        new ColumnDefinition("name", TypeName.TEXT)
+                )
+        );
+        TableCatalogEntry orders = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("person_id", TypeName.BIGINT),
+                        new ColumnDefinition("total", TypeName.BIGINT)
+                )
+        );
+        StorageManager storageManager = new StorageManager();
+        storageManager.createTable(people);
+        storageManager.createTable(orders);
+
+        Statement statement = parser.parse("""
+                SELECT p.name
+                FROM people p
+                JOIN orders o ON p.id > o.person_id
+                WHERE o.total > 10
+                ORDER BY p.name
+                """);
+        BoundStatement bound = new Binder(catalog).bind(transaction, statement);
+        LogicalOperator logical = new LogicalPlanner().plan(bound);
+
+        Pipeline pipeline = new PhysicalPlanner(storageManager).plan(logical);
+
+        assertInstanceOf(PhysicalNestedLoopJoinSource.class, pipeline.source());
+        assertEquals(PhysicalOperatorType.NESTED_LOOP_JOIN, pipeline.source().type());
     }
 }

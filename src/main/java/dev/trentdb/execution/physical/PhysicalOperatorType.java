@@ -2,6 +2,7 @@ package dev.trentdb.execution.physical;
 
 public enum PhysicalOperatorType {
     TABLE_SCAN,
+    HASH_JOIN,
     NESTED_LOOP_JOIN,
     FILTER,
     PROJECTION,
