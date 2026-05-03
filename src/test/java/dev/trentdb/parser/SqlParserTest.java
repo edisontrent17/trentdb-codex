@@ -1,12 +1,14 @@
 package dev.trentdb.parser;
 
 import dev.trentdb.ast.BetweenExpression;
+import dev.trentdb.ast.BinaryExpression;
 import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CreateTableStatement;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.InExpression;
 import dev.trentdb.ast.InsertStatement;
+import dev.trentdb.ast.LiteralKind;
 import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.SelectStatement;
 import dev.trentdb.ast.Statement;
@@ -114,5 +116,29 @@ class SqlParserTest {
         CastExpression cast = assertInstanceOf(CastExpression.class, select.selectItems().getFirst().expression());
         assertEquals(TypeName.DATE, cast.targetType());
         assertInstanceOf(LiteralExpression.class, cast.child());
+    }
+
+    @Test
+    void parsesDateLiteralExpression() {
+        Statement statement = parser.parse("SELECT DATE '1994-01-01' FROM people");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        CastExpression cast = assertInstanceOf(CastExpression.class, select.selectItems().getFirst().expression());
+        assertEquals(TypeName.DATE, cast.targetType());
+        assertEquals(
+                "1994-01-01",
+                assertInstanceOf(LiteralExpression.class, cast.child()).value()
+        );
+    }
+
+    @Test
+    void parsesIntervalDayLiteralExpression() {
+        Statement statement = parser.parse("SELECT DATE '1998-12-01' - INTERVAL '90' DAY FROM people");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        BinaryExpression binary = assertInstanceOf(BinaryExpression.class, select.selectItems().getFirst().expression());
+        LiteralExpression literal = assertInstanceOf(LiteralExpression.class, binary.right());
+        assertEquals(LiteralKind.INTERVAL_DAYS, literal.kind());
+        assertEquals(90L, literal.value());
     }
 }

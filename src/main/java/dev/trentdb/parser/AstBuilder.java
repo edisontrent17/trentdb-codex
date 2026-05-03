@@ -283,6 +283,15 @@ final class AstBuilder {
         if (context instanceof TrentDbSqlParser.LiteralPrimaryContext literalPrimary) {
             return literal(literalPrimary.literal());
         }
+        if (context instanceof TrentDbSqlParser.DateLiteralPrimaryContext dateLiteral) {
+            return new CastExpression(
+                    new LiteralExpression(LiteralKind.STRING, unquoteString(dateLiteral.stringLiteral().getText())),
+                    TypeName.DATE
+            );
+        }
+        if (context instanceof TrentDbSqlParser.IntervalLiteralPrimaryContext intervalLiteralPrimary) {
+            return intervalLiteral(intervalLiteralPrimary.intervalLiteral());
+        }
         if (context instanceof TrentDbSqlParser.ColumnReferencePrimaryContext columnReference) {
             return new ColumnReferenceExpression(qualifiedName(columnReference.qualifiedName()));
         }
@@ -296,6 +305,17 @@ final class AstBuilder {
             return expression(parenthesizedExpression.expression());
         }
         throw new ParsingException("Unsupported primary expression");
+    }
+
+    private LiteralExpression intervalLiteral(TrentDbSqlParser.IntervalLiteralContext context) {
+        String raw = unquoteString(context.stringLiteral().getText()).trim();
+        long days;
+        try {
+            days = Long.parseLong(raw);
+        } catch (NumberFormatException exception) {
+            throw new ParsingException("INTERVAL DAY literal must be an integer day count: " + raw);
+        }
+        return new LiteralExpression(LiteralKind.INTERVAL_DAYS, days);
     }
 
     private FunctionCallExpression functionCall(TrentDbSqlParser.FunctionCallContext context) {

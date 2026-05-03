@@ -20,6 +20,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -85,6 +86,16 @@ class QueryExecutorTest {
 
         assertEquals(List.of("half"), result.columns());
         assertEquals(List.of(List.of(0.5d)), result.rows());
+    }
+
+    @Test
+    void executesDateMinusIntervalDayLiteral() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT DATE '1998-12-01' - INTERVAL '90' DAY AS cutoff FROM people LIMIT 1");
+
+        assertEquals(List.of("cutoff"), result.columns());
+        assertEquals(List.of(List.of(LocalDate.of(1998, 9, 2))), result.rows());
     }
 
     @Test

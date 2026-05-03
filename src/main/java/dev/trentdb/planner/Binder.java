@@ -263,7 +263,7 @@ public final class Binder {
             return bindColumn(context, columnReference.name());
         }
         if (expression instanceof LiteralExpression literal) {
-            return new BoundLiteralExpression(literalType(literal.kind()), literal.value());
+            return new BoundLiteralExpression(literalType(literal.kind()), literal.value(), literal.kind());
         }
         if (expression instanceof FunctionCallExpression functionCall) {
             return bindFunctionCall(context, functionCall, allowAggregates);
@@ -290,7 +290,7 @@ public final class Binder {
                 left,
                 binary.operator(),
                 right,
-                bindBinaryType(binary.operator(), logicalType(left), logicalType(right))
+                bindBinaryType(binary.operator(), left, right)
         );
     }
 
@@ -400,20 +400,22 @@ public final class Binder {
         };
     }
 
-    private LogicalType bindBinaryType(BinaryOperator operator, LogicalType left, LogicalType right) {
+    private LogicalType bindBinaryType(BinaryOperator operator, BoundExpression left, BoundExpression right) {
+        LogicalType leftType = logicalType(left);
+        LogicalType rightType = logicalType(right);
         return switch (operator) {
             case EQUAL,
                  NOT_EQUAL,
                  LESS_THAN,
                  LESS_THAN_OR_EQUAL,
                  GREATER_THAN,
-                 GREATER_THAN_OR_EQUAL -> bindComparisonType(operator, left, right);
+                 GREATER_THAN_OR_EQUAL -> bindComparisonType(operator, leftType, rightType);
             case AND,
-                 OR -> bindBooleanType(operator, left, right);
+                 OR -> bindBooleanType(operator, leftType, rightType);
             case ADD,
                  SUBTRACT,
                  MULTIPLY,
-                 DIVIDE -> bindArithmeticType(operator, left, right);
+                 DIVIDE -> bindArithmeticType(operator, left, right, leftType, rightType);
         };
     }
 
@@ -431,14 +433,47 @@ public final class Binder {
         throw new BinderException("Operator " + operator + " requires BOOLEAN operands but got " + typeName(left) + " and " + typeName(right));
     }
 
-    private LogicalType bindArithmeticType(BinaryOperator operator, LogicalType left, LogicalType right) {
-        if ((isNumeric(left) || isNull(left)) && (isNumeric(right) || isNull(right))) {
-            if (operator == BinaryOperator.DIVIDE || left.equals(LogicalType.DOUBLE) || right.equals(LogicalType.DOUBLE)) {
+    private LogicalType bindArithmeticType(
+            BinaryOperator operator,
+            BoundExpression leftExpression,
+            BoundExpression rightExpression,
+            LogicalType leftType,
+            LogicalType rightType
+    ) {
+        if (isIntervalLiteral(leftExpression) || isIntervalLiteral(rightExpression)) {
+            return bindDateIntervalArithmeticType(operator, leftType, rightType);
+        }
+        if (isDateIntervalArithmetic(operator, leftType, rightType)) {
+            return LogicalType.DATE;
+        }
+        if ((isNumeric(leftType) || isNull(leftType)) && (isNumeric(rightType) || isNull(rightType))) {
+            if (operator == BinaryOperator.DIVIDE
+                    || leftType.equals(LogicalType.DOUBLE)
+                    || rightType.equals(LogicalType.DOUBLE)) {
                 return LogicalType.DOUBLE;
             }
             return LogicalType.BIGINT;
         }
-        throw new BinderException("Operator " + operator + " requires numeric operands but got " + typeName(left) + " and " + typeName(right));
+        throw new BinderException("Operator " + operator + " requires numeric operands but got "
+                + typeName(leftType) + " and " + typeName(rightType));
+    }
+
+    private LogicalType bindDateIntervalArithmeticType(BinaryOperator operator, LogicalType left, LogicalType right) {
+        if (isDateIntervalArithmetic(operator, left, right)) {
+            return LogicalType.DATE;
+        }
+        throw new BinderException("INTERVAL DAY literals are only supported for DATE +/- INTERVAL DAY expressions");
+    }
+
+    private boolean isDateIntervalArithmetic(BinaryOperator operator, LogicalType left, LogicalType right) {
+        if (operator == BinaryOperator.ADD) {
+            return (left.equals(LogicalType.DATE) && right.equals(LogicalType.BIGINT))
+                    || (left.equals(LogicalType.BIGINT) && right.equals(LogicalType.DATE));
+        }
+        if (operator == BinaryOperator.SUBTRACT) {
+            return left.equals(LogicalType.DATE) && right.equals(LogicalType.BIGINT);
+        }
+        return false;
     }
 
     private boolean isComparable(LogicalType left, LogicalType right) {
@@ -469,6 +504,13 @@ public final class Binder {
 
     private boolean isNull(LogicalType logicalType) {
         return logicalType.equals(LogicalType.NULL);
+    }
+
+    private boolean isIntervalLiteral(BoundExpression expression) {
+        if (expression instanceof BoundLiteralExpression literal) {
+            return literal.kind() == LiteralKind.INTERVAL_DAYS;
+        }
+        return false;
     }
 
     private String defaultSelectName(BoundExpression expression) {
@@ -562,6 +604,7 @@ public final class Binder {
             case DECIMAL -> LogicalType.DOUBLE;
             case STRING -> LogicalType.TEXT;
             case BOOLEAN -> LogicalType.BOOLEAN;
+            case INTERVAL_DAYS -> LogicalType.BIGINT;
             case NULL -> LogicalType.NULL;
         };
     }

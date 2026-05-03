@@ -19,6 +19,7 @@
 - implement aggregate binding and execution for `count`, `sum`, `min`, `max`, and `avg`
 - add `GROUP BY` planning and hash aggregate execution
 - run canonical TPC-H Q6 from generated SF 0.01 `lineitem` CSV data
+- support canonical TPC-H date syntax (`DATE '...'`, `INTERVAL 'n' DAY`) in parser, binder, and execution
 
 ## DuckDB Reference Areas
 

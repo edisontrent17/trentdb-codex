@@ -34,8 +34,8 @@ class TpchCompatibilityTest {
                 FROM
                     '%s'
                 WHERE
-                    l_shipdate >= CAST('1994-01-01' AS date)
-                    AND l_shipdate < CAST('1995-01-01' AS date)
+                    l_shipdate >= DATE '1994-01-01'
+                    AND l_shipdate < DATE '1995-01-01'
                     AND l_discount BETWEEN 0.05
                     AND 0.07
                     AND l_quantity < 24;
@@ -66,7 +66,7 @@ class TpchCompatibilityTest {
                 FROM
                     '%s'
                 WHERE
-                    l_shipdate <= CAST('1998-09-02' AS date)
+                    l_shipdate <= DATE '1998-12-01' - INTERVAL '90' DAY
                 GROUP BY
                     l_returnflag,
                     l_linestatus

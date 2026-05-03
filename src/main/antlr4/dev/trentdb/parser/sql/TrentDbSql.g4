@@ -142,10 +142,16 @@ unaryExpression
 
 primaryExpression
     : literal                                               #literalPrimary
+    | DATE_T stringLiteral                                  #dateLiteralPrimary
+    | intervalLiteral                                       #intervalLiteralPrimary
     | qualifiedName                                         #columnReferencePrimary
     | functionCall                                          #functionCallPrimary
     | castExpression                                        #castPrimary
     | LPAREN expression RPAREN                              #parenthesizedExpression
+    ;
+
+intervalLiteral
+    : INTERVAL stringLiteral DAY_T
     ;
 
 functionCall
@@ -217,6 +223,7 @@ IS: 'IS';
 NOT: 'NOT';
 IN: 'IN';
 BETWEEN: 'BETWEEN';
+INTERVAL: 'INTERVAL';
 NULL_T: 'NULL';
 TRUE: 'TRUE';
 FALSE: 'FALSE';
@@ -231,6 +238,7 @@ PRECISION_T: 'PRECISION';
 BOOLEAN_T: 'BOOLEAN';
 TEXT_T: 'TEXT';
 DATE_T: 'DATE';
+DAY_T: 'DAY';
 
 EQ: '=';
 NEQ: '<>' | '!=';

@@ -348,6 +348,11 @@ public final class ExpressionExecutor {
             result.setNull(index);
             return;
         }
+        if (resultType.equals(LogicalType.DATE)) {
+            LocalDate value = dateArithmetic(operator, left, right, index);
+            result.setDate(index, value);
+            return;
+        }
         if (resultType.equals(LogicalType.DOUBLE)) {
             double leftValue = numericAsDouble(left, index);
             double rightValue = numericAsDouble(right, index);
@@ -372,6 +377,25 @@ public final class ExpressionExecutor {
             case MULTIPLY -> leftValue * rightValue;
             default -> throw new ExecutionException("Unsupported arithmetic operator: " + operator);
         });
+    }
+
+    private LocalDate dateArithmetic(BinaryOperator operator, Vector left, Vector right, int index) {
+        LogicalType leftType = left.logicalType();
+        LogicalType rightType = right.logicalType();
+        if (operator == BinaryOperator.ADD) {
+            if (leftType.equals(LogicalType.DATE) && rightType.equals(LogicalType.BIGINT)) {
+                return left.getDate(index).plusDays(right.getBigint(index));
+            }
+            if (leftType.equals(LogicalType.BIGINT) && rightType.equals(LogicalType.DATE)) {
+                return right.getDate(index).plusDays(left.getBigint(index));
+            }
+        }
+        if (operator == BinaryOperator.SUBTRACT
+                && leftType.equals(LogicalType.DATE)
+                && rightType.equals(LogicalType.BIGINT)) {
+            return left.getDate(index).minusDays(right.getBigint(index));
+        }
+        throw new ExecutionException("Unsupported DATE arithmetic for operator " + operator);
     }
 
     private byte compareNullable(Vector left, Vector right, int index, Comparison comparison) {
