@@ -2,6 +2,7 @@ package dev.trentdb.execution.physical;
 
 import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.common.vector.DataChunk;
+import dev.trentdb.common.vector.SelectionVector;
 import dev.trentdb.common.vector.Vector;
 import dev.trentdb.execution.ExecutionException;
 import dev.trentdb.execution.ExpressionExecutor;
@@ -19,18 +20,24 @@ public final class PhysicalNestedLoopJoinSource implements PhysicalSource {
     private final BoundTableRef left;
     private final BoundTableRef right;
     private final BoundExpression condition;
+    private final BoundExpression leftFilter;
+    private final BoundExpression rightFilter;
     private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
 
     public PhysicalNestedLoopJoinSource(
             StorageManager storageManager,
             BoundTableRef left,
             BoundTableRef right,
-            BoundExpression condition
+            BoundExpression condition,
+            BoundExpression leftFilter,
+            BoundExpression rightFilter
     ) {
         this.storageManager = storageManager;
         this.left = left;
         this.right = right;
         this.condition = condition;
+        this.leftFilter = leftFilter;
+        this.rightFilter = rightFilter;
     }
 
     @Override
@@ -44,8 +51,8 @@ public final class PhysicalNestedLoopJoinSource implements PhysicalSource {
         List<ColumnCatalogEntry> rightColumns = columns(right);
         List<String> outputNames = outputNames(leftColumns, rightColumns);
         List<LogicalType> outputTypes = outputTypes(leftColumns, rightColumns);
-        List<DataChunk> leftChunks = scanChunks(left);
-        List<DataChunk> rightChunks = scanChunks(right);
+        List<DataChunk> leftChunks = filterChunks(scanChunks(left), leftFilter);
+        List<DataChunk> rightChunks = filterChunks(scanChunks(right), rightFilter);
         List<Vector> outputVectors = createVectors(outputTypes, InMemoryTableStorage.STANDARD_VECTOR_SIZE);
         int bufferedCount = 0;
         DataChunk conditionRow = singleRowChunk(outputNames, outputTypes);
@@ -79,6 +86,42 @@ public final class PhysicalNestedLoopJoinSource implements PhysicalSource {
             return tableRef.replacementScan().scanFunction().scan();
         }
         return storageManager.getTable(tableRef.table()).scanChunks();
+    }
+
+    private List<DataChunk> filterChunks(List<DataChunk> inputChunks, BoundExpression predicate) {
+        if (predicate == null) {
+            return inputChunks;
+        }
+        ArrayList<DataChunk> filtered = new ArrayList<>(inputChunks.size());
+        for (DataChunk chunk : inputChunks) {
+            DataChunk filteredChunk = filterChunk(chunk, predicate);
+            if (filteredChunk.cardinality() > 0) {
+                filtered.add(filteredChunk);
+            }
+        }
+        return List.copyOf(filtered);
+    }
+
+    private DataChunk filterChunk(DataChunk input, BoundExpression predicate) {
+        Vector predicateVector = expressionExecutor.execute(predicate, input);
+        if (!predicateVector.logicalType().equals(LogicalType.BOOLEAN)) {
+            throw new ExecutionException("Predicate did not evaluate to BOOLEAN");
+        }
+        SelectionVector selection = new SelectionVector(input.cardinality());
+        int selectedCount = 0;
+        for (int index = 0; index < input.cardinality(); index++) {
+            if (predicateVector.isNull(index)) {
+                continue;
+            }
+            if (predicateVector.getBoolean(index)) {
+                selection.setIndex(selectedCount, index);
+                selectedCount++;
+            }
+        }
+        if (selectedCount == input.cardinality()) {
+            return input;
+        }
+        return input.slice(selection, selectedCount);
     }
 
     private List<ColumnCatalogEntry> columns(BoundTableRef tableRef) {
