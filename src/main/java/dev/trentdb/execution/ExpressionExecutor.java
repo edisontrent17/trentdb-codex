@@ -10,12 +10,14 @@ import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
+import dev.trentdb.planner.BoundInExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.types.LogicalType;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
+import java.util.List;
 import java.util.Locale;
 
 public final class ExpressionExecutor {
@@ -28,6 +30,7 @@ public final class ExpressionExecutor {
             case BoundLiteralExpression literal -> constant(literal.logicalType(), literal.value(), input.cardinality());
             case BoundFunctionExpression function -> function(function, input);
             case BoundBetweenExpression between -> between(between, input);
+            case BoundInExpression in -> in(in, input);
             case BoundCastExpression cast -> cast(cast, input);
             case BoundBinaryExpression binary -> binary(binary, input);
         };
@@ -77,6 +80,35 @@ public final class ExpressionExecutor {
             result.set(index, and(lowerComparison, upperComparison));
         }
         return result;
+    }
+
+    private Vector in(BoundInExpression in, DataChunk input) {
+        Vector inputValues = execute(in.input(), input);
+        Vector result = new Vector(in.logicalType(), input.cardinality());
+        List<Vector> candidateVectors = in.candidates().stream()
+                .map(candidate -> execute(candidate, input))
+                .toList();
+        for (int rowIndex = 0; rowIndex < input.cardinality(); rowIndex++) {
+            Object value = evaluateIn(inputValues.get(rowIndex), candidateVectors, rowIndex);
+            result.set(rowIndex, in.negated() ? negate(value) : value);
+        }
+        return result;
+    }
+
+    private Object evaluateIn(Object input, List<Vector> candidateVectors, int rowIndex) {
+        if (input == null) {
+            return null;
+        }
+        boolean hasNullCandidate = false;
+        for (Vector candidateVector : candidateVectors) {
+            Object candidate = candidateVector.get(rowIndex);
+            if (candidate == null) {
+                hasNullCandidate = true;
+            } else if (compare(input, candidate) == 0) {
+                return true;
+            }
+        }
+        return hasNullCandidate ? null : false;
     }
 
     private Vector cast(BoundCastExpression cast, DataChunk input) {

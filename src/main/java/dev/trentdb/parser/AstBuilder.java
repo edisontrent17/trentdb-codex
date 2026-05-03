@@ -11,6 +11,7 @@ import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.Expression;
 import dev.trentdb.ast.FromItem;
 import dev.trentdb.ast.FunctionCallExpression;
+import dev.trentdb.ast.InExpression;
 import dev.trentdb.ast.InsertStatement;
 import dev.trentdb.ast.JoinClause;
 import dev.trentdb.ast.JoinType;
@@ -201,6 +202,13 @@ final class AstBuilder {
                     valueExpression(betweenPredicate.valueExpression(0)),
                     valueExpression(betweenPredicate.valueExpression(1)),
                     valueExpression(betweenPredicate.valueExpression(2))
+            );
+        }
+        if (context instanceof TrentDbSqlParser.InPredicateContext inPredicate) {
+            return new InExpression(
+                    valueExpression(inPredicate.valueExpression()),
+                    expressionList(inPredicate.expressionList()),
+                    inPredicate.NOT() != null
             );
         }
         if (context instanceof TrentDbSqlParser.ComparisonPredicateContext comparisonPredicate) {

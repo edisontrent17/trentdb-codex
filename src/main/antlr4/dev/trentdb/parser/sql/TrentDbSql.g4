@@ -107,6 +107,7 @@ booleanFactor
 predicate
     : valueExpression IS NOT NULL_T                         #isNotNullPredicate
     | valueExpression IS NULL_T                             #isNullPredicate
+    | valueExpression NOT? IN LPAREN expressionList RPAREN  #inPredicate
     | valueExpression BETWEEN valueExpression AND valueExpression #betweenPredicate
     | valueExpression comparisonOperator valueExpression    #comparisonPredicate
     | valueExpression                                       #valuePredicate
@@ -214,6 +215,7 @@ ON: 'ON';
 AS: 'AS';
 IS: 'IS';
 NOT: 'NOT';
+IN: 'IN';
 BETWEEN: 'BETWEEN';
 NULL_T: 'NULL';
 TRUE: 'TRUE';

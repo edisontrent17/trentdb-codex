@@ -40,6 +40,16 @@ public record BoundSelectStatement(
                     || containsAggregate(between.upper());
             case BoundCastExpression cast -> containsAggregate(cast.child());
             case BoundColumnRefExpression ignored -> false;
+            case BoundInExpression in -> {
+                boolean result = containsAggregate(in.input());
+                for (BoundExpression candidate : in.candidates()) {
+                    if (containsAggregate(candidate)) {
+                        result = true;
+                        break;
+                    }
+                }
+                yield result;
+            }
             case BoundOutputColumnExpression ignored -> false;
             case BoundFunctionExpression function -> {
                 boolean result = false;

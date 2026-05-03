@@ -246,6 +246,39 @@ class BinderTest {
     }
 
     @Test
+    void bindsWhereInPredicate() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT id FROM people WHERE id IN (1, 2)");
+
+        BoundInExpression predicate = assertInstanceOf(BoundInExpression.class, bound.where());
+        assertEquals(false, predicate.negated());
+        assertEquals(LogicalType.BOOLEAN, predicate.logicalType());
+        assertInstanceOf(BoundColumnRefExpression.class, predicate.input());
+        assertEquals(2, predicate.candidates().size());
+    }
+
+    @Test
+    void bindsWhereNotInPredicate() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT id FROM people WHERE name NOT IN ('Alice', 'Bob')");
+
+        BoundInExpression predicate = assertInstanceOf(BoundInExpression.class, bound.where());
+        assertEquals(true, predicate.negated());
+        assertEquals(LogicalType.BOOLEAN, predicate.logicalType());
+    }
+
+    @Test
+    void rejectsInPredicateWithIncomparableCandidate() {
+        Fixture fixture = peopleFixture();
+
+        BinderException error = assertThrows(BinderException.class, () -> bindSelect(fixture, "SELECT id FROM people WHERE id IN ('1')"));
+
+        assertEquals("IN candidate cannot compare BIGINT and TEXT", error.getMessage());
+    }
+
+    @Test
     void rejectsTextArithmetic() {
         Fixture fixture = peopleFixture();
 
