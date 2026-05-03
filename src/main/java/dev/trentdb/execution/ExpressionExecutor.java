@@ -11,6 +11,7 @@ import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.types.LogicalType;
 
 import java.time.LocalDate;
@@ -23,6 +24,7 @@ public final class ExpressionExecutor {
             case BoundAggregateExpression aggregate -> throw new ExecutionException(
                     "Aggregate expression requires aggregate execution: " + aggregate.name());
             case BoundColumnRefExpression column -> input.column(column.ordinal());
+            case BoundOutputColumnExpression output -> input.column(output.ordinal());
             case BoundLiteralExpression literal -> constant(literal.logicalType(), literal.value(), input.cardinality());
             case BoundFunctionExpression function -> function(function, input);
             case BoundBetweenExpression between -> between(between, input);

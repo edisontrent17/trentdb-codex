@@ -40,6 +40,7 @@ public record BoundSelectStatement(
                     || containsAggregate(between.upper());
             case BoundCastExpression cast -> containsAggregate(cast.child());
             case BoundColumnRefExpression ignored -> false;
+            case BoundOutputColumnExpression ignored -> false;
             case BoundFunctionExpression function -> {
                 boolean result = false;
                 for (BoundExpression argument : function.arguments()) {

@@ -249,6 +249,24 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesGroupedAggregatesOrderedByAlias() {
+        Fixture fixture = salesFixture();
+
+        QueryResult result = execute(fixture, """
+                SELECT region, count(*) AS row_count, sum(amount) AS total
+                FROM sales
+                GROUP BY region
+                ORDER BY total ASC
+                """);
+
+        assertEquals(List.of("region", "row_count", "total"), result.columns());
+        assertEquals(List.of(
+                List.of("west", 2L, 5L),
+                List.of("east", 2L, 30L)
+        ), result.rows());
+    }
+
+    @Test
     void executesCountStarOnEmptyInput() {
         Fixture fixture = emptySalesFixture();
 
