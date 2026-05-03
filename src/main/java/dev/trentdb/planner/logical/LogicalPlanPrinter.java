@@ -25,6 +25,11 @@ public final class LogicalPlanPrinter {
                 builder.append(" [").append(projection.expressions().size()).append("]\n");
                 append(projection.child(), builder, depth + 1);
             }
+            case LogicalJoin join -> {
+                builder.append("LogicalComparisonJoin\n");
+                appendGet(join.left(), builder, depth + 1);
+                appendGet(join.right(), builder, depth + 1);
+            }
             case LogicalFilter filter -> {
                 builder.append("LogicalFilter\n");
                 append(filter.child(), builder, depth + 1);
@@ -38,14 +43,19 @@ public final class LogicalPlanPrinter {
                 builder.append(" [").append(order.orders().size()).append("]\n");
                 append(order.child(), builder, depth + 1);
             }
-            case LogicalGet get -> builder.append("LogicalGet ").append(getName(get)).append("\n");
+            case LogicalGet get -> builder.append("LogicalGet ").append(getName(get.tableRef())).append("\n");
         }
     }
 
-    private String getName(LogicalGet get) {
-        if (get.tableRef().isReplacementScan()) {
-            return get.tableRef().replacementScan().path();
+    private void appendGet(dev.trentdb.planner.BoundTableRef tableRef, StringBuilder builder, int depth) {
+        builder.append("  ".repeat(depth));
+        builder.append("LogicalGet ").append(getName(tableRef)).append("\n");
+    }
+
+    private String getName(dev.trentdb.planner.BoundTableRef tableRef) {
+        if (tableRef.isReplacementScan()) {
+            return tableRef.replacementScan().path();
         }
-        return get.tableRef().table().name();
+        return tableRef.table().name();
     }
 }

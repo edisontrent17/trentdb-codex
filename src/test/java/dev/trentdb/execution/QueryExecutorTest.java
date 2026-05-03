@@ -238,6 +238,50 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesInnerJoin() {
+        Fixture fixture = peopleOrdersFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT p.name, o.total
+                FROM people p
+                JOIN orders o ON p.id = o.person_id
+                ORDER BY o.total
+                """
+        );
+
+        assertEquals(List.of("name", "total"), result.columns());
+        assertEquals(List.of(
+                List.of("Alice", 10L),
+                List.of("Alice", 20L),
+                List.of("Bob", 30L)
+        ), result.rows());
+    }
+
+    @Test
+    void executesInnerJoinWithWhereFilter() {
+        Fixture fixture = peopleOrdersFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT p.name
+                FROM people p
+                JOIN orders o ON p.id = o.person_id
+                WHERE o.total >= 20
+                ORDER BY p.name, o.total
+                """
+        );
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(
+                List.of("Alice"),
+                List.of("Bob")
+        ), result.rows());
+    }
+
+    @Test
     void ordersNullsLastAscending() {
         Fixture fixture = peopleWithNullFixture();
 
@@ -492,6 +536,24 @@ class QueryExecutorTest {
         storageManager.createTable(table);
 
         return new Fixture(catalog, transaction, storageManager);
+    }
+
+    private Fixture peopleOrdersFixture() {
+        Fixture fixture = peopleFixture();
+        TableCatalogEntry orders = fixture.catalog().createTable(
+                fixture.transaction(),
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("person_id", TypeName.BIGINT),
+                        new ColumnDefinition("total", TypeName.BIGINT)
+                )
+        );
+        InMemoryTableStorage storage = fixture.storageManager().createTable(orders);
+        storage.appendRow(List.of(1L, 20L));
+        storage.appendRow(List.of(1L, 10L));
+        storage.appendRow(List.of(2L, 30L));
+        storage.appendRow(List.of(3L, 40L));
+        return fixture;
     }
 
     private Fixture emptyFixture() {

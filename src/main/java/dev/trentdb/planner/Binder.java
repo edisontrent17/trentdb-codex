@@ -9,6 +9,8 @@ import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.Expression;
 import dev.trentdb.ast.FunctionCallExpression;
 import dev.trentdb.ast.InExpression;
+import dev.trentdb.ast.JoinClause;
+import dev.trentdb.ast.JoinType;
 import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.LiteralKind;
 import dev.trentdb.ast.OrderByItem;
@@ -31,6 +33,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class Binder {
+    private record BoundColumnBinding(String relationName, ColumnCatalogEntry column, int ordinal) {
+    }
+
+    private record BindingContext(List<BoundColumnBinding> columns) {
+    }
+
     private final Catalog catalog;
     private final FunctionRegistry functionRegistry;
     private final ReplacementScanRegistry replacementScanRegistry;
@@ -60,25 +68,43 @@ public final class Binder {
     }
 
     public BoundSelectStatement bindSelect(Transaction transaction, SelectStatement statement) {
-        if (!statement.from().joins().isEmpty()) {
-            throw new BinderException("JOIN is not supported yet");
-        }
-
-        TableReference tableReference = statement.from().base();
-        BoundTableRef boundFrom = bindTableRef(transaction, tableReference);
-        BoundExpression where = statement.where() == null ? null : bindWhereExpression(boundFrom, statement.where());
-        List<BoundExpression> groupBy = bindGroupBy(boundFrom, statement.groupBy());
+        BoundFrom boundFrom = bindFrom(transaction, statement);
+        BindingContext context = bindingContext(boundFrom);
+        BoundExpression where = statement.where() == null ? null : bindWhereExpression(context, statement.where());
+        List<BoundExpression> groupBy = bindGroupBy(context, statement.groupBy());
         ArrayList<BoundExpression> selectList = new ArrayList<>();
         ArrayList<String> selectNames = new ArrayList<>();
 
         for (SelectItem item : statement.selectItems()) {
-            bindSelectExpression(boundFrom, item.expression(), item.alias(), selectList, selectNames, true);
+            bindSelectExpression(context, item.expression(), item.alias(), selectList, selectNames, true);
         }
 
         validateAggregates(selectList, groupBy);
         boolean aggregateQuery = containsAggregate(selectList) || !groupBy.isEmpty();
-        List<BoundOrderByItem> orderBy = bindOrderBy(boundFrom, statement.orderBy(), selectList, selectNames, aggregateQuery);
+        List<BoundOrderByItem> orderBy = bindOrderBy(context, statement.orderBy(), selectList, selectNames, aggregateQuery);
         return new BoundSelectStatement(boundFrom, selectList, selectNames, where, groupBy, orderBy, statement.limit());
+    }
+
+    private BoundFrom bindFrom(Transaction transaction, SelectStatement statement) {
+        BoundTableRef left = bindTableRef(transaction, statement.from().base());
+        List<JoinClause> joins = statement.from().joins();
+        if (joins.isEmpty()) {
+            return left;
+        }
+        if (joins.size() > 1) {
+            throw new BinderException("Only a single INNER JOIN is supported");
+        }
+        JoinClause join = joins.getFirst();
+        if (join.type() != JoinType.INNER) {
+            throw new BinderException("Only INNER JOIN is supported");
+        }
+        BoundTableRef right = bindTableRef(transaction, join.right());
+        BindingContext joinContext = bindingContext(left, right);
+        BoundExpression condition = bindExpression(joinContext, join.condition(), false);
+        if (!logicalType(condition).equals(LogicalType.BOOLEAN)) {
+            throw new BinderException("JOIN condition must evaluate to BOOLEAN but got " + typeName(logicalType(condition)));
+        }
+        return new BoundJoinRef(left, right, condition);
     }
 
     private BoundTableRef bindTableRef(Transaction transaction, TableReference tableReference) {
@@ -92,8 +118,41 @@ public final class Binder {
         }
     }
 
+    private BindingContext bindingContext(BoundFrom from) {
+        if (from instanceof BoundTableRef tableRef) {
+            return bindingContext(tableRef);
+        }
+        if (from instanceof BoundJoinRef joinRef) {
+            return bindingContext(joinRef.left(), joinRef.right());
+        }
+        throw new BinderException("Unsupported FROM source: " + from.getClass().getSimpleName());
+    }
+
+    private BindingContext bindingContext(BoundTableRef tableRef) {
+        ArrayList<BoundColumnBinding> bindings = new ArrayList<>();
+        List<ColumnCatalogEntry> tableColumns = columns(tableRef);
+        for (int index = 0; index < tableColumns.size(); index++) {
+            bindings.add(new BoundColumnBinding(relationName(tableRef), tableColumns.get(index), index));
+        }
+        return new BindingContext(bindings);
+    }
+
+    private BindingContext bindingContext(BoundTableRef left, BoundTableRef right) {
+        ArrayList<BoundColumnBinding> bindings = new ArrayList<>();
+        List<ColumnCatalogEntry> leftColumns = columns(left);
+        for (int index = 0; index < leftColumns.size(); index++) {
+            bindings.add(new BoundColumnBinding(relationName(left), leftColumns.get(index), index));
+        }
+        List<ColumnCatalogEntry> rightColumns = columns(right);
+        int offset = leftColumns.size();
+        for (int index = 0; index < rightColumns.size(); index++) {
+            bindings.add(new BoundColumnBinding(relationName(right), rightColumns.get(index), offset + index));
+        }
+        return new BindingContext(bindings);
+    }
+
     private void bindSelectExpression(
-            BoundTableRef table,
+            BindingContext context,
             Expression expression,
             String alias,
             ArrayList<BoundExpression> selectList,
@@ -101,41 +160,41 @@ public final class Binder {
             boolean allowAggregates
     ) {
         if (expression instanceof StarExpression) {
-            for (ColumnCatalogEntry column : columns(table)) {
-                selectList.add(new BoundColumnRefExpression(column));
-                selectNames.add(column.name());
+            for (BoundColumnBinding column : context.columns()) {
+                selectList.add(new BoundColumnRefExpression(column.column(), column.ordinal()));
+                selectNames.add(column.column().name());
             }
             return;
         }
         if (expression instanceof ColumnReferenceExpression columnReference) {
-            BoundExpression column = bindExpression(table, columnReference, allowAggregates);
+            BoundExpression column = bindExpression(context, columnReference, allowAggregates);
             selectList.add(column);
             selectNames.add(alias == null ? ((BoundColumnRefExpression) column).name() : alias);
             return;
         }
-        BoundExpression bound = bindExpression(table, expression, allowAggregates);
+        BoundExpression bound = bindExpression(context, expression, allowAggregates);
         selectList.add(bound);
         selectNames.add(alias == null ? defaultSelectName(bound) : alias);
     }
 
-    private BoundExpression bindWhereExpression(BoundTableRef table, Expression expression) {
-        BoundExpression bound = bindExpression(table, expression, false);
+    private BoundExpression bindWhereExpression(BindingContext context, Expression expression) {
+        BoundExpression bound = bindExpression(context, expression, false);
         if (!logicalType(bound).equals(LogicalType.BOOLEAN)) {
             throw new BinderException("WHERE expression must evaluate to BOOLEAN but got " + typeName(logicalType(bound)));
         }
         return bound;
     }
 
-    private List<BoundExpression> bindGroupBy(BoundTableRef table, List<Expression> groupBy) {
+    private List<BoundExpression> bindGroupBy(BindingContext context, List<Expression> groupBy) {
         ArrayList<BoundExpression> result = new ArrayList<>(groupBy.size());
         for (Expression expression : groupBy) {
-            result.add(bindExpression(table, expression, false));
+            result.add(bindExpression(context, expression, false));
         }
         return result;
     }
 
     private List<BoundOrderByItem> bindOrderBy(
-            BoundTableRef table,
+            BindingContext context,
             List<OrderByItem> orderBy,
             List<BoundExpression> selectList,
             List<String> selectNames,
@@ -143,13 +202,13 @@ public final class Binder {
     ) {
         ArrayList<BoundOrderByItem> result = new ArrayList<>(orderBy.size());
         for (OrderByItem item : orderBy) {
-            BoundExpression expression = bindOrderExpression(table, item.expression(), selectList, selectNames, aggregateQuery);
+            BoundExpression expression = bindOrderExpression(context, item.expression(), selectList, selectNames, aggregateQuery);
             result.add(new BoundOrderByItem(expression, item.direction()));
         }
         return result;
     }
 
-    private BoundExpression bindOrderExpression(BoundTableRef table, Expression expression, List<BoundExpression> selectList,
+    private BoundExpression bindOrderExpression(BindingContext context, Expression expression, List<BoundExpression> selectList,
                                                 List<String> selectNames, boolean aggregateQuery) {
         if (expression instanceof LiteralExpression literal && literal.kind() == LiteralKind.INTEGER) {
             int ordinal = Math.toIntExact((Long) literal.value());
@@ -179,7 +238,7 @@ public final class Binder {
                 return selectList.get(matchIndex);
             }
         }
-        BoundExpression bound = bindExpression(table, expression, false);
+        BoundExpression bound = bindExpression(context, expression, false);
         if (aggregateQuery) {
             for (int index = 0; index < selectList.size(); index++) {
                 if (selectList.get(index).equals(bound)) {
@@ -195,38 +254,38 @@ public final class Binder {
         return new BoundOutputColumnExpression(selectNames.get(index), index, logicalType(selectList.get(index)));
     }
 
-    private BoundExpression bindExpression(BoundTableRef table, Expression expression) {
-        return bindExpression(table, expression, false);
+    private BoundExpression bindExpression(BindingContext context, Expression expression) {
+        return bindExpression(context, expression, false);
     }
 
-    private BoundExpression bindExpression(BoundTableRef table, Expression expression, boolean allowAggregates) {
+    private BoundExpression bindExpression(BindingContext context, Expression expression, boolean allowAggregates) {
         if (expression instanceof ColumnReferenceExpression columnReference) {
-            return new BoundColumnRefExpression(bindColumn(table, columnReference.name()));
+            return bindColumn(context, columnReference.name());
         }
         if (expression instanceof LiteralExpression literal) {
             return new BoundLiteralExpression(literalType(literal.kind()), literal.value());
         }
         if (expression instanceof FunctionCallExpression functionCall) {
-            return bindFunctionCall(table, functionCall, allowAggregates);
+            return bindFunctionCall(context, functionCall, allowAggregates);
         }
         if (expression instanceof BinaryExpression binary) {
-            return bindBinaryExpression(table, binary, allowAggregates);
+            return bindBinaryExpression(context, binary, allowAggregates);
         }
         if (expression instanceof BetweenExpression between) {
-            return bindBetweenExpression(table, between, allowAggregates);
+            return bindBetweenExpression(context, between, allowAggregates);
         }
         if (expression instanceof InExpression in) {
-            return bindInExpression(table, in, allowAggregates);
+            return bindInExpression(context, in, allowAggregates);
         }
         if (expression instanceof CastExpression cast) {
-            return bindCastExpression(table, cast, allowAggregates);
+            return bindCastExpression(context, cast, allowAggregates);
         }
         throw new BinderException("Unsupported expression: " + expression.getClass().getSimpleName());
     }
 
-    private BoundBinaryExpression bindBinaryExpression(BoundTableRef table, BinaryExpression binary, boolean allowAggregates) {
-        BoundExpression left = bindExpression(table, binary.left(), allowAggregates);
-        BoundExpression right = bindExpression(table, binary.right(), allowAggregates);
+    private BoundBinaryExpression bindBinaryExpression(BindingContext context, BinaryExpression binary, boolean allowAggregates) {
+        BoundExpression left = bindExpression(context, binary.left(), allowAggregates);
+        BoundExpression right = bindExpression(context, binary.right(), allowAggregates);
         return new BoundBinaryExpression(
                 left,
                 binary.operator(),
@@ -236,13 +295,13 @@ public final class Binder {
     }
 
     private BoundBetweenExpression bindBetweenExpression(
-            BoundTableRef table,
+            BindingContext context,
             BetweenExpression between,
             boolean allowAggregates
     ) {
-        BoundExpression input = bindExpression(table, between.input(), allowAggregates);
-        BoundExpression lower = bindExpression(table, between.lower(), allowAggregates);
-        BoundExpression upper = bindExpression(table, between.upper(), allowAggregates);
+        BoundExpression input = bindExpression(context, between.input(), allowAggregates);
+        BoundExpression lower = bindExpression(context, between.lower(), allowAggregates);
+        BoundExpression upper = bindExpression(context, between.upper(), allowAggregates);
         LogicalType inputType = logicalType(input);
         LogicalType lowerType = logicalType(lower);
         LogicalType upperType = logicalType(upper);
@@ -257,12 +316,12 @@ public final class Binder {
         return new BoundBetweenExpression(input, lower, upper);
     }
 
-    private BoundInExpression bindInExpression(BoundTableRef table, InExpression in, boolean allowAggregates) {
-        BoundExpression input = bindExpression(table, in.input(), allowAggregates);
+    private BoundInExpression bindInExpression(BindingContext context, InExpression in, boolean allowAggregates) {
+        BoundExpression input = bindExpression(context, in.input(), allowAggregates);
         LogicalType inputType = logicalType(input);
         ArrayList<BoundExpression> candidates = new ArrayList<>(in.candidates().size());
         for (Expression candidateExpression : in.candidates()) {
-            BoundExpression candidate = bindExpression(table, candidateExpression, allowAggregates);
+            BoundExpression candidate = bindExpression(context, candidateExpression, allowAggregates);
             LogicalType candidateType = logicalType(candidate);
             if (!isNull(inputType) && !isNull(candidateType) && !isComparable(inputType, candidateType)) {
                 throw new BinderException("IN candidate cannot compare "
@@ -273,8 +332,8 @@ public final class Binder {
         return new BoundInExpression(input, candidates, in.negated());
     }
 
-    private BoundCastExpression bindCastExpression(BoundTableRef table, CastExpression cast, boolean allowAggregates) {
-        BoundExpression child = bindExpression(table, cast.child(), allowAggregates);
+    private BoundCastExpression bindCastExpression(BindingContext context, CastExpression cast, boolean allowAggregates) {
+        BoundExpression child = bindExpression(context, cast.child(), allowAggregates);
         LogicalType targetType = LogicalType.from(cast.targetType());
         LogicalType sourceType = logicalType(child);
         if (!canCast(sourceType, targetType)) {
@@ -283,12 +342,12 @@ public final class Binder {
         return new BoundCastExpression(child, targetType);
     }
 
-    private BoundExpression bindFunctionCall(BoundTableRef table, FunctionCallExpression functionCall, boolean allowAggregates) {
+    private BoundExpression bindFunctionCall(BindingContext context, FunctionCallExpression functionCall, boolean allowAggregates) {
         if (functionRegistry.isAggregate(functionCall.name())) {
             if (!allowAggregates) {
                 throw new BinderException("Aggregate functions are not allowed in this clause: " + functionCall.name());
             }
-            return bindAggregateFunctionCall(table, functionCall);
+            return bindAggregateFunctionCall(context, functionCall);
         }
         if (functionCall.starArgument()) {
             throw new BinderException("Star arguments are not supported for scalar functions yet");
@@ -299,7 +358,7 @@ public final class Binder {
             if (argument instanceof StarExpression) {
                 throw new BinderException("Star arguments are not supported for scalar functions yet");
             }
-            arguments.add(bindExpression(table, argument, allowAggregates));
+            arguments.add(bindExpression(context, argument, allowAggregates));
         }
 
         dev.trentdb.function.ScalarFunction function = functionRegistry.bindScalar(
@@ -309,14 +368,14 @@ public final class Binder {
         return new BoundFunctionExpression(function, arguments);
     }
 
-    private BoundAggregateExpression bindAggregateFunctionCall(BoundTableRef table, FunctionCallExpression functionCall) {
+    private BoundAggregateExpression bindAggregateFunctionCall(BindingContext context, FunctionCallExpression functionCall) {
         ArrayList<BoundExpression> arguments = new ArrayList<>(functionCall.arguments().size());
         if (!functionCall.starArgument()) {
             for (Expression argument : functionCall.arguments()) {
                 if (argument instanceof StarExpression) {
                     throw new BinderException("Star arguments are only supported as count(*)");
                 }
-                arguments.add(bindExpression(table, argument, false));
+                arguments.add(bindExpression(context, argument, false));
             }
         }
         dev.trentdb.function.AggregateFunction function = functionRegistry.bindAggregate(
@@ -507,16 +566,34 @@ public final class Binder {
         };
     }
 
-    private ColumnCatalogEntry bindColumn(BoundTableRef table, QualifiedName name) {
-        if (name.parts().size() != 1) {
-            throw new BinderException("Qualified column references are not supported yet: " + String.join(".", name.parts()));
-        }
-        for (ColumnCatalogEntry column : columns(table)) {
-            if (column.name().equals(name.last())) {
-                return column;
+    private BoundColumnRefExpression bindColumn(BindingContext context, QualifiedName name) {
+        if (name.parts().size() == 1) {
+            String columnName = name.last();
+            BoundColumnBinding match = null;
+            for (BoundColumnBinding binding : context.columns()) {
+                if (binding.column().name().equals(columnName)) {
+                    if (match != null) {
+                        throw new BinderException("Column reference is ambiguous: " + columnName);
+                    }
+                    match = binding;
+                }
             }
+            if (match == null) {
+                throw new CatalogException("Column not found: " + columnName);
+            }
+            return new BoundColumnRefExpression(match.column(), match.ordinal());
         }
-        throw new CatalogException("Column not found: " + name.last());
+        if (name.parts().size() == 2) {
+            String relationName = name.parts().getFirst();
+            String columnName = name.parts().get(1);
+            for (BoundColumnBinding binding : context.columns()) {
+                if (binding.relationName().equals(relationName) && binding.column().name().equals(columnName)) {
+                    return new BoundColumnRefExpression(binding.column(), binding.ordinal());
+                }
+            }
+            throw new CatalogException("Column not found: " + String.join(".", name.parts()));
+        }
+        throw new BinderException("Unsupported qualified column reference: " + String.join(".", name.parts()));
     }
 
     private List<ColumnCatalogEntry> columns(BoundTableRef table) {
@@ -524,5 +601,15 @@ public final class Binder {
             return table.replacementScan().columns();
         }
         return table.table().columns();
+    }
+
+    private String relationName(BoundTableRef table) {
+        if (table.alias() != null) {
+            return table.alias();
+        }
+        if (table.isReplacementScan()) {
+            return table.replacementScan().path();
+        }
+        return table.table().name();
     }
 }

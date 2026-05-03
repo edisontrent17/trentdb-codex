@@ -3,7 +3,7 @@ package dev.trentdb.planner;
 import java.util.List;
 
 public record BoundSelectStatement(
-        BoundTableRef from,
+        BoundFrom from,
         List<BoundExpression> selectList,
         List<String> selectNames,
         BoundExpression where,
