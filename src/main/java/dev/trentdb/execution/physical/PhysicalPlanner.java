@@ -1,6 +1,7 @@
 package dev.trentdb.execution.physical;
 
 import dev.trentdb.execution.ExecutionException;
+import dev.trentdb.planner.logical.LogicalAggregate;
 import dev.trentdb.planner.logical.LogicalExplain;
 import dev.trentdb.planner.logical.LogicalFilter;
 import dev.trentdb.planner.logical.LogicalGet;
@@ -34,6 +35,11 @@ public final class PhysicalPlanner {
         if (logical instanceof LogicalProjection projection) {
             PhysicalSource source = buildPipeline(projection.child(), operators);
             operators.add(new PhysicalProjection(projection.expressions(), projection.names()));
+            return source;
+        }
+        if (logical instanceof LogicalAggregate aggregate) {
+            PhysicalSource source = buildPipeline(aggregate.child(), operators);
+            operators.add(new PhysicalHashAggregate(aggregate.groups(), aggregate.selectList(), aggregate.selectNames()));
             return source;
         }
         if (logical instanceof LogicalFilter filter) {

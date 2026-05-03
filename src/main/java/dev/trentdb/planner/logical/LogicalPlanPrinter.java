@@ -10,6 +10,12 @@ public final class LogicalPlanPrinter {
     private void append(LogicalOperator operator, StringBuilder builder, int depth) {
         builder.append("  ".repeat(depth));
         switch (operator) {
+            case LogicalAggregate aggregate -> {
+                builder.append("LogicalAggregate");
+                builder.append(" groups=[").append(aggregate.groups().size()).append("]");
+                builder.append(" expressions=[").append(aggregate.selectList().size()).append("]\n");
+                append(aggregate.child(), builder, depth + 1);
+            }
             case LogicalExplain explain -> {
                 builder.append("LogicalExplain\n");
                 append(explain.child(), builder, depth + 1);

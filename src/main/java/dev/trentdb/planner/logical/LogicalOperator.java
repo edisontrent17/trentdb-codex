@@ -1,4 +1,5 @@
 package dev.trentdb.planner.logical;
 
-public sealed interface LogicalOperator permits LogicalExplain, LogicalFilter, LogicalGet, LogicalLimit, LogicalOrder, LogicalProjection {
+public sealed interface LogicalOperator permits LogicalAggregate, LogicalExplain, LogicalFilter, LogicalGet, LogicalLimit,
+        LogicalOrder, LogicalProjection {
 }

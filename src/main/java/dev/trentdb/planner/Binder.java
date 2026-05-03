@@ -60,22 +60,24 @@ public final class Binder {
         if (!statement.from().joins().isEmpty()) {
             throw new BinderException("JOIN is not supported yet");
         }
-        if (!statement.groupBy().isEmpty()) {
-            throw new BinderException("GROUP BY is not supported yet");
-        }
 
         TableReference tableReference = statement.from().base();
         BoundTableRef boundFrom = bindTableRef(transaction, tableReference);
+        BoundExpression where = statement.where() == null ? null : bindWhereExpression(boundFrom, statement.where());
+        List<BoundExpression> groupBy = bindGroupBy(boundFrom, statement.groupBy());
         ArrayList<BoundExpression> selectList = new ArrayList<>();
         ArrayList<String> selectNames = new ArrayList<>();
 
         for (SelectItem item : statement.selectItems()) {
-            bindSelectExpression(boundFrom, item.expression(), item.alias(), selectList, selectNames);
+            bindSelectExpression(boundFrom, item.expression(), item.alias(), selectList, selectNames, true);
         }
 
-        BoundExpression where = statement.where() == null ? null : bindWhereExpression(boundFrom, statement.where());
+        validateAggregates(selectList, groupBy);
+        if ((containsAggregate(selectList) || !groupBy.isEmpty()) && !statement.orderBy().isEmpty()) {
+            throw new BinderException("ORDER BY with aggregates is not supported yet");
+        }
         List<BoundOrderByItem> orderBy = bindOrderBy(boundFrom, statement.orderBy(), selectList, selectNames);
-        return new BoundSelectStatement(boundFrom, selectList, selectNames, where, orderBy, statement.limit());
+        return new BoundSelectStatement(boundFrom, selectList, selectNames, where, groupBy, orderBy, statement.limit());
     }
 
     private BoundTableRef bindTableRef(Transaction transaction, TableReference tableReference) {
@@ -94,7 +96,8 @@ public final class Binder {
             Expression expression,
             String alias,
             ArrayList<BoundExpression> selectList,
-            ArrayList<String> selectNames
+            ArrayList<String> selectNames,
+            boolean allowAggregates
     ) {
         if (expression instanceof StarExpression) {
             for (ColumnCatalogEntry column : columns(table)) {
@@ -104,22 +107,30 @@ public final class Binder {
             return;
         }
         if (expression instanceof ColumnReferenceExpression columnReference) {
-            BoundExpression column = bindExpression(table, columnReference);
+            BoundExpression column = bindExpression(table, columnReference, allowAggregates);
             selectList.add(column);
             selectNames.add(alias == null ? ((BoundColumnRefExpression) column).name() : alias);
             return;
         }
-        BoundExpression bound = bindExpression(table, expression);
+        BoundExpression bound = bindExpression(table, expression, allowAggregates);
         selectList.add(bound);
         selectNames.add(alias == null ? defaultSelectName(bound) : alias);
     }
 
     private BoundExpression bindWhereExpression(BoundTableRef table, Expression expression) {
-        BoundExpression bound = bindExpression(table, expression);
+        BoundExpression bound = bindExpression(table, expression, false);
         if (!logicalType(bound).equals(LogicalType.BOOLEAN)) {
             throw new BinderException("WHERE expression must evaluate to BOOLEAN but got " + typeName(logicalType(bound)));
         }
         return bound;
+    }
+
+    private List<BoundExpression> bindGroupBy(BoundTableRef table, List<Expression> groupBy) {
+        ArrayList<BoundExpression> result = new ArrayList<>(groupBy.size());
+        for (Expression expression : groupBy) {
+            result.add(bindExpression(table, expression, false));
+        }
+        return result;
     }
 
     private List<BoundOrderByItem> bindOrderBy(
@@ -163,10 +174,14 @@ public final class Binder {
                 return match;
             }
         }
-        return bindExpression(table, expression);
+        return bindExpression(table, expression, false);
     }
 
     private BoundExpression bindExpression(BoundTableRef table, Expression expression) {
+        return bindExpression(table, expression, false);
+    }
+
+    private BoundExpression bindExpression(BoundTableRef table, Expression expression, boolean allowAggregates) {
         if (expression instanceof ColumnReferenceExpression columnReference) {
             return new BoundColumnRefExpression(bindColumn(table, columnReference.name()));
         }
@@ -174,17 +189,17 @@ public final class Binder {
             return new BoundLiteralExpression(literalType(literal.kind()), literal.value());
         }
         if (expression instanceof FunctionCallExpression functionCall) {
-            return bindFunctionCall(table, functionCall);
+            return bindFunctionCall(table, functionCall, allowAggregates);
         }
         if (expression instanceof BinaryExpression binary) {
-            return bindBinaryExpression(table, binary);
+            return bindBinaryExpression(table, binary, allowAggregates);
         }
         throw new BinderException("Unsupported expression: " + expression.getClass().getSimpleName());
     }
 
-    private BoundBinaryExpression bindBinaryExpression(BoundTableRef table, BinaryExpression binary) {
-        BoundExpression left = bindExpression(table, binary.left());
-        BoundExpression right = bindExpression(table, binary.right());
+    private BoundBinaryExpression bindBinaryExpression(BoundTableRef table, BinaryExpression binary, boolean allowAggregates) {
+        BoundExpression left = bindExpression(table, binary.left(), allowAggregates);
+        BoundExpression right = bindExpression(table, binary.right(), allowAggregates);
         return new BoundBinaryExpression(
                 left,
                 binary.operator(),
@@ -193,7 +208,13 @@ public final class Binder {
         );
     }
 
-    private BoundFunctionExpression bindFunctionCall(BoundTableRef table, FunctionCallExpression functionCall) {
+    private BoundExpression bindFunctionCall(BoundTableRef table, FunctionCallExpression functionCall, boolean allowAggregates) {
+        if (functionRegistry.isAggregate(functionCall.name())) {
+            if (!allowAggregates) {
+                throw new BinderException("Aggregate functions are not allowed in this clause: " + functionCall.name());
+            }
+            return bindAggregateFunctionCall(table, functionCall);
+        }
         if (functionCall.starArgument()) {
             throw new BinderException("Star arguments are not supported for scalar functions yet");
         }
@@ -203,7 +224,7 @@ public final class Binder {
             if (argument instanceof StarExpression) {
                 throw new BinderException("Star arguments are not supported for scalar functions yet");
             }
-            arguments.add(bindExpression(table, argument));
+            arguments.add(bindExpression(table, argument, allowAggregates));
         }
 
         dev.trentdb.function.ScalarFunction function = functionRegistry.bindScalar(
@@ -213,12 +234,31 @@ public final class Binder {
         return new BoundFunctionExpression(function, arguments);
     }
 
+    private BoundAggregateExpression bindAggregateFunctionCall(BoundTableRef table, FunctionCallExpression functionCall) {
+        ArrayList<BoundExpression> arguments = new ArrayList<>(functionCall.arguments().size());
+        if (!functionCall.starArgument()) {
+            for (Expression argument : functionCall.arguments()) {
+                if (argument instanceof StarExpression) {
+                    throw new BinderException("Star arguments are only supported as count(*)");
+                }
+                arguments.add(bindExpression(table, argument, false));
+            }
+        }
+        dev.trentdb.function.AggregateFunction function = functionRegistry.bindAggregate(
+                functionCall.name(),
+                arguments.stream().map(this::logicalType).toList(),
+                functionCall.starArgument()
+        );
+        return new BoundAggregateExpression(function, arguments, functionCall.starArgument());
+    }
+
     private LogicalType logicalType(BoundExpression expression) {
         return switch (expression) {
             case BoundColumnRefExpression column -> column.logicalType();
             case BoundLiteralExpression literal -> literal.logicalType();
             case BoundFunctionExpression function -> function.logicalType();
             case BoundBinaryExpression binary -> binary.logicalType();
+            case BoundAggregateExpression aggregate -> aggregate.logicalType();
         };
     }
 
@@ -287,7 +327,63 @@ public final class Binder {
         if (expression instanceof BoundFunctionExpression function) {
             return function.name();
         }
+        if (expression instanceof BoundAggregateExpression aggregate) {
+            return aggregate.name();
+        }
         return "?column?";
+    }
+
+    private void validateAggregates(List<BoundExpression> selectList, List<BoundExpression> groupBy) {
+        boolean hasAggregates = containsAggregate(selectList);
+        if (!hasAggregates && groupBy.isEmpty()) {
+            return;
+        }
+        for (BoundExpression expression : selectList) {
+            validateAggregateSelectExpression(expression, groupBy);
+        }
+    }
+
+    private void validateAggregateSelectExpression(BoundExpression expression, List<BoundExpression> groupBy) {
+        if (containsAggregate(expression)) {
+            if (!(expression instanceof BoundAggregateExpression)) {
+                throw new BinderException("Aggregate expressions inside scalar expressions are not supported yet");
+            }
+            return;
+        }
+        for (BoundExpression group : groupBy) {
+            if (group.equals(expression)) {
+                return;
+            }
+        }
+        throw new BinderException("Column must appear in GROUP BY or be used in an aggregate function");
+    }
+
+    private boolean containsAggregate(List<BoundExpression> expressions) {
+        for (BoundExpression expression : expressions) {
+            if (containsAggregate(expression)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsAggregate(BoundExpression expression) {
+        return switch (expression) {
+            case BoundAggregateExpression ignored -> true;
+            case BoundBinaryExpression binary -> containsAggregate(binary.left()) || containsAggregate(binary.right());
+            case BoundColumnRefExpression ignored -> false;
+            case BoundFunctionExpression function -> {
+                boolean result = false;
+                for (BoundExpression argument : function.arguments()) {
+                    if (containsAggregate(argument)) {
+                        result = true;
+                        break;
+                    }
+                }
+                yield result;
+            }
+            case BoundLiteralExpression ignored -> false;
+        };
     }
 
     private String typeName(LogicalType logicalType) {
