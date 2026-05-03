@@ -2,6 +2,7 @@ package dev.trentdb.planner.logical;
 
 public enum LogicalOperatorType {
     LOGICAL_GET,
+    LOGICAL_COMPARISON_JOIN,
     LOGICAL_FILTER,
     LOGICAL_PROJECTION,
     LOGICAL_LIMIT,

@@ -3,7 +3,7 @@ package dev.trentdb.planner;
 import dev.trentdb.catalog.TableCatalogEntry;
 import dev.trentdb.replacement.ReplacementScan;
 
-public record BoundTableRef(TableCatalogEntry table, ReplacementScan replacementScan, String alias) {
+public record BoundTableRef(TableCatalogEntry table, ReplacementScan replacementScan, String alias) implements BoundFrom {
     public BoundTableRef(TableCatalogEntry table, String alias) {
         this(table, null, alias);
     }

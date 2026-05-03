@@ -5,6 +5,7 @@ import dev.trentdb.planner.logical.LogicalAggregate;
 import dev.trentdb.planner.logical.LogicalExplain;
 import dev.trentdb.planner.logical.LogicalFilter;
 import dev.trentdb.planner.logical.LogicalGet;
+import dev.trentdb.planner.logical.LogicalJoin;
 import dev.trentdb.planner.logical.LogicalLimit;
 import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.planner.logical.LogicalOrder;
@@ -59,6 +60,9 @@ public final class PhysicalPlanner {
         }
         if (logical instanceof LogicalGet get) {
             return new PhysicalTableScan(storageManager, get.tableRef());
+        }
+        if (logical instanceof LogicalJoin join) {
+            return new PhysicalNestedLoopJoinSource(storageManager, join.left(), join.right(), join.condition());
         }
         throw new ExecutionException("Unsupported logical operator for physical planning: " + logical.getClass().getSimpleName());
     }

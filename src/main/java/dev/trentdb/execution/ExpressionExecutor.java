@@ -21,13 +21,17 @@ import java.util.List;
 import java.util.Locale;
 
 public final class ExpressionExecutor {
+    private static final byte TRI_NULL = -1;
+    private static final byte TRI_FALSE = 0;
+    private static final byte TRI_TRUE = 1;
+
     public Vector execute(BoundExpression expression, DataChunk input) {
         return switch (expression) {
             case BoundAggregateExpression aggregate -> throw new ExecutionException(
                     "Aggregate expression requires aggregate execution: " + aggregate.name());
             case BoundColumnRefExpression column -> input.column(column.ordinal());
             case BoundOutputColumnExpression output -> input.column(output.ordinal());
-            case BoundLiteralExpression literal -> constant(literal.logicalType(), literal.value(), input.cardinality());
+            case BoundLiteralExpression literal -> constant(literal, input.cardinality());
             case BoundFunctionExpression function -> function(function, input);
             case BoundBetweenExpression between -> between(between, input);
             case BoundInExpression in -> in(in, input);
@@ -36,29 +40,53 @@ public final class ExpressionExecutor {
         };
     }
 
-    private Vector constant(LogicalType logicalType, Object value, int cardinality) {
-        return Vector.constant(logicalType, value, cardinality);
+    private Vector constant(BoundLiteralExpression literal, int cardinality) {
+        LogicalType logicalType = literal.logicalType();
+        Object value = literal.value();
+        if (logicalType.equals(LogicalType.NULL)) {
+            return Vector.constantNull(LogicalType.NULL, cardinality);
+        }
+        if (logicalType.equals(LogicalType.BOOLEAN)) {
+            return Vector.constantBoolean((Boolean) value, cardinality);
+        }
+        if (logicalType.equals(LogicalType.INTEGER)) {
+            Integer integerValue = value == null ? null : ((Number) value).intValue();
+            return Vector.constantInteger(integerValue, cardinality);
+        }
+        if (logicalType.equals(LogicalType.BIGINT)) {
+            Long bigintValue = value == null ? null : ((Number) value).longValue();
+            return Vector.constantBigint(bigintValue, cardinality);
+        }
+        if (logicalType.equals(LogicalType.DOUBLE)) {
+            Double doubleValue = value == null ? null : ((Number) value).doubleValue();
+            return Vector.constantDouble(doubleValue, cardinality);
+        }
+        if (logicalType.equals(LogicalType.TEXT)) {
+            return Vector.constantText((String) value, cardinality);
+        }
+        if (logicalType.equals(LogicalType.DATE)) {
+            return Vector.constantDate((LocalDate) value, cardinality);
+        }
+        throw new ExecutionException("Unsupported literal type: " + logicalType.id());
     }
 
     private Vector function(BoundFunctionExpression function, DataChunk input) {
-        if (function.name().equalsIgnoreCase("lower")) {
-            Vector argument = execute(function.arguments().getFirst(), input);
-            Vector result = new Vector(function.logicalType(), input.cardinality());
-            for (int index = 0; index < input.cardinality(); index++) {
-                if (argument.isNull(index)) {
-                    result.setNull(index);
-                } else {
-                    Object value = argument.get(index);
-                    if (value instanceof String text) {
-                        result.set(index, text.toLowerCase(Locale.ROOT));
-                    } else {
-                        throw new ExecutionException("lower expects TEXT input");
-                    }
-                }
-            }
-            return result;
+        if (!function.name().equalsIgnoreCase("lower")) {
+            throw new ExecutionException("Unsupported scalar function: " + function.name());
         }
-        throw new ExecutionException("Unsupported scalar function: " + function.name());
+        Vector argument = execute(function.arguments().getFirst(), input);
+        if (!argument.logicalType().equals(LogicalType.TEXT)) {
+            throw new ExecutionException("lower expects TEXT input");
+        }
+        Vector result = new Vector(function.logicalType(), input.cardinality());
+        for (int index = 0; index < input.cardinality(); index++) {
+            if (argument.isNull(index)) {
+                result.setNull(index);
+                continue;
+            }
+            result.setText(index, argument.getText(index).toLowerCase(Locale.ROOT));
+        }
+        return result;
     }
 
     private Vector between(BoundBetweenExpression between, DataChunk input) {
@@ -66,18 +94,11 @@ public final class ExpressionExecutor {
         Vector lowerValues = execute(between.lower(), input);
         Vector upperValues = execute(between.upper(), input);
         Vector result = new Vector(between.logicalType(), input.cardinality());
+
         for (int index = 0; index < input.cardinality(); index++) {
-            Object lowerComparison = compareNullableLess(
-                    inputValues.get(index),
-                    lowerValues.get(index),
-                    Comparison.GREATER_THAN_OR_EQUAL
-            );
-            Object upperComparison = compareNullableLess(
-                    inputValues.get(index),
-                    upperValues.get(index),
-                    Comparison.LESS_THAN_OR_EQUAL
-            );
-            result.set(index, and(lowerComparison, upperComparison));
+            byte lower = compareNullable(inputValues, lowerValues, index, Comparison.GREATER_THAN_OR_EQUAL);
+            byte upper = compareNullable(inputValues, upperValues, index, Comparison.LESS_THAN_OR_EQUAL);
+            writeTriState(result, index, triAnd(lower, upper));
         }
         return result;
     }
@@ -88,27 +109,32 @@ public final class ExpressionExecutor {
         List<Vector> candidateVectors = in.candidates().stream()
                 .map(candidate -> execute(candidate, input))
                 .toList();
+
         for (int rowIndex = 0; rowIndex < input.cardinality(); rowIndex++) {
-            Object value = evaluateIn(inputValues.get(rowIndex), candidateVectors, rowIndex);
-            result.set(rowIndex, in.negated() ? negate(value) : value);
+            byte value = evaluateIn(inputValues, rowIndex, candidateVectors);
+            if (in.negated()) {
+                value = triNegate(value);
+            }
+            writeTriState(result, rowIndex, value);
         }
         return result;
     }
 
-    private Object evaluateIn(Object input, List<Vector> candidateVectors, int rowIndex) {
-        if (input == null) {
-            return null;
+    private byte evaluateIn(Vector inputVector, int rowIndex, List<Vector> candidateVectors) {
+        if (inputVector.isNull(rowIndex)) {
+            return TRI_NULL;
         }
         boolean hasNullCandidate = false;
         for (Vector candidateVector : candidateVectors) {
-            Object candidate = candidateVector.get(rowIndex);
-            if (candidate == null) {
+            if (candidateVector.isNull(rowIndex)) {
                 hasNullCandidate = true;
-            } else if (compare(input, candidate) == 0) {
-                return true;
+                continue;
+            }
+            if (compareValues(inputVector, rowIndex, candidateVector, rowIndex) == 0) {
+                return TRI_TRUE;
             }
         }
-        return hasNullCandidate ? null : false;
+        return hasNullCandidate ? TRI_NULL : TRI_FALSE;
     }
 
     private Vector cast(BoundCastExpression cast, DataChunk input) {
@@ -138,8 +164,35 @@ public final class ExpressionExecutor {
     private Vector castToText(Vector child, int cardinality) {
         Vector result = new Vector(LogicalType.TEXT, cardinality);
         for (int index = 0; index < cardinality; index++) {
-            Object value = child.get(index);
-            result.set(index, value == null ? null : value.toString());
+            if (child.isNull(index)) {
+                result.setNull(index);
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.BOOLEAN)) {
+                result.setText(index, Boolean.toString(child.getBoolean(index)));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.INTEGER)) {
+                result.setText(index, Integer.toString(child.getInteger(index)));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.BIGINT)) {
+                result.setText(index, Long.toString(child.getBigint(index)));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.DOUBLE)) {
+                result.setText(index, Double.toString(child.getDouble(index)));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.TEXT)) {
+                result.setText(index, child.getText(index));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.DATE)) {
+                result.setText(index, child.getDate(index).toString());
+                continue;
+            }
+            throw new ExecutionException("Cannot cast " + child.logicalType().id() + " to TEXT");
         }
         return result;
     }
@@ -147,8 +200,24 @@ public final class ExpressionExecutor {
     private Vector castToDate(Vector child, int cardinality) {
         Vector result = new Vector(LogicalType.DATE, cardinality);
         for (int index = 0; index < cardinality; index++) {
-            Object value = child.get(index);
-            result.set(index, value == null ? null : castObjectToDate(value));
+            if (child.isNull(index)) {
+                result.setNull(index);
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.DATE)) {
+                result.setDate(index, child.getDate(index));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.TEXT)) {
+                String text = child.getText(index);
+                try {
+                    result.setDate(index, LocalDate.parse(text));
+                } catch (DateTimeParseException exception) {
+                    throw new ExecutionException("Could not cast value to DATE: " + text);
+                }
+                continue;
+            }
+            throw new ExecutionException("DATE cast expects TEXT input");
         }
         return result;
     }
@@ -156,8 +225,23 @@ public final class ExpressionExecutor {
     private Vector castToInteger(Vector child, int cardinality) {
         Vector result = new Vector(LogicalType.INTEGER, cardinality);
         for (int index = 0; index < cardinality; index++) {
-            Object value = child.get(index);
-            result.set(index, value == null ? null : castObjectToNumber(value).intValue());
+            if (child.isNull(index)) {
+                result.setNull(index);
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.INTEGER)) {
+                result.setInteger(index, child.getInteger(index));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.BIGINT)) {
+                result.setInteger(index, (int) child.getBigint(index));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.DOUBLE)) {
+                result.setInteger(index, (int) child.getDouble(index));
+                continue;
+            }
+            throw new ExecutionException("Numeric cast expects numeric input");
         }
         return result;
     }
@@ -165,8 +249,23 @@ public final class ExpressionExecutor {
     private Vector castToBigint(Vector child, int cardinality) {
         Vector result = new Vector(LogicalType.BIGINT, cardinality);
         for (int index = 0; index < cardinality; index++) {
-            Object value = child.get(index);
-            result.set(index, value == null ? null : castObjectToNumber(value).longValue());
+            if (child.isNull(index)) {
+                result.setNull(index);
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.INTEGER)) {
+                result.setBigint(index, child.getInteger(index));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.BIGINT)) {
+                result.setBigint(index, child.getBigint(index));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.DOUBLE)) {
+                result.setBigint(index, (long) child.getDouble(index));
+                continue;
+            }
+            throw new ExecutionException("Numeric cast expects numeric input");
         }
         return result;
     }
@@ -174,8 +273,23 @@ public final class ExpressionExecutor {
     private Vector castToDouble(Vector child, int cardinality) {
         Vector result = new Vector(LogicalType.DOUBLE, cardinality);
         for (int index = 0; index < cardinality; index++) {
-            Object value = child.get(index);
-            result.set(index, value == null ? null : castObjectToNumber(value).doubleValue());
+            if (child.isNull(index)) {
+                result.setNull(index);
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.INTEGER)) {
+                result.setDouble(index, child.getInteger(index));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.BIGINT)) {
+                result.setDouble(index, child.getBigint(index));
+                continue;
+            }
+            if (child.logicalType().equals(LogicalType.DOUBLE)) {
+                result.setDouble(index, child.getDouble(index));
+                continue;
+            }
+            throw new ExecutionException("Numeric cast expects numeric input");
         }
         return result;
     }
@@ -183,35 +297,16 @@ public final class ExpressionExecutor {
     private Vector castToBoolean(Vector child, int cardinality) {
         Vector result = new Vector(LogicalType.BOOLEAN, cardinality);
         for (int index = 0; index < cardinality; index++) {
-            Object value = child.get(index);
-            if (value == null || value instanceof Boolean) {
-                result.set(index, value);
-            } else {
+            if (child.isNull(index)) {
+                result.setNull(index);
+                continue;
+            }
+            if (!child.logicalType().equals(LogicalType.BOOLEAN)) {
                 throw new ExecutionException("BOOLEAN cast expects BOOLEAN input");
             }
+            result.setBoolean(index, child.getBoolean(index));
         }
         return result;
-    }
-
-    private Number castObjectToNumber(Object value) {
-        if (value instanceof Number number) {
-            return number;
-        }
-        throw new ExecutionException("Numeric cast expects numeric input");
-    }
-
-    private LocalDate castObjectToDate(Object value) {
-        if (value instanceof LocalDate date) {
-            return date;
-        }
-        if (value instanceof String text) {
-            try {
-                return LocalDate.parse(text);
-            } catch (DateTimeParseException exception) {
-                throw new ExecutionException("Could not cast value to DATE: " + text);
-            }
-        }
-        throw new ExecutionException("DATE cast expects TEXT input");
     }
 
     private Vector binary(BoundBinaryExpression binary, DataChunk input) {
@@ -219,127 +314,180 @@ public final class ExpressionExecutor {
         Vector right = execute(binary.right(), input);
         Vector result = new Vector(binary.logicalType(), input.cardinality());
         for (int index = 0; index < input.cardinality(); index++) {
-            result.set(index, evaluateBinary(binary, left.get(index), right.get(index)));
+            writeBinaryValue(binary, left, right, index, result);
         }
         return result;
     }
 
-    private Object evaluateBinary(BoundBinaryExpression binary, Object left, Object right) {
-        return switch (binary.operator()) {
-            case EQUAL -> compareNullable(left, right, 0);
-            case NOT_EQUAL -> negate(compareNullable(left, right, 0));
-            case LESS_THAN -> compareNullableLess(left, right, Comparison.LESS_THAN);
-            case LESS_THAN_OR_EQUAL -> compareNullableLess(left, right, Comparison.LESS_THAN_OR_EQUAL);
-            case GREATER_THAN -> compareNullableLess(left, right, Comparison.GREATER_THAN);
-            case GREATER_THAN_OR_EQUAL -> compareNullableLess(left, right, Comparison.GREATER_THAN_OR_EQUAL);
-            case AND -> and(left, right);
-            case OR -> or(left, right);
-            case ADD, SUBTRACT, MULTIPLY, DIVIDE -> arithmetic(binary.operator(), binary.logicalType(), left, right);
-        };
+    private void writeBinaryValue(BoundBinaryExpression binary, Vector left, Vector right, int index, Vector result) {
+        switch (binary.operator()) {
+            case EQUAL -> writeTriState(result, index, compareNullable(left, right, index, Comparison.EQUAL));
+            case NOT_EQUAL -> writeTriState(result, index, triNegate(compareNullable(left, right, index, Comparison.EQUAL)));
+            case LESS_THAN -> writeTriState(result, index, compareNullable(left, right, index, Comparison.LESS_THAN));
+            case LESS_THAN_OR_EQUAL ->
+                    writeTriState(result, index, compareNullable(left, right, index, Comparison.LESS_THAN_OR_EQUAL));
+            case GREATER_THAN ->
+                    writeTriState(result, index, compareNullable(left, right, index, Comparison.GREATER_THAN));
+            case GREATER_THAN_OR_EQUAL ->
+                    writeTriState(result, index, compareNullable(left, right, index, Comparison.GREATER_THAN_OR_EQUAL));
+            case AND -> writeTriState(result, index, triAnd(readTriState(left, index), readTriState(right, index)));
+            case OR -> writeTriState(result, index, triOr(readTriState(left, index), readTriState(right, index)));
+            case ADD, SUBTRACT, MULTIPLY, DIVIDE -> writeArithmetic(binary.operator(), binary.logicalType(), left, right, index, result);
+        }
     }
 
-    private Object arithmetic(BinaryOperator operator, LogicalType resultType, Object left, Object right) {
-        if (left == null || right == null) {
-            return null;
-        }
-        if (!(left instanceof Number leftNumber) || !(right instanceof Number rightNumber)) {
-            throw new ExecutionException("Arithmetic operator " + operator + " expects numeric input");
+    private void writeArithmetic(
+            BinaryOperator operator,
+            LogicalType resultType,
+            Vector left,
+            Vector right,
+            int index,
+            Vector result
+    ) {
+        if (left.isNull(index) || right.isNull(index)) {
+            result.setNull(index);
+            return;
         }
         if (resultType.equals(LogicalType.DOUBLE)) {
-            return doubleArithmetic(operator, leftNumber.doubleValue(), rightNumber.doubleValue());
+            double leftValue = numericAsDouble(left, index);
+            double rightValue = numericAsDouble(right, index);
+            if (operator == BinaryOperator.DIVIDE && rightValue == 0.0d) {
+                throw new ExecutionException("Division by zero");
+            }
+            result.setDouble(index, switch (operator) {
+                case ADD -> leftValue + rightValue;
+                case SUBTRACT -> leftValue - rightValue;
+                case MULTIPLY -> leftValue * rightValue;
+                case DIVIDE -> leftValue / rightValue;
+                default -> throw new ExecutionException("Unsupported arithmetic operator: " + operator);
+            });
+            return;
         }
-        return longArithmetic(operator, leftNumber.longValue(), rightNumber.longValue());
-    }
 
-    private Object doubleArithmetic(BinaryOperator operator, double left, double right) {
-        if (operator == BinaryOperator.DIVIDE && right == 0.0d) {
-            throw new ExecutionException("Division by zero");
-        }
-        return switch (operator) {
-            case ADD -> left + right;
-            case SUBTRACT -> left - right;
-            case MULTIPLY -> left * right;
-            case DIVIDE -> left / right;
+        long leftValue = numericAsLong(left, index);
+        long rightValue = numericAsLong(right, index);
+        result.setBigint(index, switch (operator) {
+            case ADD -> leftValue + rightValue;
+            case SUBTRACT -> leftValue - rightValue;
+            case MULTIPLY -> leftValue * rightValue;
             default -> throw new ExecutionException("Unsupported arithmetic operator: " + operator);
-        };
+        });
     }
 
-    private Object longArithmetic(BinaryOperator operator, long left, long right) {
-        return switch (operator) {
-            case ADD -> left + right;
-            case SUBTRACT -> left - right;
-            case MULTIPLY -> left * right;
-            default -> throw new ExecutionException("Unsupported arithmetic operator: " + operator);
-        };
-    }
-
-    private Object compareNullable(Object left, Object right, int expected) {
-        if (left == null || right == null) {
-            return null;
+    private byte compareNullable(Vector left, Vector right, int index, Comparison comparison) {
+        if (left.isNull(index) || right.isNull(index)) {
+            return TRI_NULL;
         }
-        return compare(left, right) == expected;
-    }
-
-    private Object compareNullableLess(Object left, Object right, Comparison comparison) {
-        if (left == null || right == null) {
-            return null;
-        }
-        int result = compare(left, right);
+        int value = compareValues(left, index, right, index);
         return switch (comparison) {
-            case LESS_THAN -> result < 0;
-            case LESS_THAN_OR_EQUAL -> result <= 0;
-            case GREATER_THAN -> result > 0;
-            case GREATER_THAN_OR_EQUAL -> result >= 0;
+            case EQUAL -> value == 0 ? TRI_TRUE : TRI_FALSE;
+            case LESS_THAN -> value < 0 ? TRI_TRUE : TRI_FALSE;
+            case LESS_THAN_OR_EQUAL -> value <= 0 ? TRI_TRUE : TRI_FALSE;
+            case GREATER_THAN -> value > 0 ? TRI_TRUE : TRI_FALSE;
+            case GREATER_THAN_OR_EQUAL -> value >= 0 ? TRI_TRUE : TRI_FALSE;
         };
     }
 
-    private Object negate(Object value) {
-        return value == null ? null : !((Boolean) value);
+    private int compareValues(Vector left, int leftIndex, Vector right, int rightIndex) {
+        LogicalType leftType = left.logicalType();
+        LogicalType rightType = right.logicalType();
+
+        if (isNumeric(leftType) && isNumeric(rightType)) {
+            return Double.compare(numericAsDouble(left, leftIndex), numericAsDouble(right, rightIndex));
+        }
+        if (leftType.equals(LogicalType.BOOLEAN) && rightType.equals(LogicalType.BOOLEAN)) {
+            return Boolean.compare(left.getBoolean(leftIndex), right.getBoolean(rightIndex));
+        }
+        if (leftType.equals(LogicalType.TEXT) && rightType.equals(LogicalType.TEXT)) {
+            return left.getText(leftIndex).compareTo(right.getText(rightIndex));
+        }
+        if (leftType.equals(LogicalType.DATE) && rightType.equals(LogicalType.DATE)) {
+            return left.getDate(leftIndex).compareTo(right.getDate(rightIndex));
+        }
+        throw new ExecutionException("Cannot compare " + leftType.id().name() + " and " + rightType.id().name());
     }
 
-    private Object and(Object left, Object right) {
-        if (Boolean.FALSE.equals(left) || Boolean.FALSE.equals(right)) {
-            return false;
-        }
-        if (left == null || right == null) {
-            return null;
-        }
-        return true;
+    private boolean isNumeric(LogicalType type) {
+        return type.equals(LogicalType.INTEGER)
+                || type.equals(LogicalType.BIGINT)
+                || type.equals(LogicalType.DOUBLE);
     }
 
-    private Object or(Object left, Object right) {
-        if (Boolean.TRUE.equals(left) || Boolean.TRUE.equals(right)) {
-            return true;
+    private double numericAsDouble(Vector vector, int index) {
+        LogicalType type = vector.logicalType();
+        if (type.equals(LogicalType.INTEGER)) {
+            return vector.getInteger(index);
         }
-        if (left == null || right == null) {
-            return null;
+        if (type.equals(LogicalType.BIGINT)) {
+            return vector.getBigint(index);
         }
-        return false;
+        if (type.equals(LogicalType.DOUBLE)) {
+            return vector.getDouble(index);
+        }
+        throw new ExecutionException("Expected numeric value but got " + type.id().name());
     }
 
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    private int compare(Object left, Object right) {
-        if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
-            return Double.compare(leftNumber.doubleValue(), rightNumber.doubleValue());
+    private long numericAsLong(Vector vector, int index) {
+        LogicalType type = vector.logicalType();
+        if (type.equals(LogicalType.INTEGER)) {
+            return vector.getInteger(index);
         }
-        if (left instanceof Comparable comparable && left.getClass().isInstance(right)) {
-            return comparable.compareTo(right);
+        if (type.equals(LogicalType.BIGINT)) {
+            return vector.getBigint(index);
         }
-        throw new ExecutionException("Cannot compare " + left.getClass().getSimpleName()
-                + " and " + right.getClass().getSimpleName());
+        if (type.equals(LogicalType.DOUBLE)) {
+            return (long) vector.getDouble(index);
+        }
+        throw new ExecutionException("Expected numeric value but got " + type.id().name());
     }
 
-    private boolean truthy(Object value) {
-        if (value instanceof Boolean booleanValue) {
-            return booleanValue;
+    private byte readTriState(Vector vector, int index) {
+        if (vector.isNull(index)) {
+            return TRI_NULL;
         }
-        if (value == null) {
-            return false;
+        if (!vector.logicalType().equals(LogicalType.BOOLEAN)) {
+            throw new ExecutionException("Predicate did not evaluate to BOOLEAN");
         }
-        throw new ExecutionException("Predicate did not evaluate to BOOLEAN");
+        return vector.getBoolean(index) ? TRI_TRUE : TRI_FALSE;
+    }
+
+    private void writeTriState(Vector result, int index, byte value) {
+        if (value == TRI_NULL) {
+            result.setNull(index);
+            return;
+        }
+        result.setBoolean(index, value == TRI_TRUE);
+    }
+
+    private byte triNegate(byte value) {
+        if (value == TRI_NULL) {
+            return TRI_NULL;
+        }
+        return value == TRI_TRUE ? TRI_FALSE : TRI_TRUE;
+    }
+
+    private byte triAnd(byte left, byte right) {
+        if (left == TRI_FALSE || right == TRI_FALSE) {
+            return TRI_FALSE;
+        }
+        if (left == TRI_NULL || right == TRI_NULL) {
+            return TRI_NULL;
+        }
+        return TRI_TRUE;
+    }
+
+    private byte triOr(byte left, byte right) {
+        if (left == TRI_TRUE || right == TRI_TRUE) {
+            return TRI_TRUE;
+        }
+        if (left == TRI_NULL || right == TRI_NULL) {
+            return TRI_NULL;
+        }
+        return TRI_FALSE;
     }
 
     private enum Comparison {
+        EQUAL,
         LESS_THAN,
         LESS_THAN_OR_EQUAL,
         GREATER_THAN,

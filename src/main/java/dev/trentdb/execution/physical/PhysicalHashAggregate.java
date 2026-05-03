@@ -17,6 +17,7 @@ import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.storage.InMemoryTableStorage;
 import dev.trentdb.types.LogicalType;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -57,8 +58,7 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
             for (int selectIndex = 0; selectIndex < selectList.size(); selectIndex++) {
                 if (selectList.get(selectIndex) instanceof BoundAggregateExpression aggregate) {
                     Vector argumentVector = aggregateVectors.get(selectIndex);
-                    Object value = aggregate.starArgument() ? null : argumentVector.get(rowIndex);
-                    row.states[selectIndex].update(value, aggregate.starArgument());
+                    row.states[selectIndex].update(argumentVector, rowIndex, aggregate.starArgument());
                 }
             }
         }
@@ -73,7 +73,8 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
         }
         ArrayList<AggregateRow> rows = new ArrayList<>(state.groups.values());
         for (int offset = 0; offset < rows.size(); offset += InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
-            downstream.accept(chunk(rows, offset, Math.min(InMemoryTableStorage.STANDARD_VECTOR_SIZE, rows.size() - offset)));
+            int size = Math.min(InMemoryTableStorage.STANDARD_VECTOR_SIZE, rows.size() - offset);
+            downstream.accept(chunk(rows, offset, size));
         }
     }
 
@@ -95,9 +96,9 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
     }
 
     private GroupKey groupKey(List<Vector> groupVectors, int rowIndex) {
-        ArrayList<Object> values = new ArrayList<>(groupVectors.size());
+        ArrayList<Cell> values = new ArrayList<>(groupVectors.size());
         for (Vector vector : groupVectors) {
-            values.add(vector.get(rowIndex));
+            values.add(Cell.fromVector(vector, rowIndex));
         }
         return new GroupKey(values);
     }
@@ -108,16 +109,17 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
             BoundExpression expression = selectList.get(selectIndex);
             Vector vector = new Vector(logicalType(expression), size);
             for (int rowIndex = 0; rowIndex < size; rowIndex++) {
-                vector.set(rowIndex, value(rows.get(offset + rowIndex), expression, selectIndex));
+                Cell value = value(rows.get(offset + rowIndex), expression, selectIndex);
+                value.writeTo(vector, rowIndex);
             }
             vectors.add(vector);
         }
         return new DataChunk(selectNames, vectors);
     }
 
-    private Object value(AggregateRow row, BoundExpression expression, int selectIndex) {
+    private Cell value(AggregateRow row, BoundExpression expression, int selectIndex) {
         if (expression instanceof BoundAggregateExpression) {
-            return row.states[selectIndex].result();
+            return row.states[selectIndex].resultCell();
         }
         for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
             if (groups.get(groupIndex).equals(expression)) {
@@ -141,7 +143,7 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
         };
     }
 
-    private record GroupKey(List<Object> values) {
+    private record GroupKey(List<Cell> values) {
         private GroupKey {
             values = List.copyOf(values);
         }
@@ -158,10 +160,10 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
     }
 
     private static final class AggregateRow {
-        private final List<Object> groupValues;
+        private final List<Cell> groupValues;
         private final AggregateState[] states;
 
-        private AggregateRow(List<Object> groupValues, List<BoundExpression> selectList) {
+        private AggregateRow(List<Cell> groupValues, List<BoundExpression> selectList) {
             this.groupValues = List.copyOf(groupValues);
             this.states = new AggregateState[selectList.size()];
             for (int index = 0; index < selectList.size(); index++) {
@@ -178,23 +180,24 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
         private long count;
         private double doubleSum;
         private long longSum;
-        private Object value;
+        private Cell value;
 
         private AggregateState(BoundAggregateExpression aggregate) {
             this.name = aggregate.name().toLowerCase(java.util.Locale.ROOT);
             this.returnType = aggregate.logicalType();
         }
 
-        private void update(Object input, boolean starArgument) {
+        private void update(Vector inputVector, int rowIndex, boolean starArgument) {
             if (name.equals("count")) {
-                if (starArgument || input != null) {
+                if (starArgument || (inputVector != null && !inputVector.isNull(rowIndex))) {
                     count++;
                 }
                 return;
             }
-            if (input == null) {
+            if (inputVector == null || inputVector.isNull(rowIndex)) {
                 return;
             }
+            Cell input = Cell.fromVector(inputVector, rowIndex);
             switch (name) {
                 case "sum" -> updateSum(input);
                 case "avg" -> updateAverage(input);
@@ -204,71 +207,198 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
             }
         }
 
-        private Object result() {
+        private Cell resultCell() {
             return switch (name) {
-                case "count" -> count;
+                case "count" -> Cell.bigint(count);
                 case "sum" -> sumResult();
-                case "avg" -> count == 0 ? null : doubleSum / count;
-                case "min", "max" -> value;
+                case "avg" -> count == 0 ? Cell.nullCell(returnType) : Cell.dbl(doubleSum / count);
+                case "min", "max" -> value == null ? Cell.nullCell(returnType) : value;
                 default -> throw new ExecutionException("Unsupported aggregate function: " + name);
             };
         }
 
-        private void updateSum(Object input) {
-            Number number = number(input);
+        private void updateSum(Cell input) {
             count++;
             if (returnType.equals(LogicalType.DOUBLE)) {
-                doubleSum += number.doubleValue();
+                doubleSum += input.numericAsDouble();
             } else {
-                longSum += number.longValue();
+                longSum += input.numericAsLong();
             }
         }
 
-        private void updateAverage(Object input) {
-            Number number = number(input);
+        private void updateAverage(Cell input) {
             count++;
-            doubleSum += number.doubleValue();
+            doubleSum += input.numericAsDouble();
         }
 
-        private Object sumResult() {
+        private Cell sumResult() {
             if (count == 0) {
-                return null;
+                return Cell.nullCell(returnType);
             }
             if (returnType.equals(LogicalType.DOUBLE)) {
-                return doubleSum;
+                return Cell.dbl(doubleSum);
             }
-            return longSum;
+            return Cell.bigint(longSum);
         }
 
-        private void updateMin(Object input) {
-            if (value == null || compare(input, value) < 0) {
+        private void updateMin(Cell input) {
+            if (value == null || input.compareTo(value) < 0) {
                 value = input;
             }
         }
 
-        private void updateMax(Object input) {
-            if (value == null || compare(input, value) > 0) {
+        private void updateMax(Cell input) {
+            if (value == null || input.compareTo(value) > 0) {
                 value = input;
             }
         }
+    }
 
-        private Number number(Object input) {
-            if (input instanceof Number number) {
-                return number;
-            }
-            throw new ExecutionException("Aggregate function " + name + " expects numeric input");
+    private record Cell(
+            LogicalType logicalType,
+            boolean isNull,
+            boolean booleanValue,
+            int integerValue,
+            long bigintValue,
+            double doubleValue,
+            String textValue,
+            LocalDate dateValue
+    ) {
+        private static Cell nullCell(LogicalType logicalType) {
+            return new Cell(logicalType, true, false, 0, 0L, 0.0d, null, null);
         }
 
-        @SuppressWarnings({"rawtypes", "unchecked"})
-        private int compare(Object left, Object right) {
-            if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
-                return Double.compare(leftNumber.doubleValue(), rightNumber.doubleValue());
+        private static Cell bool(boolean value) {
+            return new Cell(LogicalType.BOOLEAN, false, value, 0, 0L, 0.0d, null, null);
+        }
+
+        private static Cell integer(int value) {
+            return new Cell(LogicalType.INTEGER, false, false, value, 0L, 0.0d, null, null);
+        }
+
+        private static Cell bigint(long value) {
+            return new Cell(LogicalType.BIGINT, false, false, 0, value, 0.0d, null, null);
+        }
+
+        private static Cell dbl(double value) {
+            return new Cell(LogicalType.DOUBLE, false, false, 0, 0L, value, null, null);
+        }
+
+        private static Cell text(String value) {
+            return value == null ? nullCell(LogicalType.TEXT)
+                    : new Cell(LogicalType.TEXT, false, false, 0, 0L, 0.0d, value, null);
+        }
+
+        private static Cell date(LocalDate value) {
+            return value == null ? nullCell(LogicalType.DATE)
+                    : new Cell(LogicalType.DATE, false, false, 0, 0L, 0.0d, null, value);
+        }
+
+        private static Cell fromVector(Vector vector, int rowIndex) {
+            if (vector.isNull(rowIndex)) {
+                return nullCell(vector.logicalType());
             }
-            if (left instanceof Comparable comparable && left.getClass().isInstance(right)) {
-                return comparable.compareTo(right);
+            LogicalType type = vector.logicalType();
+            if (type.equals(LogicalType.BOOLEAN)) {
+                return bool(vector.getBoolean(rowIndex));
             }
-            throw new ExecutionException("Cannot aggregate compare " + left.getClass().getSimpleName()
-                    + " and " + right.getClass().getSimpleName());
+            if (type.equals(LogicalType.INTEGER)) {
+                return integer(vector.getInteger(rowIndex));
+            }
+            if (type.equals(LogicalType.BIGINT)) {
+                return bigint(vector.getBigint(rowIndex));
+            }
+            if (type.equals(LogicalType.DOUBLE)) {
+                return dbl(vector.getDouble(rowIndex));
+            }
+            if (type.equals(LogicalType.TEXT)) {
+                return text(vector.getText(rowIndex));
+            }
+            if (type.equals(LogicalType.DATE)) {
+                return date(vector.getDate(rowIndex));
+            }
+            return nullCell(type);
+        }
+
+        private void writeTo(Vector vector, int rowIndex) {
+            if (isNull) {
+                vector.setNull(rowIndex);
+                return;
+            }
+            if (logicalType.equals(LogicalType.BOOLEAN)) {
+                vector.setBoolean(rowIndex, booleanValue);
+                return;
+            }
+            if (logicalType.equals(LogicalType.INTEGER)) {
+                vector.setInteger(rowIndex, integerValue);
+                return;
+            }
+            if (logicalType.equals(LogicalType.BIGINT)) {
+                vector.setBigint(rowIndex, bigintValue);
+                return;
+            }
+            if (logicalType.equals(LogicalType.DOUBLE)) {
+                vector.setDouble(rowIndex, doubleValue);
+                return;
+            }
+            if (logicalType.equals(LogicalType.TEXT)) {
+                vector.setText(rowIndex, textValue);
+                return;
+            }
+            if (logicalType.equals(LogicalType.DATE)) {
+                vector.setDate(rowIndex, dateValue);
+                return;
+            }
+            vector.setNull(rowIndex);
+        }
+
+        private int compareTo(Cell other) {
+            if (isNumeric() && other.isNumeric()) {
+                return Double.compare(numericAsDouble(), other.numericAsDouble());
+            }
+            if (logicalType.equals(LogicalType.BOOLEAN) && other.logicalType.equals(LogicalType.BOOLEAN)) {
+                return Boolean.compare(booleanValue, other.booleanValue);
+            }
+            if (logicalType.equals(LogicalType.TEXT) && other.logicalType.equals(LogicalType.TEXT)) {
+                return textValue.compareTo(other.textValue);
+            }
+            if (logicalType.equals(LogicalType.DATE) && other.logicalType.equals(LogicalType.DATE)) {
+                return dateValue.compareTo(other.dateValue);
+            }
+            throw new ExecutionException("Cannot aggregate compare " + logicalType.id().name()
+                    + " and " + other.logicalType.id().name());
+        }
+
+        private boolean isNumeric() {
+            return logicalType.equals(LogicalType.INTEGER)
+                    || logicalType.equals(LogicalType.BIGINT)
+                    || logicalType.equals(LogicalType.DOUBLE);
+        }
+
+        private long numericAsLong() {
+            if (logicalType.equals(LogicalType.INTEGER)) {
+                return integerValue;
+            }
+            if (logicalType.equals(LogicalType.BIGINT)) {
+                return bigintValue;
+            }
+            if (logicalType.equals(LogicalType.DOUBLE)) {
+                return (long) doubleValue;
+            }
+            throw new ExecutionException("Aggregate function expects numeric input");
+        }
+
+        private double numericAsDouble() {
+            if (logicalType.equals(LogicalType.INTEGER)) {
+                return integerValue;
+            }
+            if (logicalType.equals(LogicalType.BIGINT)) {
+                return bigintValue;
+            }
+            if (logicalType.equals(LogicalType.DOUBLE)) {
+                return doubleValue;
+            }
+            throw new ExecutionException("Aggregate function expects numeric input");
         }
     }
 }

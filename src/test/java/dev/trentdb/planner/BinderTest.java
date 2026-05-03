@@ -15,6 +15,7 @@ import dev.trentdb.planner.logical.LogicalAggregate;
 import dev.trentdb.planner.logical.LogicalExplain;
 import dev.trentdb.planner.logical.LogicalFilter;
 import dev.trentdb.planner.logical.LogicalGet;
+import dev.trentdb.planner.logical.LogicalJoin;
 import dev.trentdb.planner.logical.LogicalLimit;
 import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.planner.logical.LogicalOrder;
@@ -43,7 +44,8 @@ class BinderTest {
 
         BoundSelectStatement bound = bindSelect(fixture, "SELECT * FROM people");
 
-        assertSame(fixture.table, bound.from().table());
+        BoundTableRef from = assertInstanceOf(BoundTableRef.class, bound.from());
+        assertSame(fixture.table, from.table());
         assertEquals(2, bound.selectList().size());
 
         BoundColumnRefExpression id = assertInstanceOf(BoundColumnRefExpression.class, bound.selectList().get(0));
@@ -342,6 +344,57 @@ class BinderTest {
     }
 
     @Test
+    void bindsInnerJoin() {
+        Fixture fixture = peopleFixture();
+        fixture.catalog.createTable(
+                fixture.transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("person_id", TypeName.BIGINT),
+                        new ColumnDefinition("total", TypeName.BIGINT)
+                )
+        );
+
+        BoundSelectStatement bound = bindSelect(
+                fixture,
+                "SELECT p.id, o.person_id FROM people p JOIN orders o ON p.id = o.person_id"
+        );
+
+        BoundJoinRef join = assertInstanceOf(BoundJoinRef.class, bound.from());
+        assertSame(fixture.table, join.left().table());
+        assertEquals("p", join.left().alias());
+        assertEquals("orders", join.right().table().name());
+        assertEquals("o", join.right().alias());
+
+        BoundBinaryExpression predicate = assertInstanceOf(BoundBinaryExpression.class, join.condition());
+        assertEquals(BinaryOperator.EQUAL, predicate.operator());
+        BoundColumnRefExpression left = assertInstanceOf(BoundColumnRefExpression.class, predicate.left());
+        BoundColumnRefExpression right = assertInstanceOf(BoundColumnRefExpression.class, predicate.right());
+        assertEquals(0, left.ordinal());
+        assertEquals(2, right.ordinal());
+    }
+
+    @Test
+    void rejectsAmbiguousJoinColumnReference() {
+        Fixture fixture = peopleFixture();
+        fixture.catalog.createTable(
+                fixture.transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("id", TypeName.BIGINT),
+                        new ColumnDefinition("person_id", TypeName.BIGINT)
+                )
+        );
+
+        BinderException error = assertThrows(
+                BinderException.class,
+                () -> bindSelect(fixture, "SELECT id FROM people p JOIN orders o ON p.id = o.person_id")
+        );
+
+        assertEquals("Column reference is ambiguous: id", error.getMessage());
+    }
+
+    @Test
     void bindsAggregateOrderByAliasToOutputColumn() {
         Fixture fixture = peopleFixture();
 
@@ -417,6 +470,31 @@ class BinderTest {
 
         LogicalGet get = assertInstanceOf(LogicalGet.class, filter.child());
         assertSame(fixture.table, get.tableRef().table());
+    }
+
+    @Test
+    void plansLogicalProjectionOverJoin() {
+        Fixture fixture = peopleFixture();
+        fixture.catalog.createTable(
+                fixture.transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("person_id", TypeName.BIGINT),
+                        new ColumnDefinition("total", TypeName.BIGINT)
+                )
+        );
+        BoundSelectStatement bound = bindSelect(
+                fixture,
+                "SELECT p.id FROM people p JOIN orders o ON p.id = o.person_id"
+        );
+
+        LogicalOperator logical = new LogicalPlanner().plan(bound);
+
+        LogicalProjection projection = assertInstanceOf(LogicalProjection.class, logical);
+        LogicalJoin join = assertInstanceOf(LogicalJoin.class, projection.child());
+        assertEquals(LogicalOperatorType.LOGICAL_COMPARISON_JOIN, join.type());
+        assertEquals("people", join.left().table().name());
+        assertEquals("orders", join.right().table().name());
     }
 
     @Test
@@ -551,6 +629,30 @@ class BinderTest {
                 LogicalExplain
                   LogicalAggregate groups=[1] expressions=[2]
                     LogicalGet people
+                """, new LogicalPlanPrinter().print(logical));
+    }
+
+    @Test
+    void printsJoinLogicalPlan() {
+        Fixture fixture = peopleFixture();
+        fixture.catalog.createTable(
+                fixture.transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("person_id", TypeName.BIGINT),
+                        new ColumnDefinition("total", TypeName.BIGINT)
+                )
+        );
+        Statement statement = parser.parse("EXPLAIN SELECT p.id FROM people p JOIN orders o ON p.id = o.person_id");
+        BoundStatement bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);
+        LogicalOperator logical = new LogicalPlanner().plan(bound);
+
+        assertEquals("""
+                LogicalExplain
+                  LogicalProjection [1]
+                    LogicalComparisonJoin
+                      LogicalGet people
+                      LogicalGet orders
                 """, new LogicalPlanPrinter().print(logical));
     }
 

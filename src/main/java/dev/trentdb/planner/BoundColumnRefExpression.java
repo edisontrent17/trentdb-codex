@@ -3,7 +3,11 @@ package dev.trentdb.planner;
 import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.types.LogicalType;
 
-public record BoundColumnRefExpression(ColumnCatalogEntry column) implements BoundExpression {
+public record BoundColumnRefExpression(ColumnCatalogEntry column, int ordinal) implements BoundExpression {
+    public BoundColumnRefExpression(ColumnCatalogEntry column) {
+        this(column, column.ordinal());
+    }
+
     public String name() {
         return column.name();
     }
@@ -12,7 +16,4 @@ public record BoundColumnRefExpression(ColumnCatalogEntry column) implements Bou
         return column.logicalType();
     }
 
-    public int ordinal() {
-        return column.ordinal();
-    }
 }
