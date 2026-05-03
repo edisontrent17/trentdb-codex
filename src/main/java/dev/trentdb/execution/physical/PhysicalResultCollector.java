@@ -24,7 +24,7 @@ public final class PhysicalResultCollector implements PhysicalSink {
         for (int rowIndex = 0; rowIndex < chunk.cardinality(); rowIndex++) {
             ArrayList<Object> row = new ArrayList<>(chunk.vectors().size());
             for (Vector vector : chunk.vectors()) {
-                row.add(vector.get(rowIndex));
+                row.add(vector.boxedValue(rowIndex));
             }
             rows.add(row);
         }

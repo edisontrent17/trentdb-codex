@@ -53,7 +53,7 @@ final class CsvReplacementScanProvider implements ReplacementScanProvider {
                     for (int rowIndex = 0; rowIndex < size; rowIndex++) {
                         String[] values = dataLines.get(offset + rowIndex).split(",", -1);
                         String value = column.ordinal() < values.length ? values[column.ordinal()] : null;
-                        vector.set(rowIndex, parseValue(value, column.logicalType()));
+                        writeValue(vector, rowIndex, value, column.logicalType());
                     }
                     vectors.add(vector);
                 }
@@ -99,20 +99,24 @@ final class CsvReplacementScanProvider implements ReplacementScanProvider {
         return LogicalType.TEXT;
     }
 
-    private Object parseValue(String value, LogicalType type) {
+    private void writeValue(Vector vector, int rowIndex, String value, LogicalType type) {
         if (value == null || value.isEmpty()) {
-            return null;
+            vector.setNull(rowIndex);
+            return;
         }
         if (type.equals(LogicalType.DATE)) {
-            return LocalDate.parse(value);
+            vector.setDate(rowIndex, LocalDate.parse(value));
+            return;
         }
         if (type.equals(LogicalType.BIGINT)) {
-            return Long.parseLong(value);
+            vector.setBigint(rowIndex, Long.parseLong(value));
+            return;
         }
         if (type.equals(LogicalType.DOUBLE)) {
-            return Double.parseDouble(value);
+            vector.setDouble(rowIndex, Double.parseDouble(value));
+            return;
         }
-        return value;
+        vector.setText(rowIndex, value);
     }
 
     private boolean canParseDate(String value) {

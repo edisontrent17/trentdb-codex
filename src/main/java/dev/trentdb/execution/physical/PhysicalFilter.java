@@ -6,6 +6,7 @@ import dev.trentdb.common.vector.Vector;
 import dev.trentdb.execution.ExecutionException;
 import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundExpression;
+import dev.trentdb.types.LogicalType;
 
 public final class PhysicalFilter implements PhysicalOperator {
     private final BoundExpression predicate;
@@ -33,11 +34,10 @@ public final class PhysicalFilter implements PhysicalOperator {
             if (predicateVector.isNull(index)) {
                 continue;
             }
-            Object value = predicateVector.get(index);
-            if (!(value instanceof Boolean booleanValue)) {
+            if (!predicateVector.logicalType().equals(LogicalType.BOOLEAN)) {
                 throw new ExecutionException("Predicate did not evaluate to BOOLEAN");
             }
-            if (booleanValue) {
+            if (predicateVector.getBoolean(index)) {
                 selection.setIndex(selectedCount, index);
                 selectedCount++;
             }

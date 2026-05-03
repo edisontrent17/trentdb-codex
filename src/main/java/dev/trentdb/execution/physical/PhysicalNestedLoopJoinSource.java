@@ -119,11 +119,11 @@ public final class PhysicalNestedLoopJoinSource implements PhysicalSource {
             int rightIndex
     ) {
         for (int columnIndex = 0; columnIndex < leftChunk.vectors().size(); columnIndex++) {
-            target.get(columnIndex).set(targetIndex, leftChunk.column(columnIndex).get(leftIndex));
+            target.get(columnIndex).copyFrom(targetIndex, leftChunk.column(columnIndex), leftIndex);
         }
         int rightOffset = leftChunk.vectors().size();
         for (int columnIndex = 0; columnIndex < rightChunk.vectors().size(); columnIndex++) {
-            target.get(rightOffset + columnIndex).set(targetIndex, rightChunk.column(columnIndex).get(rightIndex));
+            target.get(rightOffset + columnIndex).copyFrom(targetIndex, rightChunk.column(columnIndex), rightIndex);
         }
     }
 
@@ -160,7 +160,7 @@ public final class PhysicalNestedLoopJoinSource implements PhysicalSource {
         for (int columnIndex = 0; columnIndex < vectors.size(); columnIndex++) {
             Vector vector = vectors.get(columnIndex);
             for (int rowIndex = 0; rowIndex < cardinality; rowIndex++) {
-                vector.set(rowIndex, sourceVectors.get(columnIndex).get(rowIndex));
+                vector.copyFrom(rowIndex, sourceVectors.get(columnIndex), rowIndex);
             }
         }
         return new DataChunk(names, vectors);

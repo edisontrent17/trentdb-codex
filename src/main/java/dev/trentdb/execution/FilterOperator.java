@@ -3,6 +3,7 @@ package dev.trentdb.execution;
 import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.SelectionVector;
 import dev.trentdb.planner.BoundExpression;
+import dev.trentdb.types.LogicalType;
 
 final class FilterOperator implements ChunkConsumer {
     private final BoundExpression predicate;
@@ -16,18 +17,17 @@ final class FilterOperator implements ChunkConsumer {
 
     @Override
     public void accept(DataChunk chunk) {
-        var predicateVector = expressionExecutor.execute(predicate, chunk);
-        var selection = new SelectionVector(chunk.cardinality());
+        dev.trentdb.common.vector.Vector predicateVector = expressionExecutor.execute(predicate, chunk);
+        SelectionVector selection = new SelectionVector(chunk.cardinality());
         int selectedCount = 0;
         for (int index = 0; index < chunk.cardinality(); index++) {
             if (predicateVector.isNull(index)) {
                 continue;
             }
-            var value = predicateVector.get(index);
-            if (!(value instanceof Boolean booleanValue)) {
+            if (!predicateVector.logicalType().equals(LogicalType.BOOLEAN)) {
                 throw new ExecutionException("Predicate did not evaluate to BOOLEAN");
             }
-            if (booleanValue) {
+            if (predicateVector.getBoolean(index)) {
                 selection.setIndex(selectedCount, index);
                 selectedCount++;
             }

@@ -35,12 +35,23 @@ public final class PhysicalOrder implements PhysicalOperator {
     public void execute(DataChunk input, OperatorInput operatorInput, PhysicalChunkConsumer downstream) {
         OrderLocalState state = (OrderLocalState) operatorInput.localState();
         state.captureSchema(input);
+        int chunkIndex = state.inputChunks.size();
+        state.inputChunks.add(input);
 
         List<Vector> orderVectors = orders.stream()
                 .map(order -> expressionExecutor.execute(order.expression(), input))
                 .toList();
+        if (state.orderNames == null) {
+            ArrayList<String> orderNames = new ArrayList<>(orderVectors.size());
+            for (int index = 0; index < orderVectors.size(); index++) {
+                orderNames.add("order_" + index);
+            }
+            state.orderNames = orderNames;
+        }
+        state.orderChunks.add(new DataChunk(state.orderNames, orderVectors));
+
         for (int rowIndex = 0; rowIndex < input.cardinality(); rowIndex++) {
-            state.rows.add(captureRow(input, orderVectors, rowIndex));
+            state.rows.add(new RowRef(chunkIndex, rowIndex));
         }
     }
 
@@ -51,9 +62,10 @@ public final class PhysicalOrder implements PhysicalOperator {
             downstream.accept(emptyChunk(state));
             return;
         }
-        state.rows.sort(rowComparator());
+        state.rows.sort(rowComparator(state));
         for (int offset = 0; offset < state.rows.size(); offset += InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
-            downstream.accept(chunk(state, offset, Math.min(InMemoryTableStorage.STANDARD_VECTOR_SIZE, state.rows.size() - offset)));
+            int size = Math.min(InMemoryTableStorage.STANDARD_VECTOR_SIZE, state.rows.size() - offset);
+            downstream.accept(chunk(state, offset, size));
         }
     }
 
@@ -62,27 +74,18 @@ public final class PhysicalOrder implements PhysicalOperator {
         throw new UnsupportedOperationException("PhysicalOrder requires operator state");
     }
 
-    private OrderedRow captureRow(DataChunk input, List<Vector> orderVectors, int rowIndex) {
-        Object[] values = new Object[input.vectors().size()];
-        for (int columnIndex = 0; columnIndex < input.vectors().size(); columnIndex++) {
-            values[columnIndex] = input.column(columnIndex).get(rowIndex);
-        }
-
-        Object[] keys = new Object[orderVectors.size()];
-        for (int keyIndex = 0; keyIndex < orderVectors.size(); keyIndex++) {
-            keys[keyIndex] = orderVectors.get(keyIndex).get(rowIndex);
-        }
-        return new OrderedRow(values, keys);
-    }
-
     private DataChunk chunk(OrderLocalState state, int offset, int size) {
         ArrayList<Vector> vectors = new ArrayList<>(state.types.size());
-        for (int columnIndex = 0; columnIndex < state.types.size(); columnIndex++) {
-            Vector vector = new Vector(state.types.get(columnIndex), size);
-            for (int rowIndex = 0; rowIndex < size; rowIndex++) {
-                vector.set(rowIndex, state.rows.get(offset + rowIndex).values[columnIndex]);
+        for (LogicalType type : state.types) {
+            vectors.add(new Vector(type, size));
+        }
+
+        for (int rowIndex = 0; rowIndex < size; rowIndex++) {
+            RowRef rowRef = state.rows.get(offset + rowIndex);
+            DataChunk sourceChunk = state.inputChunks.get(rowRef.chunkIndex());
+            for (int columnIndex = 0; columnIndex < vectors.size(); columnIndex++) {
+                vectors.get(columnIndex).copyFrom(rowIndex, sourceChunk.column(columnIndex), rowRef.rowIndex());
             }
-            vectors.add(vector);
         }
         return new DataChunk(state.names, vectors);
     }
@@ -94,10 +97,18 @@ public final class PhysicalOrder implements PhysicalOperator {
         return new DataChunk(state.names, vectors);
     }
 
-    private Comparator<OrderedRow> rowComparator() {
+    private Comparator<RowRef> rowComparator(OrderLocalState state) {
         return (left, right) -> {
             for (int index = 0; index < orders.size(); index++) {
-                int result = compareKey(left.keys[index], right.keys[index], orders.get(index).direction());
+                DataChunk leftOrderChunk = state.orderChunks.get(left.chunkIndex());
+                DataChunk rightOrderChunk = state.orderChunks.get(right.chunkIndex());
+                int result = compareKey(
+                        leftOrderChunk.column(index),
+                        left.rowIndex(),
+                        rightOrderChunk.column(index),
+                        right.rowIndex(),
+                        orders.get(index).direction()
+                );
                 if (result != 0) {
                     return result;
                 }
@@ -106,33 +117,66 @@ public final class PhysicalOrder implements PhysicalOperator {
         };
     }
 
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    private int compareKey(Object left, Object right, SortDirection direction) {
-        if (left == null && right == null) {
+    private int compareKey(Vector left, int leftIndex, Vector right, int rightIndex, SortDirection direction) {
+        if (left.isNull(leftIndex) && right.isNull(rightIndex)) {
             return 0;
         }
-        if (left == null) {
+        if (left.isNull(leftIndex)) {
             return 1;
         }
-        if (right == null) {
+        if (right.isNull(rightIndex)) {
             return -1;
         }
 
-        int result;
-        if (left instanceof Number leftNumber && right instanceof Number rightNumber) {
-            result = Double.compare(leftNumber.doubleValue(), rightNumber.doubleValue());
-        } else if (left instanceof Comparable comparable && left.getClass().isInstance(right)) {
-            result = comparable.compareTo(right);
-        } else {
-            throw new ExecutionException("Cannot order values " + left.getClass().getSimpleName()
-                    + " and " + right.getClass().getSimpleName());
-        }
+        int result = compareNonNull(left, leftIndex, right, rightIndex);
         return direction == SortDirection.ASC ? result : -result;
     }
 
+    private int compareNonNull(Vector left, int leftIndex, Vector right, int rightIndex) {
+        LogicalType leftType = left.logicalType();
+        LogicalType rightType = right.logicalType();
+
+        if (isNumeric(leftType) && isNumeric(rightType)) {
+            return Double.compare(numericAsDouble(left, leftIndex), numericAsDouble(right, rightIndex));
+        }
+        if (leftType.equals(LogicalType.BOOLEAN) && rightType.equals(LogicalType.BOOLEAN)) {
+            return Boolean.compare(left.getBoolean(leftIndex), right.getBoolean(rightIndex));
+        }
+        if (leftType.equals(LogicalType.TEXT) && rightType.equals(LogicalType.TEXT)) {
+            return left.getText(leftIndex).compareTo(right.getText(rightIndex));
+        }
+        if (leftType.equals(LogicalType.DATE) && rightType.equals(LogicalType.DATE)) {
+            return left.getDate(leftIndex).compareTo(right.getDate(rightIndex));
+        }
+        throw new ExecutionException("Cannot order values " + leftType.id().name() + " and " + rightType.id().name());
+    }
+
+    private boolean isNumeric(LogicalType type) {
+        return type.equals(LogicalType.INTEGER)
+                || type.equals(LogicalType.BIGINT)
+                || type.equals(LogicalType.DOUBLE);
+    }
+
+    private double numericAsDouble(Vector vector, int index) {
+        LogicalType type = vector.logicalType();
+        if (type.equals(LogicalType.INTEGER)) {
+            return vector.getInteger(index);
+        }
+        if (type.equals(LogicalType.BIGINT)) {
+            return vector.getBigint(index);
+        }
+        if (type.equals(LogicalType.DOUBLE)) {
+            return vector.getDouble(index);
+        }
+        throw new ExecutionException("Cannot order non-numeric type " + type.id().name());
+    }
+
     private static final class OrderLocalState extends LocalOperatorState {
-        private final List<OrderedRow> rows = new ArrayList<>();
+        private final List<RowRef> rows = new ArrayList<>();
+        private final List<DataChunk> inputChunks = new ArrayList<>();
+        private final List<DataChunk> orderChunks = new ArrayList<>();
         private List<String> names;
+        private List<String> orderNames;
         private List<LogicalType> types;
 
         private void captureSchema(DataChunk input) {
@@ -146,6 +190,6 @@ public final class PhysicalOrder implements PhysicalOperator {
         }
     }
 
-    private record OrderedRow(Object[] values, Object[] keys) {
+    private record RowRef(int chunkIndex, int rowIndex) {
     }
 }

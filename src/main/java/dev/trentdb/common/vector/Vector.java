@@ -63,10 +63,10 @@ public final class Vector {
         this.dates = storage.dates();
     }
 
-    public static Vector constant(LogicalType logicalType, Object value, int size) {
+    public static Vector constantNull(LogicalType logicalType, int size) {
         ValidityMask validity = new ValidityMask(1);
-        validity.setValid(0, value != null);
-        Vector vector = new Vector(
+        validity.setValid(0, false);
+        return new Vector(
                 logicalType,
                 VectorType.CONSTANT,
                 validity,
@@ -75,9 +75,119 @@ public final class Vector {
                 size,
                 allocateStorage(logicalType, 1)
         );
-        if (value != null) {
-            vector.writeNonNullValue(0, value);
+    }
+
+    public static Vector constantBoolean(Boolean value, int size) {
+        if (value == null) {
+            return constantNull(LogicalType.BOOLEAN, size);
         }
+        ValidityMask validity = new ValidityMask(1);
+        validity.setValid(0, true);
+        Vector vector = new Vector(
+                LogicalType.BOOLEAN,
+                VectorType.CONSTANT,
+                validity,
+                null,
+                null,
+                size,
+                allocateStorage(LogicalType.BOOLEAN, 1)
+        );
+        vector.booleans[0] = value;
+        return vector;
+    }
+
+    public static Vector constantInteger(Integer value, int size) {
+        if (value == null) {
+            return constantNull(LogicalType.INTEGER, size);
+        }
+        ValidityMask validity = new ValidityMask(1);
+        validity.setValid(0, true);
+        Vector vector = new Vector(
+                LogicalType.INTEGER,
+                VectorType.CONSTANT,
+                validity,
+                null,
+                null,
+                size,
+                allocateStorage(LogicalType.INTEGER, 1)
+        );
+        vector.integers[0] = value;
+        return vector;
+    }
+
+    public static Vector constantBigint(Long value, int size) {
+        if (value == null) {
+            return constantNull(LogicalType.BIGINT, size);
+        }
+        ValidityMask validity = new ValidityMask(1);
+        validity.setValid(0, true);
+        Vector vector = new Vector(
+                LogicalType.BIGINT,
+                VectorType.CONSTANT,
+                validity,
+                null,
+                null,
+                size,
+                allocateStorage(LogicalType.BIGINT, 1)
+        );
+        vector.bigints[0] = value;
+        return vector;
+    }
+
+    public static Vector constantDouble(Double value, int size) {
+        if (value == null) {
+            return constantNull(LogicalType.DOUBLE, size);
+        }
+        ValidityMask validity = new ValidityMask(1);
+        validity.setValid(0, true);
+        Vector vector = new Vector(
+                LogicalType.DOUBLE,
+                VectorType.CONSTANT,
+                validity,
+                null,
+                null,
+                size,
+                allocateStorage(LogicalType.DOUBLE, 1)
+        );
+        vector.doubles[0] = value;
+        return vector;
+    }
+
+    public static Vector constantText(String value, int size) {
+        if (value == null) {
+            return constantNull(LogicalType.TEXT, size);
+        }
+        ValidityMask validity = new ValidityMask(1);
+        validity.setValid(0, true);
+        Vector vector = new Vector(
+                LogicalType.TEXT,
+                VectorType.CONSTANT,
+                validity,
+                null,
+                null,
+                size,
+                allocateStorage(LogicalType.TEXT, 1)
+        );
+        vector.texts[0] = value;
+        return vector;
+    }
+
+    public static Vector constantDate(LocalDate value, int size) {
+        if (value == null) {
+            return constantNull(LogicalType.DATE, size);
+        }
+        ValidityMask validity = new ValidityMask(1);
+        validity.setValid(0, true);
+        Vector vector = new Vector(
+                LogicalType.DATE,
+                VectorType.CONSTANT,
+                validity,
+                null,
+                null,
+                size,
+                allocateStorage(LogicalType.DATE, 1)
+        );
+        vector.dates[0] = value;
         return vector;
     }
 
@@ -105,29 +215,6 @@ public final class Vector {
         return size;
     }
 
-    public Object get(int index) {
-        if (isNull(index)) {
-            return null;
-        }
-        return switch (vectorType) {
-            case FLAT -> getFlatValue(index);
-            case CONSTANT -> getFlatValue(0);
-            case DICTIONARY -> child.get(selection.getIndex(index));
-        };
-    }
-
-    public void set(int index, Object value) {
-        if (vectorType != VectorType.FLAT) {
-            throw new IllegalStateException("Only flat vectors can be mutated");
-        }
-        if (value == null) {
-            setNull(index);
-            return;
-        }
-        writeNonNullValue(index, value);
-        validity.setValid(index, true);
-    }
-
     public boolean isNull(int index) {
         return switch (vectorType) {
             case FLAT -> !validity.isValid(index);
@@ -148,66 +235,6 @@ public final class Vector {
         return dictionary(this, selection, selectedCount);
     }
 
-    private Object getFlatValue(int index) {
-        return switch (logicalType.id()) {
-            case BOOLEAN -> booleans[index];
-            case INTEGER -> integers[index];
-            case BIGINT -> bigints[index];
-            case DOUBLE -> doubles[index];
-            case TEXT -> texts[index];
-            case DATE -> dates[index];
-            case NULL -> null;
-        };
-    }
-
-    private void writeNonNullValue(int index, Object value) {
-        switch (logicalType.id()) {
-            case BOOLEAN -> {
-                if (value instanceof Boolean bool) {
-                    booleans[index] = bool;
-                    return;
-                }
-                throw typeMismatch(value, "BOOLEAN");
-            }
-            case INTEGER -> {
-                if (value instanceof Number number) {
-                    integers[index] = number.intValue();
-                    return;
-                }
-                throw typeMismatch(value, "INTEGER");
-            }
-            case BIGINT -> {
-                if (value instanceof Number number) {
-                    bigints[index] = number.longValue();
-                    return;
-                }
-                throw typeMismatch(value, "BIGINT");
-            }
-            case DOUBLE -> {
-                if (value instanceof Number number) {
-                    doubles[index] = number.doubleValue();
-                    return;
-                }
-                throw typeMismatch(value, "DOUBLE");
-            }
-            case TEXT -> {
-                if (value instanceof String text) {
-                    texts[index] = text;
-                    return;
-                }
-                throw typeMismatch(value, "TEXT");
-            }
-            case DATE -> {
-                if (value instanceof LocalDate date) {
-                    dates[index] = date;
-                    return;
-                }
-                throw typeMismatch(value, "DATE");
-            }
-            case NULL -> throw new IllegalArgumentException("NULL vector cannot store non-null values");
-        }
-    }
-
     private void clearValue(int index) {
         switch (logicalType.id()) {
             case BOOLEAN -> booleans[index] = false;
@@ -220,13 +247,6 @@ public final class Vector {
                 return;
             }
         }
-    }
-
-    private IllegalArgumentException typeMismatch(Object value, String expected) {
-        return new IllegalArgumentException(
-                "Expected " + expected + " value for vector type " + logicalType.id().name() + " but got "
-                        + value.getClass().getSimpleName()
-        );
     }
 
     private static VectorStorage allocateStorage(LogicalType logicalType, int size) {
@@ -253,11 +273,14 @@ public final class Vector {
 
     public boolean getBoolean(int index) {
         ensureType(LogicalType.BOOLEAN, "BOOLEAN");
-        int valueIndex = resolvedIndex(index);
         if (isNull(index)) {
             throw new IllegalStateException("Value at index " + index + " is NULL");
         }
-        return booleans[valueIndex];
+        return switch (vectorType) {
+            case FLAT -> booleans[index];
+            case CONSTANT -> booleans[0];
+            case DICTIONARY -> child.getBoolean(selection.getIndex(index));
+        };
     }
 
     public void setBoolean(int index, boolean value) {
@@ -267,13 +290,35 @@ public final class Vector {
         validity.setValid(index, true);
     }
 
-    public long getBigint(int index) {
-        ensureType(LogicalType.BIGINT, "BIGINT");
-        int valueIndex = resolvedIndex(index);
+    public int getInteger(int index) {
+        ensureType(LogicalType.INTEGER, "INTEGER");
         if (isNull(index)) {
             throw new IllegalStateException("Value at index " + index + " is NULL");
         }
-        return bigints[valueIndex];
+        return switch (vectorType) {
+            case FLAT -> integers[index];
+            case CONSTANT -> integers[0];
+            case DICTIONARY -> child.getInteger(selection.getIndex(index));
+        };
+    }
+
+    public void setInteger(int index, int value) {
+        ensureFlat();
+        ensureType(LogicalType.INTEGER, "INTEGER");
+        integers[index] = value;
+        validity.setValid(index, true);
+    }
+
+    public long getBigint(int index) {
+        ensureType(LogicalType.BIGINT, "BIGINT");
+        if (isNull(index)) {
+            throw new IllegalStateException("Value at index " + index + " is NULL");
+        }
+        return switch (vectorType) {
+            case FLAT -> bigints[index];
+            case CONSTANT -> bigints[0];
+            case DICTIONARY -> child.getBigint(selection.getIndex(index));
+        };
     }
 
     public void setBigint(int index, long value) {
@@ -285,11 +330,14 @@ public final class Vector {
 
     public double getDouble(int index) {
         ensureType(LogicalType.DOUBLE, "DOUBLE");
-        int valueIndex = resolvedIndex(index);
         if (isNull(index)) {
             throw new IllegalStateException("Value at index " + index + " is NULL");
         }
-        return doubles[valueIndex];
+        return switch (vectorType) {
+            case FLAT -> doubles[index];
+            case CONSTANT -> doubles[0];
+            case DICTIONARY -> child.getDouble(selection.getIndex(index));
+        };
     }
 
     public void setDouble(int index, double value) {
@@ -301,11 +349,14 @@ public final class Vector {
 
     public String getText(int index) {
         ensureType(LogicalType.TEXT, "TEXT");
-        int valueIndex = resolvedIndex(index);
         if (isNull(index)) {
             return null;
         }
-        return texts[valueIndex];
+        return switch (vectorType) {
+            case FLAT -> texts[index];
+            case CONSTANT -> texts[0];
+            case DICTIONARY -> child.getText(selection.getIndex(index));
+        };
     }
 
     public void setText(int index, String value) {
@@ -319,12 +370,67 @@ public final class Vector {
         validity.setValid(index, true);
     }
 
-    private int resolvedIndex(int index) {
+    public LocalDate getDate(int index) {
+        ensureType(LogicalType.DATE, "DATE");
+        if (isNull(index)) {
+            throw new IllegalStateException("Value at index " + index + " is NULL");
+        }
         return switch (vectorType) {
-            case FLAT -> index;
-            case CONSTANT -> 0;
-            case DICTIONARY -> selection.getIndex(index);
+            case FLAT -> dates[index];
+            case CONSTANT -> dates[0];
+            case DICTIONARY -> child.getDate(selection.getIndex(index));
         };
+    }
+
+    public void setDate(int index, LocalDate value) {
+        ensureFlat();
+        ensureType(LogicalType.DATE, "DATE");
+        if (value == null) {
+            setNull(index);
+            return;
+        }
+        dates[index] = value;
+        validity.setValid(index, true);
+    }
+
+    public void copyFrom(int targetIndex, Vector source, int sourceIndex) {
+        ensureFlat();
+        ensureSameType(source);
+        if (source.isNull(sourceIndex)) {
+            setNull(targetIndex);
+            return;
+        }
+        switch (logicalType.id()) {
+            case BOOLEAN -> setBoolean(targetIndex, source.getBoolean(sourceIndex));
+            case INTEGER -> setInteger(targetIndex, source.getInteger(sourceIndex));
+            case BIGINT -> setBigint(targetIndex, source.getBigint(sourceIndex));
+            case DOUBLE -> setDouble(targetIndex, source.getDouble(sourceIndex));
+            case TEXT -> setText(targetIndex, source.getText(sourceIndex));
+            case DATE -> setDate(targetIndex, source.getDate(sourceIndex));
+            case NULL -> setNull(targetIndex);
+        }
+    }
+
+    public Object boxedValue(int index) {
+        if (isNull(index)) {
+            return null;
+        }
+        return switch (logicalType.id()) {
+            case BOOLEAN -> getBoolean(index);
+            case INTEGER -> getInteger(index);
+            case BIGINT -> getBigint(index);
+            case DOUBLE -> getDouble(index);
+            case TEXT -> getText(index);
+            case DATE -> getDate(index);
+            case NULL -> null;
+        };
+    }
+
+    private void ensureSameType(Vector source) {
+        if (!logicalType.equals(source.logicalType())) {
+            throw new IllegalStateException("Vector type mismatch: " + logicalType.id().name()
+                    + " vs " + source.logicalType().id().name());
+        }
     }
 
     private void ensureFlat() {
