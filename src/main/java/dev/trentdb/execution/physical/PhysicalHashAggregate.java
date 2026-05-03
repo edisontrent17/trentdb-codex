@@ -12,6 +12,7 @@ import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.storage.InMemoryTableStorage;
 import dev.trentdb.types.LogicalType;
 
@@ -134,6 +135,7 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
             case BoundColumnRefExpression column -> column.logicalType();
             case BoundFunctionExpression function -> function.logicalType();
             case BoundLiteralExpression literal -> literal.logicalType();
+            case BoundOutputColumnExpression output -> output.logicalType();
         };
     }
 

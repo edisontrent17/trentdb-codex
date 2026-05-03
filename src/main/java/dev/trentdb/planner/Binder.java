@@ -75,10 +75,8 @@ public final class Binder {
         }
 
         validateAggregates(selectList, groupBy);
-        if ((containsAggregate(selectList) || !groupBy.isEmpty()) && !statement.orderBy().isEmpty()) {
-            throw new BinderException("ORDER BY with aggregates is not supported yet");
-        }
-        List<BoundOrderByItem> orderBy = bindOrderBy(boundFrom, statement.orderBy(), selectList, selectNames);
+        boolean aggregateQuery = containsAggregate(selectList) || !groupBy.isEmpty();
+        List<BoundOrderByItem> orderBy = bindOrderBy(boundFrom, statement.orderBy(), selectList, selectNames, aggregateQuery);
         return new BoundSelectStatement(boundFrom, selectList, selectNames, where, groupBy, orderBy, statement.limit());
     }
 
@@ -139,44 +137,61 @@ public final class Binder {
             BoundTableRef table,
             List<OrderByItem> orderBy,
             List<BoundExpression> selectList,
-            List<String> selectNames
+            List<String> selectNames,
+            boolean aggregateQuery
     ) {
         ArrayList<BoundOrderByItem> result = new ArrayList<>(orderBy.size());
         for (OrderByItem item : orderBy) {
-            result.add(new BoundOrderByItem(bindOrderExpression(table, item.expression(), selectList, selectNames), item.direction()));
+            BoundExpression expression = bindOrderExpression(table, item.expression(), selectList, selectNames, aggregateQuery);
+            result.add(new BoundOrderByItem(expression, item.direction()));
         }
         return result;
     }
 
-    private BoundExpression bindOrderExpression(
-            BoundTableRef table,
-            Expression expression,
-            List<BoundExpression> selectList,
-            List<String> selectNames
-    ) {
+    private BoundExpression bindOrderExpression(BoundTableRef table, Expression expression, List<BoundExpression> selectList,
+                                                List<String> selectNames, boolean aggregateQuery) {
         if (expression instanceof LiteralExpression literal && literal.kind() == LiteralKind.INTEGER) {
             int ordinal = Math.toIntExact((Long) literal.value());
             if (ordinal < 1 || ordinal > selectList.size()) {
                 throw new BinderException("ORDER BY position " + ordinal + " is not in select list");
             }
+            if (aggregateQuery) {
+                return outputColumn(selectNames, selectList, ordinal - 1);
+            }
             return selectList.get(ordinal - 1);
         }
         if (expression instanceof ColumnReferenceExpression columnReference && columnReference.name().parts().size() == 1) {
             String alias = columnReference.name().last();
-            BoundExpression match = null;
+            int matchIndex = -1;
             for (int index = 0; index < selectNames.size(); index++) {
                 if (selectNames.get(index).equals(alias)) {
-                    if (match != null) {
+                    if (matchIndex >= 0) {
                         throw new BinderException("ORDER BY reference is ambiguous: " + alias);
                     }
-                    match = selectList.get(index);
+                    matchIndex = index;
                 }
             }
-            if (match != null) {
-                return match;
+            if (matchIndex >= 0) {
+                if (aggregateQuery) {
+                    return outputColumn(selectNames, selectList, matchIndex);
+                }
+                return selectList.get(matchIndex);
             }
         }
-        return bindExpression(table, expression, false);
+        BoundExpression bound = bindExpression(table, expression, false);
+        if (aggregateQuery) {
+            for (int index = 0; index < selectList.size(); index++) {
+                if (selectList.get(index).equals(bound)) {
+                    return outputColumn(selectNames, selectList, index);
+                }
+            }
+            throw new BinderException("ORDER BY expression must appear in aggregate query select list");
+        }
+        return bound;
+    }
+
+    private BoundOutputColumnExpression outputColumn(List<String> selectNames, List<BoundExpression> selectList, int index) {
+        return new BoundOutputColumnExpression(selectNames.get(index), index, logicalType(selectList.get(index)));
     }
 
     private BoundExpression bindExpression(BoundTableRef table, Expression expression) {
@@ -301,6 +316,7 @@ public final class Binder {
             case BoundAggregateExpression aggregate -> aggregate.logicalType();
             case BoundBetweenExpression between -> between.logicalType();
             case BoundCastExpression cast -> cast.logicalType();
+            case BoundOutputColumnExpression output -> output.logicalType();
         };
     }
 
@@ -431,6 +447,7 @@ public final class Binder {
                     || containsAggregate(between.upper());
             case BoundCastExpression cast -> containsAggregate(cast.child());
             case BoundColumnRefExpression ignored -> false;
+            case BoundOutputColumnExpression ignored -> false;
             case BoundFunctionExpression function -> {
                 boolean result = false;
                 for (BoundExpression argument : function.arguments()) {

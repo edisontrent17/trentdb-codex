@@ -309,6 +309,31 @@ class BinderTest {
     }
 
     @Test
+    void bindsAggregateOrderByAliasToOutputColumn() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT name, count(*) AS total FROM people GROUP BY name ORDER BY total DESC");
+
+        BoundOutputColumnExpression order = assertInstanceOf(BoundOutputColumnExpression.class, bound.orderBy().getFirst().expression());
+        assertEquals("total", order.name());
+        assertEquals(1, order.ordinal());
+        assertEquals(LogicalType.BIGINT, order.logicalType());
+        assertEquals(SortDirection.DESC, bound.orderBy().getFirst().direction());
+    }
+
+    @Test
+    void bindsAggregateOrderByGroupColumnToOutputColumn() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT name, count(*) FROM people GROUP BY name ORDER BY name");
+
+        BoundOutputColumnExpression order = assertInstanceOf(BoundOutputColumnExpression.class, bound.orderBy().getFirst().expression());
+        assertEquals("name", order.name());
+        assertEquals(0, order.ordinal());
+        assertEquals(LogicalType.TEXT, order.logicalType());
+    }
+
+    @Test
     void rejectsOrderByPositionOutsideSelectList() {
         Fixture fixture = peopleFixture();
 
@@ -400,6 +425,19 @@ class BinderTest {
         assertEquals(1, aggregate.groups().size());
         assertEquals(2, aggregate.selectList().size());
         assertInstanceOf(LogicalGet.class, aggregate.child());
+    }
+
+    @Test
+    void plansLogicalOrderOverAggregate() {
+        Fixture fixture = peopleFixture();
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT name, count(*) AS total FROM people GROUP BY name ORDER BY total");
+
+        LogicalOperator logical = new LogicalPlanner().plan(bound);
+
+        LogicalOrder order = assertInstanceOf(LogicalOrder.class, logical);
+        assertEquals(LogicalOperatorType.LOGICAL_ORDER_BY, order.type());
+        LogicalAggregate aggregate = assertInstanceOf(LogicalAggregate.class, order.child());
+        assertEquals(LogicalOperatorType.LOGICAL_AGGREGATE_AND_GROUP_BY, aggregate.type());
     }
 
     @Test
