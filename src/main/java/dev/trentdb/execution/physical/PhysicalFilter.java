@@ -20,6 +20,11 @@ public final class PhysicalFilter implements PhysicalOperator {
     }
 
     @Override
+    public PhysicalOperatorType type() {
+        return PhysicalOperatorType.FILTER;
+    }
+
+    @Override
     public void execute(DataChunk input, PhysicalChunkConsumer downstream) {
         Vector predicateVector = expressionExecutor.execute(predicate, input);
         SelectionVector selection = new SelectionVector(input.cardinality());

@@ -22,6 +22,11 @@ public final class PhysicalOrder implements PhysicalOperator {
     }
 
     @Override
+    public PhysicalOperatorType type() {
+        return PhysicalOperatorType.ORDER_BY;
+    }
+
+    @Override
     public LocalOperatorState createLocalOperatorState(GlobalOperatorState globalState) {
         return new OrderLocalState();
     }

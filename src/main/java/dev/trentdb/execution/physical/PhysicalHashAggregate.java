@@ -32,6 +32,11 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
     }
 
     @Override
+    public PhysicalOperatorType type() {
+        return PhysicalOperatorType.HASH_GROUP_BY;
+    }
+
+    @Override
     public LocalOperatorState createLocalOperatorState(GlobalOperatorState globalState) {
         return new AggregateLocalState(selectList);
     }

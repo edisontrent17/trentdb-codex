@@ -21,6 +21,7 @@ import dev.trentdb.planner.logical.LogicalOrder;
 import dev.trentdb.planner.logical.LogicalPlanPrinter;
 import dev.trentdb.planner.logical.LogicalPlanner;
 import dev.trentdb.planner.logical.LogicalProjection;
+import dev.trentdb.planner.logical.LogicalOperatorType;
 import dev.trentdb.transaction.TransactionManager;
 import dev.trentdb.types.LogicalType;
 import org.junit.jupiter.api.Test;
@@ -324,9 +325,11 @@ class BinderTest {
         LogicalOperator logical = new LogicalPlanner().plan(bound);
 
         LogicalProjection projection = assertInstanceOf(LogicalProjection.class, logical);
+        assertEquals(LogicalOperatorType.LOGICAL_PROJECTION, projection.type());
         assertEquals(1, projection.expressions().size());
 
         LogicalGet get = assertInstanceOf(LogicalGet.class, projection.child());
+        assertEquals(LogicalOperatorType.LOGICAL_GET, get.type());
         assertSame(fixture.table, get.tableRef().table());
     }
 
@@ -349,7 +352,9 @@ class BinderTest {
         LogicalOperator logical = new LogicalPlanner().plan(bound);
 
         LogicalProjection projection = assertInstanceOf(LogicalProjection.class, logical);
+        assertEquals(LogicalOperatorType.LOGICAL_PROJECTION, projection.type());
         LogicalFilter filter = assertInstanceOf(LogicalFilter.class, projection.child());
+        assertEquals(LogicalOperatorType.LOGICAL_FILTER, filter.type());
         assertSame(bound.where(), filter.predicate());
 
         LogicalGet get = assertInstanceOf(LogicalGet.class, filter.child());
@@ -364,6 +369,7 @@ class BinderTest {
         LogicalOperator logical = new LogicalPlanner().plan(bound);
 
         LogicalLimit limit = assertInstanceOf(LogicalLimit.class, logical);
+        assertEquals(LogicalOperatorType.LOGICAL_LIMIT, limit.type());
         assertEquals(1L, limit.limit());
         assertInstanceOf(LogicalProjection.class, limit.child());
     }
@@ -377,6 +383,7 @@ class BinderTest {
 
         LogicalProjection projection = assertInstanceOf(LogicalProjection.class, logical);
         LogicalOrder order = assertInstanceOf(LogicalOrder.class, projection.child());
+        assertEquals(LogicalOperatorType.LOGICAL_ORDER_BY, order.type());
         assertEquals(1, order.orders().size());
         assertInstanceOf(LogicalGet.class, order.child());
     }
@@ -389,6 +396,7 @@ class BinderTest {
         LogicalOperator logical = new LogicalPlanner().plan(bound);
 
         LogicalAggregate aggregate = assertInstanceOf(LogicalAggregate.class, logical);
+        assertEquals(LogicalOperatorType.LOGICAL_AGGREGATE_AND_GROUP_BY, aggregate.type());
         assertEquals(1, aggregate.groups().size());
         assertEquals(2, aggregate.selectList().size());
         assertInstanceOf(LogicalGet.class, aggregate.child());

@@ -11,6 +11,11 @@ public final class PhysicalLimit implements PhysicalOperator {
     }
 
     @Override
+    public PhysicalOperatorType type() {
+        return PhysicalOperatorType.LIMIT;
+    }
+
+    @Override
     public LocalOperatorState createLocalOperatorState(GlobalOperatorState globalState) {
         return new LimitLocalState();
     }

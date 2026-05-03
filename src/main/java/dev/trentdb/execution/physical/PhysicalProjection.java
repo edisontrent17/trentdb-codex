@@ -22,6 +22,11 @@ public final class PhysicalProjection implements PhysicalOperator {
     }
 
     @Override
+    public PhysicalOperatorType type() {
+        return PhysicalOperatorType.PROJECTION;
+    }
+
+    @Override
     public void execute(DataChunk input, PhysicalChunkConsumer downstream) {
         List<Vector> vectors = expressions.stream().map(expression -> expressionExecutor.execute(expression, input)).toList();
         downstream.accept(new DataChunk(names, vectors));

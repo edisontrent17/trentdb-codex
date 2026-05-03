@@ -4,6 +4,8 @@ import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.execution.QueryResult;
 
 public interface PhysicalOperator {
+    PhysicalOperatorType type();
+
     default GlobalOperatorState createGlobalOperatorState() {
         return new GlobalOperatorState();
     }
