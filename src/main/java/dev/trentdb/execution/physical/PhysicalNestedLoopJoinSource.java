@@ -46,18 +46,22 @@ public final class PhysicalNestedLoopJoinSource implements PhysicalSource {
         List<LogicalType> outputTypes = outputTypes(leftColumns, rightColumns);
         List<DataChunk> leftChunks = scanChunks(left);
         List<DataChunk> rightChunks = scanChunks(right);
-        ArrayList<Object[]> bufferedRows = new ArrayList<>(InMemoryTableStorage.STANDARD_VECTOR_SIZE);
+        List<Vector> outputVectors = createVectors(outputTypes, InMemoryTableStorage.STANDARD_VECTOR_SIZE);
+        int bufferedCount = 0;
+        DataChunk conditionRow = singleRowChunk(outputNames, outputTypes);
 
         for (DataChunk leftChunk : leftChunks) {
             for (DataChunk rightChunk : rightChunks) {
                 for (int leftIndex = 0; leftIndex < leftChunk.cardinality(); leftIndex++) {
                     for (int rightIndex = 0; rightIndex < rightChunk.cardinality(); rightIndex++) {
-                        Object[] joinedRow = joinedRow(leftChunk, leftIndex, rightChunk, rightIndex);
-                        if (matches(joinedRow, outputNames, outputTypes)) {
-                            bufferedRows.add(joinedRow);
-                            if (bufferedRows.size() >= InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
-                                consumer.accept(chunk(outputNames, outputTypes, bufferedRows));
-                                bufferedRows.clear();
+                        writeJoinedValues(conditionRow.vectors(), 0, leftChunk, leftIndex, rightChunk, rightIndex);
+                        if (matches(conditionRow)) {
+                            writeJoinedValues(outputVectors, bufferedCount, leftChunk, leftIndex, rightChunk, rightIndex);
+                            bufferedCount++;
+                            if (bufferedCount >= InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
+                                consumer.accept(new DataChunk(outputNames, outputVectors));
+                                outputVectors = createVectors(outputTypes, InMemoryTableStorage.STANDARD_VECTOR_SIZE);
+                                bufferedCount = 0;
                             }
                         }
                     }
@@ -65,8 +69,8 @@ public final class PhysicalNestedLoopJoinSource implements PhysicalSource {
             }
         }
 
-        if (!bufferedRows.isEmpty()) {
-            consumer.accept(chunk(outputNames, outputTypes, bufferedRows));
+        if (bufferedCount > 0) {
+            consumer.accept(compactChunk(outputNames, outputTypes, outputVectors, bufferedCount));
         }
     }
 
@@ -106,49 +110,58 @@ public final class PhysicalNestedLoopJoinSource implements PhysicalSource {
         return types;
     }
 
-    private Object[] joinedRow(DataChunk leftChunk, int leftIndex, DataChunk rightChunk, int rightIndex) {
-        Object[] row = new Object[leftChunk.vectors().size() + rightChunk.vectors().size()];
+    private void writeJoinedValues(
+            List<Vector> target,
+            int targetIndex,
+            DataChunk leftChunk,
+            int leftIndex,
+            DataChunk rightChunk,
+            int rightIndex
+    ) {
         for (int columnIndex = 0; columnIndex < leftChunk.vectors().size(); columnIndex++) {
-            row[columnIndex] = leftChunk.column(columnIndex).get(leftIndex);
+            target.get(columnIndex).set(targetIndex, leftChunk.column(columnIndex).get(leftIndex));
         }
         int rightOffset = leftChunk.vectors().size();
         for (int columnIndex = 0; columnIndex < rightChunk.vectors().size(); columnIndex++) {
-            row[rightOffset + columnIndex] = rightChunk.column(columnIndex).get(rightIndex);
+            target.get(rightOffset + columnIndex).set(targetIndex, rightChunk.column(columnIndex).get(rightIndex));
         }
-        return row;
     }
 
-    private boolean matches(Object[] joinedRow, List<String> names, List<LogicalType> types) {
-        DataChunk rowChunk = singleRowChunk(joinedRow, names, types);
-        Object value = expressionExecutor.execute(condition, rowChunk).get(0);
-        if (value == null) {
+    private boolean matches(DataChunk rowChunk) {
+        Vector valueVector = expressionExecutor.execute(condition, rowChunk);
+        if (valueVector.isNull(0)) {
             return false;
         }
-        if (!(value instanceof Boolean bool)) {
+        if (!valueVector.logicalType().equals(LogicalType.BOOLEAN)) {
             throw new ExecutionException("Join condition must evaluate to BOOLEAN");
         }
-        return bool;
+        return valueVector.getBoolean(0);
     }
 
-    private DataChunk singleRowChunk(Object[] row, List<String> names, List<LogicalType> types) {
-        ArrayList<Vector> vectors = new ArrayList<>(row.length);
-        for (int columnIndex = 0; columnIndex < row.length; columnIndex++) {
+    private DataChunk singleRowChunk(List<String> names, List<LogicalType> types) {
+        ArrayList<Vector> vectors = new ArrayList<>(types.size());
+        for (int columnIndex = 0; columnIndex < types.size(); columnIndex++) {
             Vector vector = new Vector(types.get(columnIndex), 1);
-            vector.set(0, row[columnIndex]);
             vectors.add(vector);
         }
         return new DataChunk(names, vectors);
     }
 
-    private DataChunk chunk(List<String> names, List<LogicalType> types, List<Object[]> rows) {
-        int cardinality = rows.size();
-        ArrayList<Vector> vectors = new ArrayList<>(names.size());
-        for (int columnIndex = 0; columnIndex < names.size(); columnIndex++) {
-            Vector vector = new Vector(types.get(columnIndex), cardinality);
+    private List<Vector> createVectors(List<LogicalType> types, int cardinality) {
+        ArrayList<Vector> vectors = new ArrayList<>(types.size());
+        for (LogicalType type : types) {
+            vectors.add(new Vector(type, cardinality));
+        }
+        return vectors;
+    }
+
+    private DataChunk compactChunk(List<String> names, List<LogicalType> types, List<Vector> sourceVectors, int cardinality) {
+        List<Vector> vectors = createVectors(types, cardinality);
+        for (int columnIndex = 0; columnIndex < vectors.size(); columnIndex++) {
+            Vector vector = vectors.get(columnIndex);
             for (int rowIndex = 0; rowIndex < cardinality; rowIndex++) {
-                vector.set(rowIndex, rows.get(rowIndex)[columnIndex]);
+                vector.set(rowIndex, sourceVectors.get(columnIndex).get(rowIndex));
             }
-            vectors.add(vector);
         }
         return new DataChunk(names, vectors);
     }
