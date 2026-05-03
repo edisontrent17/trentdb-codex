@@ -12,6 +12,11 @@ public final class PhysicalResultCollector implements PhysicalSink {
     private final List<List<Object>> rows = new ArrayList<>();
 
     @Override
+    public PhysicalOperatorType type() {
+        return PhysicalOperatorType.RESULT_COLLECTOR;
+    }
+
+    @Override
     public void sink(DataChunk chunk) {
         if (columns.isEmpty()) {
             columns = chunk.names();

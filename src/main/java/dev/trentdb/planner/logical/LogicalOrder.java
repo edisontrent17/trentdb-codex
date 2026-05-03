@@ -8,4 +8,9 @@ public record LogicalOrder(List<BoundOrderByItem> orders, LogicalOperator child)
     public LogicalOrder {
         orders = List.copyOf(orders);
     }
+
+    @Override
+    public LogicalOperatorType type() {
+        return LogicalOperatorType.LOGICAL_ORDER_BY;
+    }
 }

@@ -15,4 +15,9 @@ public record LogicalAggregate(
         selectList = List.copyOf(selectList);
         selectNames = List.copyOf(selectNames);
     }
+
+    @Override
+    public LogicalOperatorType type() {
+        return LogicalOperatorType.LOGICAL_AGGREGATE_AND_GROUP_BY;
+    }
 }

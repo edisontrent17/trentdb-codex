@@ -1,0 +1,11 @@
+package dev.trentdb.planner.logical;
+
+public enum LogicalOperatorType {
+    LOGICAL_GET,
+    LOGICAL_FILTER,
+    LOGICAL_PROJECTION,
+    LOGICAL_LIMIT,
+    LOGICAL_ORDER_BY,
+    LOGICAL_AGGREGATE_AND_GROUP_BY,
+    LOGICAL_EXPLAIN
+}

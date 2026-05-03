@@ -9,4 +9,9 @@ public record LogicalProjection(List<BoundExpression> expressions, List<String> 
         expressions = List.copyOf(expressions);
         names = List.copyOf(names);
     }
+
+    @Override
+    public LogicalOperatorType type() {
+        return LogicalOperatorType.LOGICAL_PROJECTION;
+    }
 }

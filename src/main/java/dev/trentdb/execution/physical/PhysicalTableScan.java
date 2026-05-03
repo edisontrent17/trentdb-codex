@@ -20,6 +20,11 @@ public final class PhysicalTableScan implements PhysicalSource {
     }
 
     @Override
+    public PhysicalOperatorType type() {
+        return PhysicalOperatorType.TABLE_SCAN;
+    }
+
+    @Override
     public void execute(PhysicalChunkConsumer consumer) {
         List<DataChunk> chunks = tableRef.isReplacementScan()
                 ? tableRef.replacementScan().scanFunction().scan()

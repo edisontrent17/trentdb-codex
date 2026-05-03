@@ -47,10 +47,15 @@ class PhysicalPlannerTest {
         Pipeline pipeline = new PhysicalPlanner(storageManager).plan(logical);
 
         assertInstanceOf(PhysicalTableScan.class, pipeline.source());
+        assertEquals(PhysicalOperatorType.TABLE_SCAN, pipeline.source().type());
         assertEquals(3, pipeline.operators().size());
         assertInstanceOf(PhysicalFilter.class, pipeline.operators().get(0));
+        assertEquals(PhysicalOperatorType.FILTER, pipeline.operators().get(0).type());
         assertInstanceOf(PhysicalOrder.class, pipeline.operators().get(1));
+        assertEquals(PhysicalOperatorType.ORDER_BY, pipeline.operators().get(1).type());
         assertInstanceOf(PhysicalProjection.class, pipeline.operators().get(2));
+        assertEquals(PhysicalOperatorType.PROJECTION, pipeline.operators().get(2).type());
         assertInstanceOf(PhysicalResultCollector.class, pipeline.sink());
+        assertEquals(PhysicalOperatorType.RESULT_COLLECTOR, pipeline.sink().type());
     }
 }
