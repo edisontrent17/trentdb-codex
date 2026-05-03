@@ -143,11 +143,16 @@ primaryExpression
     : literal                                               #literalPrimary
     | qualifiedName                                         #columnReferencePrimary
     | functionCall                                          #functionCallPrimary
+    | castExpression                                        #castPrimary
     | LPAREN expression RPAREN                              #parenthesizedExpression
     ;
 
 functionCall
     : identifier LPAREN (STAR | expressionList)? RPAREN
+    ;
+
+castExpression
+    : CAST LPAREN expression AS typeName RPAREN
     ;
 
 qualifiedName
@@ -160,6 +165,7 @@ typeName
     | DOUBLE_T PRECISION_T?
     | BOOLEAN_T
     | TEXT_T
+    | DATE_T
     ;
 
 literal
@@ -201,6 +207,7 @@ BY: 'BY';
 ORDER: 'ORDER';
 LIMIT: 'LIMIT';
 EXPLAIN: 'EXPLAIN';
+CAST: 'CAST';
 JOIN: 'JOIN';
 INNER: 'INNER';
 ON: 'ON';
@@ -221,6 +228,7 @@ DOUBLE_T: 'DOUBLE';
 PRECISION_T: 'PRECISION';
 BOOLEAN_T: 'BOOLEAN';
 TEXT_T: 'TEXT';
+DATE_T: 'DATE';
 
 EQ: '=';
 NEQ: '<>' | '!=';

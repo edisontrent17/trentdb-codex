@@ -1,6 +1,7 @@
 package dev.trentdb.parser;
 
 import dev.trentdb.ast.BetweenExpression;
+import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CreateTableStatement;
 import dev.trentdb.ast.ExplainStatement;
@@ -8,6 +9,7 @@ import dev.trentdb.ast.InsertStatement;
 import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.SelectStatement;
 import dev.trentdb.ast.Statement;
+import dev.trentdb.ast.TypeName;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -18,12 +20,13 @@ class SqlParserTest {
 
     @Test
     void parsesCreateTable() {
-        Statement statement = parser.parse("CREATE TABLE People (ID BIGINT, name TEXT)");
+        Statement statement = parser.parse("CREATE TABLE People (ID BIGINT, name TEXT, birthdate DATE)");
 
         CreateTableStatement create = assertInstanceOf(CreateTableStatement.class, statement);
         assertEquals("people", create.name().last());
-        assertEquals(2, create.columns().size());
+        assertEquals(3, create.columns().size());
         assertEquals("id", create.columns().getFirst().name());
+        assertEquals(TypeName.DATE, create.columns().get(2).type());
     }
 
     @Test
@@ -89,5 +92,15 @@ class SqlParserTest {
         assertInstanceOf(ColumnReferenceExpression.class, between.input());
         assertInstanceOf(LiteralExpression.class, between.lower());
         assertInstanceOf(LiteralExpression.class, between.upper());
+    }
+
+    @Test
+    void parsesCastExpression() {
+        Statement statement = parser.parse("SELECT CAST('1994-01-01' AS date) FROM people");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        CastExpression cast = assertInstanceOf(CastExpression.class, select.selectItems().getFirst().expression());
+        assertEquals(TypeName.DATE, cast.targetType());
+        assertInstanceOf(LiteralExpression.class, cast.child());
     }
 }

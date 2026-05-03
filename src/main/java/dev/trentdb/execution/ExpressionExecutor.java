@@ -6,12 +6,15 @@ import dev.trentdb.common.vector.Vector;
 import dev.trentdb.planner.BoundAggregateExpression;
 import dev.trentdb.planner.BoundBetweenExpression;
 import dev.trentdb.planner.BoundBinaryExpression;
+import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.types.LogicalType;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.Locale;
 
 public final class ExpressionExecutor {
@@ -23,6 +26,7 @@ public final class ExpressionExecutor {
             case BoundLiteralExpression literal -> constant(literal.logicalType(), literal.value(), input.cardinality());
             case BoundFunctionExpression function -> function(function, input);
             case BoundBetweenExpression between -> between(between, input);
+            case BoundCastExpression cast -> cast(cast, input);
             case BoundBinaryExpression binary -> binary(binary, input);
         };
     }
@@ -71,6 +75,109 @@ public final class ExpressionExecutor {
             result.set(index, and(lowerComparison, upperComparison));
         }
         return result;
+    }
+
+    private Vector cast(BoundCastExpression cast, DataChunk input) {
+        Vector child = execute(cast.child(), input);
+        LogicalType targetType = cast.logicalType();
+        if (targetType.equals(LogicalType.TEXT)) {
+            return castToText(child, input.cardinality());
+        }
+        if (targetType.equals(LogicalType.DATE)) {
+            return castToDate(child, input.cardinality());
+        }
+        if (targetType.equals(LogicalType.INTEGER)) {
+            return castToInteger(child, input.cardinality());
+        }
+        if (targetType.equals(LogicalType.BIGINT)) {
+            return castToBigint(child, input.cardinality());
+        }
+        if (targetType.equals(LogicalType.DOUBLE)) {
+            return castToDouble(child, input.cardinality());
+        }
+        if (targetType.equals(LogicalType.BOOLEAN)) {
+            return castToBoolean(child, input.cardinality());
+        }
+        throw new ExecutionException("Unsupported cast to " + targetType.id());
+    }
+
+    private Vector castToText(Vector child, int cardinality) {
+        Vector result = new Vector(LogicalType.TEXT, cardinality);
+        for (int index = 0; index < cardinality; index++) {
+            Object value = child.get(index);
+            result.set(index, value == null ? null : value.toString());
+        }
+        return result;
+    }
+
+    private Vector castToDate(Vector child, int cardinality) {
+        Vector result = new Vector(LogicalType.DATE, cardinality);
+        for (int index = 0; index < cardinality; index++) {
+            Object value = child.get(index);
+            result.set(index, value == null ? null : castObjectToDate(value));
+        }
+        return result;
+    }
+
+    private Vector castToInteger(Vector child, int cardinality) {
+        Vector result = new Vector(LogicalType.INTEGER, cardinality);
+        for (int index = 0; index < cardinality; index++) {
+            Object value = child.get(index);
+            result.set(index, value == null ? null : castObjectToNumber(value).intValue());
+        }
+        return result;
+    }
+
+    private Vector castToBigint(Vector child, int cardinality) {
+        Vector result = new Vector(LogicalType.BIGINT, cardinality);
+        for (int index = 0; index < cardinality; index++) {
+            Object value = child.get(index);
+            result.set(index, value == null ? null : castObjectToNumber(value).longValue());
+        }
+        return result;
+    }
+
+    private Vector castToDouble(Vector child, int cardinality) {
+        Vector result = new Vector(LogicalType.DOUBLE, cardinality);
+        for (int index = 0; index < cardinality; index++) {
+            Object value = child.get(index);
+            result.set(index, value == null ? null : castObjectToNumber(value).doubleValue());
+        }
+        return result;
+    }
+
+    private Vector castToBoolean(Vector child, int cardinality) {
+        Vector result = new Vector(LogicalType.BOOLEAN, cardinality);
+        for (int index = 0; index < cardinality; index++) {
+            Object value = child.get(index);
+            if (value == null || value instanceof Boolean) {
+                result.set(index, value);
+            } else {
+                throw new ExecutionException("BOOLEAN cast expects BOOLEAN input");
+            }
+        }
+        return result;
+    }
+
+    private Number castObjectToNumber(Object value) {
+        if (value instanceof Number number) {
+            return number;
+        }
+        throw new ExecutionException("Numeric cast expects numeric input");
+    }
+
+    private LocalDate castObjectToDate(Object value) {
+        if (value instanceof LocalDate date) {
+            return date;
+        }
+        if (value instanceof String text) {
+            try {
+                return LocalDate.parse(text);
+            } catch (DateTimeParseException exception) {
+                throw new ExecutionException("Could not cast value to DATE: " + text);
+            }
+        }
+        throw new ExecutionException("DATE cast expects TEXT input");
     }
 
     private Vector binary(BoundBinaryExpression binary, DataChunk input) {

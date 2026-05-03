@@ -5,5 +5,6 @@ public enum TypeName {
     BIGINT,
     DOUBLE,
     BOOLEAN,
-    TEXT
+    TEXT,
+    DATE
 }

@@ -6,5 +6,6 @@ public enum LogicalTypeId {
     BIGINT,
     DOUBLE,
     TEXT,
+    DATE,
     NULL
 }

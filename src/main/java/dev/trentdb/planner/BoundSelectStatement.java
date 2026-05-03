@@ -38,6 +38,7 @@ public record BoundSelectStatement(
             case BoundBetweenExpression between -> containsAggregate(between.input())
                     || containsAggregate(between.lower())
                     || containsAggregate(between.upper());
+            case BoundCastExpression cast -> containsAggregate(cast.child());
             case BoundColumnRefExpression ignored -> false;
             case BoundFunctionExpression function -> {
                 boolean result = false;
