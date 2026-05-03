@@ -3,6 +3,7 @@ package dev.trentdb.execution;
 import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.Vector;
+import dev.trentdb.planner.BoundAggregateExpression;
 import dev.trentdb.planner.BoundBinaryExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
@@ -15,6 +16,8 @@ import java.util.Locale;
 public final class ExpressionExecutor {
     public Vector execute(BoundExpression expression, DataChunk input) {
         return switch (expression) {
+            case BoundAggregateExpression aggregate -> throw new ExecutionException(
+                    "Aggregate expression requires aggregate execution: " + aggregate.name());
             case BoundColumnRefExpression column -> input.column(column.ordinal());
             case BoundLiteralExpression literal -> constant(literal.logicalType(), literal.value(), input.cardinality());
             case BoundFunctionExpression function -> function(function, input);
@@ -28,13 +31,13 @@ public final class ExpressionExecutor {
 
     private Vector function(BoundFunctionExpression function, DataChunk input) {
         if (function.name().equalsIgnoreCase("lower")) {
-            var argument = execute(function.arguments().getFirst(), input);
-            var result = new Vector(function.logicalType(), input.cardinality());
+            Vector argument = execute(function.arguments().getFirst(), input);
+            Vector result = new Vector(function.logicalType(), input.cardinality());
             for (int index = 0; index < input.cardinality(); index++) {
                 if (argument.isNull(index)) {
                     result.setNull(index);
                 } else {
-                    var value = argument.get(index);
+                    Object value = argument.get(index);
                     if (value instanceof String text) {
                         result.set(index, text.toLowerCase(Locale.ROOT));
                     } else {
@@ -48,9 +51,9 @@ public final class ExpressionExecutor {
     }
 
     private Vector binary(BoundBinaryExpression binary, DataChunk input) {
-        var left = execute(binary.left(), input);
-        var right = execute(binary.right(), input);
-        var result = new Vector(binary.logicalType(), input.cardinality());
+        Vector left = execute(binary.left(), input);
+        Vector right = execute(binary.right(), input);
+        Vector result = new Vector(binary.logicalType(), input.cardinality());
         for (int index = 0; index < input.cardinality(); index++) {
             result.set(index, evaluateBinary(binary, left.get(index), right.get(index)));
         }
@@ -117,7 +120,7 @@ public final class ExpressionExecutor {
         if (left == null || right == null) {
             return null;
         }
-        var result = compare(left, right);
+        int result = compare(left, right);
         return switch (comparison) {
             case LESS_THAN -> result < 0;
             case LESS_THAN_OR_EQUAL -> result <= 0;

@@ -218,6 +218,47 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesUngroupedAggregates() {
+        Fixture fixture = salesFixture();
+
+        QueryResult result = execute(fixture, """
+                SELECT count(*) AS row_count, count(amount) AS amount_count, sum(amount) AS total,
+                       min(amount) AS low, max(amount) AS high, avg(amount) AS average
+                FROM sales
+                """);
+
+        assertEquals(List.of("row_count", "amount_count", "total", "low", "high", "average"), result.columns());
+        assertEquals(List.of(List.of(4L, 3L, 35L, 5L, 20L, 35.0d / 3.0d)), result.rows());
+    }
+
+    @Test
+    void executesGroupedAggregates() {
+        Fixture fixture = salesFixture();
+
+        QueryResult result = execute(fixture, """
+                SELECT region, count(*) AS row_count, sum(amount) AS total, avg(amount) AS average
+                FROM sales
+                GROUP BY region
+                """);
+
+        assertEquals(List.of("region", "row_count", "total", "average"), result.columns());
+        assertEquals(List.of(
+                List.of("east", 2L, 30L, 15.0d),
+                List.of("west", 2L, 5L, 5.0d)
+        ), result.rows());
+    }
+
+    @Test
+    void executesCountStarOnEmptyInput() {
+        Fixture fixture = emptySalesFixture();
+
+        QueryResult result = execute(fixture, "SELECT count(*) AS row_count, sum(amount) AS total FROM sales");
+
+        assertEquals(List.of("row_count", "total"), result.columns());
+        assertEquals(List.of(java.util.Arrays.asList(0L, null)), result.rows());
+    }
+
+    @Test
     void executesLowerFunction() {
         Fixture fixture = peopleFixture();
 
@@ -362,6 +403,35 @@ class QueryExecutorTest {
         InMemoryTableStorage storage = storageManager.createTable(table);
         storage.appendRow(List.of(1L, "Alice"));
         storage.appendRow(java.util.Arrays.asList(2L, null));
+
+        return new Fixture(catalog, transaction, storageManager);
+    }
+
+    private Fixture salesFixture() {
+        Fixture fixture = emptySalesFixture();
+        TableCatalogEntry table = fixture.catalog().lookupTable(fixture.transaction(), new QualifiedName(List.of("sales")));
+        InMemoryTableStorage storage = fixture.storageManager().getTable(table);
+        storage.appendRow(List.of("east", 10L));
+        storage.appendRow(List.of("east", 20L));
+        storage.appendRow(List.of("west", 5L));
+        storage.appendRow(java.util.Arrays.asList("west", null));
+        return fixture;
+    }
+
+    private Fixture emptySalesFixture() {
+        Catalog catalog = new Catalog();
+        Transaction transaction = transactionManager.startTransaction();
+        TableCatalogEntry table = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("sales")),
+                List.of(
+                        new ColumnDefinition("region", TypeName.TEXT),
+                        new ColumnDefinition("amount", TypeName.BIGINT)
+                )
+        );
+
+        StorageManager storageManager = new StorageManager();
+        storageManager.createTable(table);
 
         return new Fixture(catalog, transaction, storageManager);
     }

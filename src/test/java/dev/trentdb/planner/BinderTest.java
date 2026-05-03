@@ -11,6 +11,7 @@ import dev.trentdb.catalog.CatalogException;
 import dev.trentdb.catalog.TableCatalogEntry;
 import dev.trentdb.function.FunctionException;
 import dev.trentdb.parser.SqlParser;
+import dev.trentdb.planner.logical.LogicalAggregate;
 import dev.trentdb.planner.logical.LogicalExplain;
 import dev.trentdb.planner.logical.LogicalFilter;
 import dev.trentdb.planner.logical.LogicalGet;
@@ -144,6 +145,60 @@ class BinderTest {
 
         FunctionException error = assertThrows(FunctionException.class, () -> bindSelect(fixture, "SELECT lower(id) FROM people"));
         assertEquals("Scalar function lower argument 1 expects TEXT but got BIGINT", error.getMessage());
+    }
+
+    @Test
+    void bindsAggregateFunctionInSelectList() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT count(*), sum(id) FROM people");
+
+        BoundAggregateExpression count = assertInstanceOf(BoundAggregateExpression.class, bound.selectList().get(0));
+        assertEquals("count", count.name());
+        assertEquals(LogicalType.BIGINT, count.logicalType());
+        assertEquals(true, count.starArgument());
+
+        BoundAggregateExpression sum = assertInstanceOf(BoundAggregateExpression.class, bound.selectList().get(1));
+        assertEquals("sum", sum.name());
+        assertEquals(LogicalType.BIGINT, sum.logicalType());
+        assertInstanceOf(BoundColumnRefExpression.class, sum.arguments().getFirst());
+    }
+
+    @Test
+    void bindsGroupByExpression() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT name, count(*) FROM people GROUP BY name");
+
+        assertEquals(1, bound.groupBy().size());
+        assertEquals(bound.groupBy().getFirst(), bound.selectList().getFirst());
+    }
+
+    @Test
+    void rejectsUngroupedColumnWithAggregate() {
+        Fixture fixture = peopleFixture();
+
+        BinderException error = assertThrows(BinderException.class, () -> bindSelect(fixture, "SELECT name, count(*) FROM people"));
+
+        assertEquals("Column must appear in GROUP BY or be used in an aggregate function", error.getMessage());
+    }
+
+    @Test
+    void rejectsAggregateInWhere() {
+        Fixture fixture = peopleFixture();
+
+        BinderException error = assertThrows(BinderException.class, () -> bindSelect(fixture, "SELECT id FROM people WHERE count(*) > 0"));
+
+        assertEquals("Aggregate functions are not allowed in this clause: count", error.getMessage());
+    }
+
+    @Test
+    void rejectsAggregateInsideScalarExpression() {
+        Fixture fixture = peopleFixture();
+
+        BinderException error = assertThrows(BinderException.class, () -> bindSelect(fixture, "SELECT count(*) + 1 FROM people"));
+
+        assertEquals("Aggregate expressions inside scalar expressions are not supported yet", error.getMessage());
     }
 
     @Test
@@ -327,6 +382,19 @@ class BinderTest {
     }
 
     @Test
+    void plansLogicalAggregateOverGet() {
+        Fixture fixture = peopleFixture();
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT name, count(*) FROM people GROUP BY name");
+
+        LogicalOperator logical = new LogicalPlanner().plan(bound);
+
+        LogicalAggregate aggregate = assertInstanceOf(LogicalAggregate.class, logical);
+        assertEquals(1, aggregate.groups().size());
+        assertEquals(2, aggregate.selectList().size());
+        assertInstanceOf(LogicalGet.class, aggregate.child());
+    }
+
+    @Test
     void bindsExplainSelect() {
         Fixture fixture = peopleFixture();
         Statement statement = parser.parse("EXPLAIN SELECT id FROM people");
@@ -390,6 +458,20 @@ class BinderTest {
                   LogicalProjection [1]
                     LogicalOrder [1]
                       LogicalGet people
+                """, new LogicalPlanPrinter().print(logical));
+    }
+
+    @Test
+    void printsAggregateLogicalPlan() {
+        Fixture fixture = peopleFixture();
+        Statement statement = parser.parse("EXPLAIN SELECT name, count(*) FROM people GROUP BY name");
+        BoundStatement bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);
+        LogicalOperator logical = new LogicalPlanner().plan(bound);
+
+        assertEquals("""
+                LogicalExplain
+                  LogicalAggregate groups=[1] expressions=[2]
+                    LogicalGet people
                 """, new LogicalPlanPrinter().print(logical));
     }
 
