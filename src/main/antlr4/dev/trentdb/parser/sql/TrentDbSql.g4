@@ -107,6 +107,7 @@ booleanFactor
 predicate
     : valueExpression IS NOT NULL_T                         #isNotNullPredicate
     | valueExpression IS NULL_T                             #isNullPredicate
+    | valueExpression BETWEEN valueExpression AND valueExpression #betweenPredicate
     | valueExpression comparisonOperator valueExpression    #comparisonPredicate
     | valueExpression                                       #valuePredicate
     ;
@@ -206,6 +207,7 @@ ON: 'ON';
 AS: 'AS';
 IS: 'IS';
 NOT: 'NOT';
+BETWEEN: 'BETWEEN';
 NULL_T: 'NULL';
 TRUE: 'TRUE';
 FALSE: 'FALSE';

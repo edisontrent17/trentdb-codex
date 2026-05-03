@@ -1,9 +1,13 @@
 package dev.trentdb.parser;
 
+import dev.trentdb.ast.BetweenExpression;
+import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CreateTableStatement;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.InsertStatement;
+import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.SelectStatement;
+import dev.trentdb.ast.Statement;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -14,9 +18,9 @@ class SqlParserTest {
 
     @Test
     void parsesCreateTable() {
-        var statement = parser.parse("CREATE TABLE People (ID BIGINT, name TEXT)");
+        Statement statement = parser.parse("CREATE TABLE People (ID BIGINT, name TEXT)");
 
-        var create = assertInstanceOf(CreateTableStatement.class, statement);
+        CreateTableStatement create = assertInstanceOf(CreateTableStatement.class, statement);
         assertEquals("people", create.name().last());
         assertEquals(2, create.columns().size());
         assertEquals("id", create.columns().getFirst().name());
@@ -24,18 +28,18 @@ class SqlParserTest {
 
     @Test
     void preservesQuotedIdentifierCase() {
-        var statement = parser.parse("CREATE TABLE \"People\" (\"ID\" BIGINT)");
+        Statement statement = parser.parse("CREATE TABLE \"People\" (\"ID\" BIGINT)");
 
-        var create = assertInstanceOf(CreateTableStatement.class, statement);
+        CreateTableStatement create = assertInstanceOf(CreateTableStatement.class, statement);
         assertEquals("People", create.name().last());
         assertEquals("ID", create.columns().getFirst().name());
     }
 
     @Test
     void parsesInsert() {
-        var statement = parser.parse("INSERT INTO people (id, name) VALUES (1, 'alice')");
+        Statement statement = parser.parse("INSERT INTO people (id, name) VALUES (1, 'alice')");
 
-        var insert = assertInstanceOf(InsertStatement.class, statement);
+        InsertStatement insert = assertInstanceOf(InsertStatement.class, statement);
         assertEquals("people", insert.tableName().last());
         assertEquals(2, insert.columns().size());
         assertEquals(2, insert.values().size());
@@ -43,7 +47,7 @@ class SqlParserTest {
 
     @Test
     void parsesSelect() {
-        var statement = parser.parse("""
+        Statement statement = parser.parse("""
                 SELECT p.id, sum(o.total) AS total_spend
                 FROM people p
                 JOIN orders o ON p.id = o.person_id
@@ -53,7 +57,7 @@ class SqlParserTest {
                 LIMIT 10
                 """);
 
-        var select = assertInstanceOf(SelectStatement.class, statement);
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
         assertEquals(2, select.selectItems().size());
         assertEquals(1, select.from().joins().size());
         assertEquals(1, select.groupBy().size());
@@ -63,16 +67,27 @@ class SqlParserTest {
 
     @Test
     void parsesExplain() {
-        var statement = parser.parse("EXPLAIN SELECT * FROM people");
+        Statement statement = parser.parse("EXPLAIN SELECT * FROM people");
 
         assertInstanceOf(ExplainStatement.class, statement);
     }
 
     @Test
     void parsesPathRelation() {
-        var statement = parser.parse("SELECT * FROM 'people.csv'");
+        Statement statement = parser.parse("SELECT * FROM 'people.csv'");
 
-        var select = assertInstanceOf(SelectStatement.class, statement);
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
         assertEquals("people.csv", select.from().base().path());
+    }
+
+    @Test
+    void parsesBetweenPredicate() {
+        Statement statement = parser.parse("SELECT id FROM people WHERE id BETWEEN 1 AND 2");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        BetweenExpression between = assertInstanceOf(BetweenExpression.class, select.where());
+        assertInstanceOf(ColumnReferenceExpression.class, between.input());
+        assertInstanceOf(LiteralExpression.class, between.lower());
+        assertInstanceOf(LiteralExpression.class, between.upper());
     }
 }
