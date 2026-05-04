@@ -9,6 +9,7 @@ import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
+import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundTableRef;
@@ -113,6 +114,7 @@ public final class PhysicalPlanPrinter {
             case BoundFunctionExpression function -> function.name() + "(" + expressions(function.arguments()) + ")";
             case BoundInExpression in -> expression(in.input()) + (in.negated() ? " NOT IN " : " IN ")
                     + "(" + expressions(in.candidates()) + ")";
+            case BoundIntervalExpression interval -> "INTERVAL '" + interval.amount() + "' " + interval.unit().name();
             case BoundLiteralExpression literal -> literal.value() == null ? "NULL" : literal.value().toString();
             case BoundOutputColumnExpression output -> output.name() + "#" + output.ordinal();
         };

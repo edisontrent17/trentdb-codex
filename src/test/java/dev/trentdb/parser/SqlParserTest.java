@@ -10,6 +10,7 @@ import dev.trentdb.ast.CreateTableStatement;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.InExpression;
 import dev.trentdb.ast.InsertStatement;
+import dev.trentdb.ast.IntervalLiteralExpression;
 import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.SelectStatement;
 import dev.trentdb.ast.Statement;
@@ -140,5 +141,16 @@ class SqlParserTest {
         assertEquals(1, caseExpression.branches().size());
         assertInstanceOf(BinaryExpression.class, caseExpression.branches().getFirst().condition());
         assertInstanceOf(LiteralExpression.class, caseExpression.elseExpression());
+    }
+
+    @Test
+    void parsesDateAndIntervalLiterals() {
+        Statement statement = parser.parse("SELECT DATE '1995-09-01' + INTERVAL '1' MONTH FROM people");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        BinaryExpression add = assertInstanceOf(BinaryExpression.class, select.selectItems().getFirst().expression());
+        assertEquals(BinaryOperator.ADD, add.operator());
+        assertInstanceOf(LiteralExpression.class, add.left());
+        assertInstanceOf(IntervalLiteralExpression.class, add.right());
     }
 }

@@ -12,6 +12,7 @@ import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
+import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.logical.LogicalAggregate;
@@ -340,6 +341,7 @@ public final class PhysicalPlanner {
                 yield scope;
             }
             case BoundLiteralExpression ignored -> PredicateScope.NONE;
+            case BoundIntervalExpression ignored -> PredicateScope.NONE;
             case BoundOutputColumnExpression output -> columnScope(output.ordinal(), leftColumnCount, rightColumnCount);
         };
     }
@@ -426,6 +428,7 @@ public final class PhysicalPlanner {
                 );
             }
             case BoundLiteralExpression literal -> literal;
+            case BoundIntervalExpression interval -> interval;
             case BoundOutputColumnExpression output -> rewriteOutputColumn(output, leftColumnCount, side);
         };
     }

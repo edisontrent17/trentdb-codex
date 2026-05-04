@@ -372,6 +372,16 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesScalarExpressionOverAggregate() {
+        Fixture fixture = salesFixture();
+
+        QueryResult result = execute(fixture, "SELECT count(*) + 1 AS adjusted_count FROM sales");
+
+        assertEquals(List.of("adjusted_count"), result.columns());
+        assertEquals(List.of(List.of(5L)), result.rows());
+    }
+
+    @Test
     void executesGroupedAggregates() {
         Fixture fixture = salesFixture();
 

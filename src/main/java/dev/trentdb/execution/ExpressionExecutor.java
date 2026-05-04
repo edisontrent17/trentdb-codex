@@ -1,6 +1,7 @@
 package dev.trentdb.execution;
 
 import dev.trentdb.ast.BinaryOperator;
+import dev.trentdb.ast.IntervalUnit;
 import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.Vector;
 import dev.trentdb.planner.BoundAggregateExpression;
@@ -12,6 +13,7 @@ import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
+import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.types.LogicalType;
@@ -38,6 +40,8 @@ public final class ExpressionExecutor {
             case BoundInExpression in -> in(in, input);
             case BoundCastExpression cast -> cast(cast, input);
             case BoundCaseExpression caseExpression -> caseExpression(caseExpression, input);
+            case BoundIntervalExpression interval -> throw new ExecutionException(
+                    "Standalone INTERVAL literal is not supported yet: " + interval.amount() + " " + interval.unit());
             case BoundBinaryExpression binary -> binary(binary, input);
         };
     }
@@ -366,6 +370,9 @@ public final class ExpressionExecutor {
     }
 
     private Vector binary(BoundBinaryExpression binary, DataChunk input) {
+        if (isDateIntervalArithmetic(binary)) {
+            return dateIntervalArithmetic(binary, input);
+        }
         Vector left = execute(binary.left(), input);
         Vector right = execute(binary.right(), input);
         Vector result = new Vector(binary.logicalType(), input.cardinality());
@@ -373,6 +380,57 @@ public final class ExpressionExecutor {
             writeBinaryValue(binary, left, right, index, result);
         }
         return result;
+    }
+
+    private boolean isDateIntervalArithmetic(BoundBinaryExpression binary) {
+        if (binary.operator() != BinaryOperator.ADD && binary.operator() != BinaryOperator.SUBTRACT) {
+            return false;
+        }
+        if (binary.left() instanceof BoundIntervalExpression) {
+            return binary.operator() == BinaryOperator.ADD && !(binary.right() instanceof BoundIntervalExpression);
+        }
+        return binary.right() instanceof BoundIntervalExpression;
+    }
+
+    private Vector dateIntervalArithmetic(BoundBinaryExpression binary, DataChunk input) {
+        BoundIntervalExpression interval;
+        BoundExpression dateExpression;
+        int sign = 1;
+        if (binary.left() instanceof BoundIntervalExpression leftInterval) {
+            interval = leftInterval;
+            dateExpression = binary.right();
+        } else if (binary.right() instanceof BoundIntervalExpression rightInterval) {
+            interval = rightInterval;
+            dateExpression = binary.left();
+            if (binary.operator() == BinaryOperator.SUBTRACT) {
+                sign = -1;
+            }
+        } else {
+            throw new ExecutionException("DATE arithmetic requires one INTERVAL operand");
+        }
+        Vector dates = execute(dateExpression, input);
+        if (!dates.logicalType().equals(LogicalType.DATE)) {
+            throw new ExecutionException("DATE arithmetic requires one DATE operand");
+        }
+        Vector result = new Vector(LogicalType.DATE, input.cardinality());
+        for (int index = 0; index < input.cardinality(); index++) {
+            if (dates.isNull(index)) {
+                result.setNull(index);
+                continue;
+            }
+            result.setDate(index, addInterval(dates.getDate(index), interval, sign));
+        }
+        return result;
+    }
+
+    private LocalDate addInterval(LocalDate date, BoundIntervalExpression interval, int sign) {
+        long amount = interval.amount() * sign;
+        IntervalUnit unit = interval.unit();
+        return switch (unit) {
+            case DAY -> date.plusDays(amount);
+            case MONTH -> date.plusMonths(amount);
+            case YEAR -> date.plusYears(amount);
+        };
     }
 
     private void writeBinaryValue(BoundBinaryExpression binary, Vector left, Vector right, int index, Vector result) {

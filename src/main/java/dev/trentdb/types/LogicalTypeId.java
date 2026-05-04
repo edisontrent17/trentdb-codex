@@ -7,5 +7,6 @@ public enum LogicalTypeId {
     DOUBLE,
     TEXT,
     DATE,
+    INTERVAL,
     NULL
 }

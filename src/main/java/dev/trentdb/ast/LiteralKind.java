@@ -5,5 +5,6 @@ public enum LiteralKind {
     DECIMAL,
     STRING,
     BOOLEAN,
+    DATE,
     NULL
 }

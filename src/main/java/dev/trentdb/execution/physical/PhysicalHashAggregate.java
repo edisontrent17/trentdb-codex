@@ -13,6 +13,7 @@ import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
+import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.storage.InMemoryTableStorage;
@@ -163,6 +164,7 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
             case BoundColumnRefExpression column -> column.logicalType();
             case BoundFunctionExpression function -> function.logicalType();
             case BoundInExpression in -> in.logicalType();
+            case BoundIntervalExpression ignored -> LogicalType.INTERVAL;
             case BoundLiteralExpression literal -> literal.logicalType();
             case BoundOutputColumnExpression output -> output.logicalType();
         };

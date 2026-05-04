@@ -196,12 +196,15 @@ class BinderTest {
     }
 
     @Test
-    void rejectsAggregateInsideScalarExpression() {
+    void bindsAggregateInsideScalarExpression() {
         Fixture fixture = peopleFixture();
 
-        BinderException error = assertThrows(BinderException.class, () -> bindSelect(fixture, "SELECT count(*) + 1 FROM people"));
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT count(*) + 1 FROM people");
 
-        assertEquals("Aggregate expressions inside scalar expressions are not supported yet", error.getMessage());
+        BoundBinaryExpression expression = assertInstanceOf(BoundBinaryExpression.class, bound.selectList().getFirst());
+        assertEquals(BinaryOperator.ADD, expression.operator());
+        assertInstanceOf(BoundAggregateExpression.class, expression.left());
+        assertInstanceOf(BoundLiteralExpression.class, expression.right());
     }
 
     @Test
@@ -531,7 +534,8 @@ class BinderTest {
 
         LogicalOperator logical = new LogicalPlanner().plan(bound);
 
-        LogicalAggregate aggregate = assertInstanceOf(LogicalAggregate.class, logical);
+        LogicalProjection projection = assertInstanceOf(LogicalProjection.class, logical);
+        LogicalAggregate aggregate = assertInstanceOf(LogicalAggregate.class, projection.child());
         assertEquals(LogicalOperatorType.LOGICAL_AGGREGATE_AND_GROUP_BY, aggregate.type());
         assertEquals(1, aggregate.groups().size());
         assertEquals(2, aggregate.selectList().size());
@@ -547,7 +551,8 @@ class BinderTest {
 
         LogicalOrder order = assertInstanceOf(LogicalOrder.class, logical);
         assertEquals(LogicalOperatorType.LOGICAL_ORDER_BY, order.type());
-        LogicalAggregate aggregate = assertInstanceOf(LogicalAggregate.class, order.child());
+        LogicalProjection projection = assertInstanceOf(LogicalProjection.class, order.child());
+        LogicalAggregate aggregate = assertInstanceOf(LogicalAggregate.class, projection.child());
         assertEquals(LogicalOperatorType.LOGICAL_AGGREGATE_AND_GROUP_BY, aggregate.type());
     }
 
@@ -627,8 +632,9 @@ class BinderTest {
 
         assertEquals("""
                 LogicalExplain
-                  LogicalAggregate groups=[1] expressions=[2]
-                    LogicalGet people
+                  LogicalProjection [2]
+                    LogicalAggregate groups=[1] expressions=[2]
+                      LogicalGet people
                 """, new LogicalPlanPrinter().print(logical));
     }
 

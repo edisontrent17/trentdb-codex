@@ -143,6 +143,7 @@ unaryExpression
 
 primaryExpression
     : literal                                               #literalPrimary
+    | intervalLiteral                                       #intervalPrimary
     | qualifiedName                                         #columnReferencePrimary
     | functionCall                                          #functionCallPrimary
     | castExpression                                        #castPrimary
@@ -180,12 +181,27 @@ typeName
     ;
 
 literal
-    : integerLiteral
+    : dateLiteral
+    | integerLiteral
     | decimalLiteral
     | stringLiteral
     | TRUE
     | FALSE
     | NULL_T
+    ;
+
+dateLiteral
+    : DATE_T stringLiteral
+    ;
+
+intervalLiteral
+    : INTERVAL stringLiteral intervalUnit
+    ;
+
+intervalUnit
+    : DAY
+    | MONTH
+    | YEAR
     ;
 
 integerLiteral
@@ -233,6 +249,10 @@ NOT: 'NOT';
 IN: 'IN';
 LIKE: 'LIKE';
 BETWEEN: 'BETWEEN';
+INTERVAL: 'INTERVAL';
+DAY: 'DAY';
+MONTH: 'MONTH';
+YEAR: 'YEAR';
 NULL_T: 'NULL';
 TRUE: 'TRUE';
 FALSE: 'FALSE';

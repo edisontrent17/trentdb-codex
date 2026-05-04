@@ -72,6 +72,7 @@ public record BoundSelectStatement(
                 yield result;
             }
             case BoundLiteralExpression ignored -> false;
+            case BoundIntervalExpression ignored -> false;
         };
     }
 }
