@@ -147,7 +147,7 @@ class PhysicalPlannerTest {
     }
 
     @Test
-    void keepsResidualFilterWhenJoinPredicateReferencesBothSides() {
+    void pushesResidualFilterIntoHashJoinWhenPredicateReferencesBothSides() {
         Catalog catalog = new Catalog();
         Transaction transaction = transactionManager.startTransaction();
         TableCatalogEntry people = catalog.createTable(
@@ -183,10 +183,8 @@ class PhysicalPlannerTest {
         Pipeline pipeline = new PhysicalPlanner(storageManager).plan(logical);
 
         assertInstanceOf(PhysicalHashJoinSource.class, pipeline.source());
-        assertEquals(3, pipeline.operators().size());
-        assertInstanceOf(PhysicalFilter.class, pipeline.operators().get(0));
-        assertEquals(PhysicalOperatorType.FILTER, pipeline.operators().get(0).type());
-        assertInstanceOf(PhysicalOrder.class, pipeline.operators().get(1));
-        assertInstanceOf(PhysicalProjection.class, pipeline.operators().get(2));
+        assertEquals(2, pipeline.operators().size());
+        assertInstanceOf(PhysicalOrder.class, pipeline.operators().get(0));
+        assertInstanceOf(PhysicalProjection.class, pipeline.operators().get(1));
     }
 }

@@ -114,13 +114,14 @@ final class CsvReplacementScanProvider implements ReplacementScanProvider {
             int size = Math.min(InMemoryTableStorage.STANDARD_VECTOR_SIZE, dataLines.size() - offset);
             ArrayList<Vector> vectors = new ArrayList<>(columns.size());
             for (ColumnCatalogEntry column : columns) {
-                Vector vector = new Vector(column.logicalType(), size);
-                for (int rowIndex = 0; rowIndex < size; rowIndex++) {
-                    String[] values = dataLines.get(offset + rowIndex).split(",", -1);
+                vectors.add(new Vector(column.logicalType(), size));
+            }
+            for (int rowIndex = 0; rowIndex < size; rowIndex++) {
+                String[] values = splitCsvLine(dataLines.get(offset + rowIndex));
+                for (ColumnCatalogEntry column : columns) {
                     String value = column.ordinal() < values.length ? values[column.ordinal()] : null;
-                    writeValue(vector, rowIndex, value, column.logicalType());
+                    writeValue(vectors.get(column.ordinal()), rowIndex, value, column.logicalType());
                 }
-                vectors.add(vector);
             }
             chunks.add(new DataChunk(names, vectors));
         }
@@ -128,37 +129,43 @@ final class CsvReplacementScanProvider implements ReplacementScanProvider {
     }
 
     private List<LogicalType> inferTypes(List<String> lines, int columnCount) {
-        ArrayList<LogicalType> types = new ArrayList<>(columnCount);
+        ArrayList<TypeInference> states = new ArrayList<>(columnCount);
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            types.add(inferType(lines, columnIndex));
+            states.add(new TypeInference());
+        }
+        for (String line : lines) {
+            String[] values = splitCsvLine(line);
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                String value = columnIndex < values.length ? values[columnIndex] : null;
+                states.get(columnIndex).observe(value);
+            }
+        }
+        ArrayList<LogicalType> types = new ArrayList<>(columnCount);
+        for (TypeInference state : states) {
+            types.add(state.logicalType());
         }
         return types;
     }
 
-    private LogicalType inferType(List<String> lines, int columnIndex) {
-        boolean couldBeDate = true;
-        boolean couldBeBigint = true;
-        boolean couldBeDouble = true;
-        for (String line : lines) {
-            String[] values = line.split(",", -1);
-            String value = columnIndex < values.length ? values[columnIndex] : null;
-            if (value == null || value.isEmpty()) {
-                continue;
+    private String[] splitCsvLine(String line) {
+        int valueCount = 1;
+        for (int index = 0; index < line.length(); index++) {
+            if (line.charAt(index) == ',') {
+                valueCount++;
             }
-            couldBeDate = couldBeDate && canParseDate(value);
-            couldBeBigint = couldBeBigint && canParseBigint(value);
-            couldBeDouble = couldBeDouble && canParseDouble(value);
         }
-        if (couldBeDate) {
-            return LogicalType.DATE;
+        String[] values = new String[valueCount];
+        int start = 0;
+        int valueIndex = 0;
+        for (int index = 0; index < line.length(); index++) {
+            if (line.charAt(index) == ',') {
+                values[valueIndex] = line.substring(start, index);
+                valueIndex++;
+                start = index + 1;
+            }
         }
-        if (couldBeBigint) {
-            return LogicalType.BIGINT;
-        }
-        if (couldBeDouble) {
-            return LogicalType.DOUBLE;
-        }
-        return LogicalType.TEXT;
+        values[valueIndex] = line.substring(start);
+        return values;
     }
 
     private void writeValue(Vector vector, int rowIndex, String value, LogicalType type) {
@@ -182,6 +189,17 @@ final class CsvReplacementScanProvider implements ReplacementScanProvider {
     }
 
     private boolean canParseDate(String value) {
+        if (value.length() != 10 || value.charAt(4) != '-' || value.charAt(7) != '-') {
+            return false;
+        }
+        for (int index = 0; index < value.length(); index++) {
+            if (index == 4 || index == 7) {
+                continue;
+            }
+            if (!Character.isDigit(value.charAt(index))) {
+                return false;
+            }
+        }
         try {
             LocalDate.parse(value);
             return true;
@@ -191,6 +209,18 @@ final class CsvReplacementScanProvider implements ReplacementScanProvider {
     }
 
     private boolean canParseBigint(String value) {
+        if (value.isEmpty()) {
+            return false;
+        }
+        int start = value.charAt(0) == '-' || value.charAt(0) == '+' ? 1 : 0;
+        if (start == value.length()) {
+            return false;
+        }
+        for (int index = start; index < value.length(); index++) {
+            if (!Character.isDigit(value.charAt(index))) {
+                return false;
+            }
+        }
         try {
             Long.parseLong(value);
             return true;
@@ -200,12 +230,49 @@ final class CsvReplacementScanProvider implements ReplacementScanProvider {
     }
 
     private boolean canParseDouble(String value) {
+        if (!looksLikeDouble(value)) {
+            return false;
+        }
         try {
             Double.parseDouble(value);
             return true;
         } catch (NumberFormatException exception) {
             return false;
         }
+    }
+
+    private boolean looksLikeDouble(String value) {
+        if (value.isEmpty()) {
+            return false;
+        }
+        boolean hasDigit = false;
+        boolean hasDecimal = false;
+        boolean hasExponent = false;
+        for (int index = 0; index < value.length(); index++) {
+            char ch = value.charAt(index);
+            if (Character.isDigit(ch)) {
+                hasDigit = true;
+                continue;
+            }
+            if ((ch == '+' || ch == '-') && (index == 0 || isExponent(value.charAt(index - 1)))) {
+                continue;
+            }
+            if (ch == '.' && !hasDecimal && !hasExponent) {
+                hasDecimal = true;
+                continue;
+            }
+            if (isExponent(ch) && !hasExponent && hasDigit) {
+                hasExponent = true;
+                hasDigit = false;
+                continue;
+            }
+            return false;
+        }
+        return hasDigit;
+    }
+
+    private boolean isExponent(char ch) {
+        return ch == 'e' || ch == 'E';
     }
 
     private record FileVersion(long size, long modifiedMillis) {
@@ -220,6 +287,34 @@ final class CsvReplacementScanProvider implements ReplacementScanProvider {
         private CachedCsv {
             columns = List.copyOf(columns);
             chunks = List.copyOf(chunks);
+        }
+    }
+
+    private final class TypeInference {
+        private boolean couldBeDate = true;
+        private boolean couldBeBigint = true;
+        private boolean couldBeDouble = true;
+
+        private void observe(String value) {
+            if (value == null || value.isEmpty()) {
+                return;
+            }
+            couldBeDate = couldBeDate && canParseDate(value);
+            couldBeBigint = couldBeBigint && canParseBigint(value);
+            couldBeDouble = couldBeDouble && canParseDouble(value);
+        }
+
+        private LogicalType logicalType() {
+            if (couldBeDate) {
+                return LogicalType.DATE;
+            }
+            if (couldBeBigint) {
+                return LogicalType.BIGINT;
+            }
+            if (couldBeDouble) {
+                return LogicalType.DOUBLE;
+            }
+            return LogicalType.TEXT;
         }
     }
 }

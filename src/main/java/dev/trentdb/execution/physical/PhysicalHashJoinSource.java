@@ -24,6 +24,7 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
     private final int rightKeyOrdinal;
     private final BoundExpression leftFilter;
     private final BoundExpression rightFilter;
+    private final BoundExpression residualFilter;
     private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
 
     public PhysicalHashJoinSource(
@@ -33,7 +34,8 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
             int leftKeyOrdinal,
             int rightKeyOrdinal,
             BoundExpression leftFilter,
-            BoundExpression rightFilter
+            BoundExpression rightFilter,
+            BoundExpression residualFilter
     ) {
         this.storageManager = storageManager;
         this.left = left;
@@ -42,6 +44,35 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
         this.rightKeyOrdinal = rightKeyOrdinal;
         this.leftFilter = leftFilter;
         this.rightFilter = rightFilter;
+        this.residualFilter = residualFilter;
+    }
+
+    public BoundTableRef left() {
+        return left;
+    }
+
+    public BoundTableRef right() {
+        return right;
+    }
+
+    public int leftKeyOrdinal() {
+        return leftKeyOrdinal;
+    }
+
+    public int rightKeyOrdinal() {
+        return rightKeyOrdinal;
+    }
+
+    public BoundExpression leftFilter() {
+        return leftFilter;
+    }
+
+    public BoundExpression rightFilter() {
+        return rightFilter;
+    }
+
+    public BoundExpression residualFilter() {
+        return residualFilter;
     }
 
     @Override
@@ -90,6 +121,8 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
         int probedRows = 0;
         int nullKeyRows = 0;
         int matchedRows = 0;
+        int emittedRows = 0;
+        DataChunk residualRow = residualFilter == null ? null : singleRowChunk(outputNames, outputTypes);
 
         for (DataChunk leftChunk : leftChunks) {
             Vector leftKeyVector = leftChunk.column(leftKeyOrdinal);
@@ -106,16 +139,19 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
                 }
                 for (int entry = match; entry >= 0; entry = buildIndex.nextEntry(entry, probeKey)) {
                     DataChunk rightChunk = rightChunks.get(buildIndex.chunkIndex(entry));
-                    writeJoinedValues(
-                            outputVectors,
-                            bufferedCount,
-                            leftChunk,
-                            leftRowIndex,
-                            rightChunk,
-                            buildIndex.rowIndex(entry)
-                    );
-                    bufferedCount++;
+                    int rightRowIndex = buildIndex.rowIndex(entry);
                     matchedRows++;
+                    if (residualRow != null) {
+                        writeJoinedValues(residualRow.vectors(), 0, leftChunk, leftRowIndex, rightChunk, rightRowIndex);
+                        if (!matchesResidual(residualRow)) {
+                            continue;
+                        }
+                        copyResidualRow(outputVectors, bufferedCount, residualRow);
+                    } else {
+                        writeJoinedValues(outputVectors, bufferedCount, leftChunk, leftRowIndex, rightChunk, rightRowIndex);
+                    }
+                    bufferedCount++;
+                    emittedRows++;
                     if (bufferedCount >= InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
                         consumer.accept(new DataChunk(outputNames, outputVectors));
                         outputVectors = createVectors(outputTypes, InMemoryTableStorage.STANDARD_VECTOR_SIZE);
@@ -137,6 +173,7 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
                 "probedRows=" + probedRows
                         + " nullKeyRows=" + nullKeyRows
                         + " matchedRows=" + matchedRows
+                        + " emittedRows=" + emittedRows
                         + " outputChunks=" + outputChunks
         );
         ExecutionProfiler.log("PhysicalHashJoinSource", "total", totalStart, null);
@@ -291,6 +328,27 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
             vectors.add(new Vector(type, cardinality));
         }
         return vectors;
+    }
+
+    private DataChunk singleRowChunk(List<String> names, List<LogicalType> types) {
+        return new DataChunk(names, createVectors(types, 1));
+    }
+
+    private boolean matchesResidual(DataChunk rowChunk) {
+        Vector valueVector = expressionExecutor.execute(residualFilter, rowChunk);
+        if (valueVector.isNull(0)) {
+            return false;
+        }
+        if (!valueVector.logicalType().equals(LogicalType.BOOLEAN)) {
+            throw new ExecutionException("Join residual predicate must evaluate to BOOLEAN");
+        }
+        return valueVector.getBoolean(0);
+    }
+
+    private void copyResidualRow(List<Vector> target, int targetIndex, DataChunk residualRow) {
+        for (int columnIndex = 0; columnIndex < residualRow.vectors().size(); columnIndex++) {
+            target.get(columnIndex).copyFrom(targetIndex, residualRow.column(columnIndex), 0);
+        }
     }
 
     private DataChunk compactChunk(List<String> names, List<LogicalType> types, List<Vector> sourceVectors, int cardinality) {

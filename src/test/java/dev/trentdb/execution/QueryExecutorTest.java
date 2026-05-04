@@ -434,10 +434,17 @@ class QueryExecutorTest {
 
         assertEquals(List.of("explain"), result.columns());
         assertEquals("""
-                LogicalExplain
-                  LogicalProjection [1]
-                    LogicalFilter
-                      LogicalGet people
+                Logical Plan
+                LogicalProjection [1]
+                  LogicalFilter
+                    LogicalGet people
+                
+                Physical Plan
+                  Source: PhysicalTableScan table=people
+                  Operators
+                    PhysicalFilter predicate=(id#0 EQUAL 1)
+                    PhysicalProjection expressions=[1]
+                  Sink: RESULT_COLLECTOR
                 """, result.rows().getFirst().getFirst());
     }
 

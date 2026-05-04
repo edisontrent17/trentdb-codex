@@ -32,7 +32,11 @@ import java.util.List;
 public final class PhysicalPlanner {
     private record HashJoinKeys(int leftKeyOrdinal, int rightKeyOrdinal) {
     }
-    private record JoinFilterSplit(BoundExpression leftPredicate, BoundExpression rightPredicate, BoundExpression residualPredicate) {
+    private record JoinFilterSplit(
+            BoundExpression leftPredicate,
+            BoundExpression rightPredicate,
+            BoundExpression residualPredicate
+    ) {
     }
 
     private final StorageManager storageManager;
@@ -44,9 +48,14 @@ public final class PhysicalPlanner {
     public Pipeline plan(LogicalOperator logical) {
         PhysicalResultCollector sink = new PhysicalResultCollector();
         if (logical instanceof LogicalExplain explain) {
-            return new Pipeline(new PhysicalExplain(explain), java.util.List.of(), sink);
+            Pipeline physicalPlan = planQuery(explain.child());
+            return new Pipeline(new PhysicalExplain(explain.child(), physicalPlan), java.util.List.of(), sink);
         }
+        return planQuery(logical);
+    }
 
+    private Pipeline planQuery(LogicalOperator logical) {
+        PhysicalResultCollector sink = new PhysicalResultCollector();
         ArrayList<PhysicalOperator> operators = new ArrayList<>();
         PhysicalSource source = buildPipeline(logical, operators);
         return new Pipeline(source, operators, sink);
@@ -66,8 +75,13 @@ public final class PhysicalPlanner {
         if (logical instanceof LogicalFilter filter) {
             if (filter.child() instanceof LogicalJoin join) {
                 JoinFilterSplit split = splitJoinFilter(join, filter.predicate());
-                PhysicalSource source = buildJoinSource(join, split.leftPredicate(), split.rightPredicate());
-                if (split.residualPredicate() != null) {
+                PhysicalSource source = buildJoinSource(
+                        join,
+                        split.leftPredicate(),
+                        split.rightPredicate(),
+                        split.residualPredicate()
+                );
+                if (split.residualPredicate() != null && !(source instanceof PhysicalHashJoinSource)) {
                     operators.add(new PhysicalFilter(split.residualPredicate()));
                 }
                 return source;
@@ -90,7 +104,7 @@ public final class PhysicalPlanner {
             return new PhysicalTableScan(storageManager, get.tableRef());
         }
         if (logical instanceof LogicalJoin join) {
-            return buildJoinSource(join, null, null);
+            return buildJoinSource(join, null, null, null);
         }
         throw new ExecutionException("Unsupported logical operator for physical planning: " + logical.getClass().getSimpleName());
     }
@@ -98,7 +112,8 @@ public final class PhysicalPlanner {
     private PhysicalSource buildJoinSource(
             LogicalJoin join,
             BoundExpression leftPredicate,
-            BoundExpression rightPredicate
+            BoundExpression rightPredicate,
+            BoundExpression residualPredicate
     ) {
         HashJoinKeys hashJoinKeys = hashJoinKeys(join.left(), join.right(), join.condition());
         if (hashJoinKeys != null) {
@@ -109,7 +124,8 @@ public final class PhysicalPlanner {
                     hashJoinKeys.leftKeyOrdinal(),
                     hashJoinKeys.rightKeyOrdinal(),
                     leftPredicate,
-                    rightPredicate
+                    rightPredicate,
+                    residualPredicate
             );
         }
         return new PhysicalNestedLoopJoinSource(
@@ -157,6 +173,10 @@ public final class PhysicalPlanner {
     }
 
     private JoinFilterSplit splitJoinFilter(LogicalJoin join, BoundExpression predicate) {
+        JoinFilterSplit disjunctiveSplit = splitDisjunctiveJoinFilter(join, predicate);
+        if (disjunctiveSplit != null) {
+            return disjunctiveSplit;
+        }
         List<ColumnCatalogEntry> leftColumns = columns(join.left());
         List<ColumnCatalogEntry> rightColumns = columns(join.right());
         int leftColumnCount = leftColumns.size();
@@ -185,10 +205,68 @@ public final class PhysicalPlanner {
         );
     }
 
+    private JoinFilterSplit splitDisjunctiveJoinFilter(LogicalJoin join, BoundExpression predicate) {
+        ArrayList<BoundExpression> branches = new ArrayList<>();
+        flattenDisjuncts(predicate, branches);
+        if (branches.size() <= 1) {
+            return null;
+        }
+
+        List<ColumnCatalogEntry> leftColumns = columns(join.left());
+        List<ColumnCatalogEntry> rightColumns = columns(join.right());
+        int leftColumnCount = leftColumns.size();
+        int rightColumnCount = rightColumns.size();
+        ArrayList<BoundExpression> leftBranches = new ArrayList<>();
+        ArrayList<BoundExpression> rightBranches = new ArrayList<>();
+        boolean canPrefilterLeft = true;
+        boolean canPrefilterRight = true;
+
+        for (BoundExpression branch : branches) {
+            ArrayList<BoundExpression> conjuncts = new ArrayList<>();
+            flattenConjuncts(branch, conjuncts);
+            ArrayList<BoundExpression> leftConjuncts = new ArrayList<>();
+            ArrayList<BoundExpression> rightConjuncts = new ArrayList<>();
+            for (BoundExpression conjunct : conjuncts) {
+                PredicateScope scope = scopeOf(conjunct, leftColumnCount, rightColumnCount);
+                if (scope == PredicateScope.LEFT) {
+                    leftConjuncts.add(rewriteForJoinSide(conjunct, leftColumnCount, JoinSide.LEFT));
+                } else if (scope == PredicateScope.RIGHT) {
+                    rightConjuncts.add(rewriteForJoinSide(conjunct, leftColumnCount, JoinSide.RIGHT));
+                }
+            }
+            if (leftConjuncts.isEmpty()) {
+                canPrefilterLeft = false;
+            } else {
+                leftBranches.add(combineConjuncts(leftConjuncts));
+            }
+            if (rightConjuncts.isEmpty()) {
+                canPrefilterRight = false;
+            } else {
+                rightBranches.add(combineConjuncts(rightConjuncts));
+            }
+        }
+
+        BoundExpression leftPredicate = canPrefilterLeft ? combineDisjuncts(leftBranches) : null;
+        BoundExpression rightPredicate = canPrefilterRight ? combineDisjuncts(rightBranches) : null;
+        if (leftPredicate == null && rightPredicate == null) {
+            return null;
+        }
+        return new JoinFilterSplit(leftPredicate, rightPredicate, predicate);
+    }
+
     private void flattenConjuncts(BoundExpression expression, List<BoundExpression> output) {
         if (expression instanceof BoundBinaryExpression binary && binary.operator() == BinaryOperator.AND) {
             flattenConjuncts(binary.left(), output);
             flattenConjuncts(binary.right(), output);
+            return;
+        }
+        output.add(expression);
+    }
+
+    private void flattenDisjuncts(BoundExpression expression, List<BoundExpression> output) {
+        if (expression instanceof BoundBinaryExpression binary && binary.operator() == BinaryOperator.OR) {
+            flattenDisjuncts(binary.left(), output);
+            flattenDisjuncts(binary.right(), output);
             return;
         }
         output.add(expression);
@@ -201,6 +279,17 @@ public final class PhysicalPlanner {
         BoundExpression result = conjuncts.get(0);
         for (int index = 1; index < conjuncts.size(); index++) {
             result = new BoundBinaryExpression(result, BinaryOperator.AND, conjuncts.get(index), LogicalType.BOOLEAN);
+        }
+        return result;
+    }
+
+    private BoundExpression combineDisjuncts(List<BoundExpression> disjuncts) {
+        if (disjuncts.isEmpty()) {
+            return null;
+        }
+        BoundExpression result = disjuncts.get(0);
+        for (int index = 1; index < disjuncts.size(); index++) {
+            result = new BoundBinaryExpression(result, BinaryOperator.OR, disjuncts.get(index), LogicalType.BOOLEAN);
         }
         return result;
     }

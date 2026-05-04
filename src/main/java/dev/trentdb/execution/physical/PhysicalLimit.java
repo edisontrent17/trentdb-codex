@@ -10,6 +10,10 @@ public final class PhysicalLimit implements PhysicalOperator {
         this.limit = limit;
     }
 
+    public long limit() {
+        return limit;
+    }
+
     @Override
     public PhysicalOperatorType type() {
         return PhysicalOperatorType.LIMIT;

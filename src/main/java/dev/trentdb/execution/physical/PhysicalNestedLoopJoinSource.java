@@ -40,6 +40,26 @@ public final class PhysicalNestedLoopJoinSource implements PhysicalSource {
         this.rightFilter = rightFilter;
     }
 
+    public BoundTableRef left() {
+        return left;
+    }
+
+    public BoundTableRef right() {
+        return right;
+    }
+
+    public BoundExpression condition() {
+        return condition;
+    }
+
+    public BoundExpression leftFilter() {
+        return leftFilter;
+    }
+
+    public BoundExpression rightFilter() {
+        return rightFilter;
+    }
+
     @Override
     public PhysicalOperatorType type() {
         return PhysicalOperatorType.NESTED_LOOP_JOIN;
