@@ -7,11 +7,13 @@ import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundAggregateExpression;
 import dev.trentdb.planner.BoundBetweenExpression;
 import dev.trentdb.planner.BoundBinaryExpression;
+import dev.trentdb.planner.BoundCaseExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
+import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.storage.InMemoryTableStorage;
@@ -34,6 +36,14 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
         this.selectNames = List.copyOf(selectNames);
     }
 
+    public List<BoundExpression> groups() {
+        return groups;
+    }
+
+    public List<BoundExpression> selectList() {
+        return selectList;
+    }
+
     @Override
     public PhysicalOperatorType type() {
         return PhysicalOperatorType.HASH_GROUP_BY;
@@ -41,35 +51,35 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
 
     @Override
     public LocalOperatorState createLocalOperatorState(GlobalOperatorState globalState) {
-        return new AggregateLocalState(selectList);
+        return new AggregateLocalState(groups.isEmpty(), selectList);
     }
 
     @Override
     public void execute(DataChunk input, OperatorInput operatorInput, PhysicalChunkConsumer downstream) {
         AggregateLocalState state = (AggregateLocalState) operatorInput.localState();
+        List<Vector> aggregateVectors = aggregateArgumentVectors(input);
+        if (groups.isEmpty()) {
+            AggregateRow row = state.ungroupedRow(selectList);
+            updateRows(row, aggregateVectors, input.cardinality());
+            return;
+        }
+
         List<Vector> groupVectors = groups.stream()
                 .map(group -> expressionExecutor.execute(group, input))
                 .toList();
-        List<Vector> aggregateVectors = aggregateArgumentVectors(input);
-
         for (int rowIndex = 0; rowIndex < input.cardinality(); rowIndex++) {
             GroupKey key = groupKey(groupVectors, rowIndex);
             AggregateRow row = state.groups.computeIfAbsent(key, ignored -> new AggregateRow(key.values(), selectList));
-            for (int selectIndex = 0; selectIndex < selectList.size(); selectIndex++) {
-                if (selectList.get(selectIndex) instanceof BoundAggregateExpression aggregate) {
-                    Vector argumentVector = aggregateVectors.get(selectIndex);
-                    row.states[selectIndex].update(argumentVector, rowIndex, aggregate.starArgument());
-                }
-            }
+            updateRow(row, aggregateVectors, rowIndex);
         }
     }
 
     @Override
     public void finish(OperatorInput operatorInput, PhysicalChunkConsumer downstream) {
         AggregateLocalState state = (AggregateLocalState) operatorInput.localState();
-        if (groups.isEmpty() && state.groups.isEmpty()) {
-            GroupKey key = new GroupKey(List.of());
-            state.groups.put(key, new AggregateRow(key.values(), selectList));
+        if (groups.isEmpty()) {
+            downstream.accept(chunk(List.of(state.ungroupedRow(selectList)), 0, 1));
+            return;
         }
         ArrayList<AggregateRow> rows = new ArrayList<>(state.groups.values());
         for (int offset = 0; offset < rows.size(); offset += InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
@@ -81,6 +91,21 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
     @Override
     public void execute(DataChunk input, PhysicalChunkConsumer downstream) {
         throw new UnsupportedOperationException("PhysicalHashAggregate requires operator state");
+    }
+
+    private void updateRows(AggregateRow row, List<Vector> aggregateVectors, int cardinality) {
+        for (int rowIndex = 0; rowIndex < cardinality; rowIndex++) {
+            updateRow(row, aggregateVectors, rowIndex);
+        }
+    }
+
+    private void updateRow(AggregateRow row, List<Vector> aggregateVectors, int rowIndex) {
+        for (int selectIndex = 0; selectIndex < selectList.size(); selectIndex++) {
+            if (selectList.get(selectIndex) instanceof BoundAggregateExpression aggregate) {
+                Vector argumentVector = aggregateVectors.get(selectIndex);
+                row.states[selectIndex].update(argumentVector, rowIndex, aggregate.starArgument());
+            }
+        }
     }
 
     private List<Vector> aggregateArgumentVectors(DataChunk input) {
@@ -134,10 +159,12 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
             case BoundAggregateExpression aggregate -> aggregate.logicalType();
             case BoundBetweenExpression between -> between.logicalType();
             case BoundBinaryExpression binary -> binary.logicalType();
+            case BoundCaseExpression caseExpression -> caseExpression.logicalType();
             case BoundCastExpression cast -> cast.logicalType();
             case BoundColumnRefExpression column -> column.logicalType();
             case BoundFunctionExpression function -> function.logicalType();
             case BoundInExpression in -> in.logicalType();
+            case BoundIntervalExpression ignored -> LogicalType.INTERVAL;
             case BoundLiteralExpression literal -> literal.logicalType();
             case BoundOutputColumnExpression output -> output.logicalType();
         };
@@ -151,11 +178,22 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
 
     private static final class AggregateLocalState extends LocalOperatorState {
         private final LinkedHashMap<GroupKey, AggregateRow> groups = new LinkedHashMap<>();
+        private AggregateRow ungroupedRow;
 
-        private AggregateLocalState(List<BoundExpression> selectList) {
+        private AggregateLocalState(boolean ungrouped, List<BoundExpression> selectList) {
             if (selectList.isEmpty()) {
                 throw new IllegalArgumentException("Aggregate select list must not be empty");
             }
+            if (ungrouped) {
+                ungroupedRow = new AggregateRow(List.of(), selectList);
+            }
+        }
+
+        private AggregateRow ungroupedRow(List<BoundExpression> selectList) {
+            if (ungroupedRow == null) {
+                ungroupedRow = new AggregateRow(List.of(), selectList);
+            }
+            return ungroupedRow;
         }
     }
 
@@ -197,12 +235,11 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
             if (inputVector == null || inputVector.isNull(rowIndex)) {
                 return;
             }
-            Cell input = Cell.fromVector(inputVector, rowIndex);
             switch (name) {
-                case "sum" -> updateSum(input);
-                case "avg" -> updateAverage(input);
-                case "min" -> updateMin(input);
-                case "max" -> updateMax(input);
+                case "sum" -> updateSum(inputVector, rowIndex);
+                case "avg" -> updateAverage(inputVector, rowIndex);
+                case "min" -> updateMin(Cell.fromVector(inputVector, rowIndex));
+                case "max" -> updateMax(Cell.fromVector(inputVector, rowIndex));
                 default -> throw new ExecutionException("Unsupported aggregate function: " + name);
             }
         }
@@ -217,18 +254,18 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
             };
         }
 
-        private void updateSum(Cell input) {
+        private void updateSum(Vector inputVector, int rowIndex) {
             count++;
             if (returnType.equals(LogicalType.DOUBLE)) {
-                doubleSum += input.numericAsDouble();
+                doubleSum += numericAsDouble(inputVector, rowIndex);
             } else {
-                longSum += input.numericAsLong();
+                longSum += numericAsLong(inputVector, rowIndex);
             }
         }
 
-        private void updateAverage(Cell input) {
+        private void updateAverage(Vector inputVector, int rowIndex) {
             count++;
-            doubleSum += input.numericAsDouble();
+            doubleSum += numericAsDouble(inputVector, rowIndex);
         }
 
         private Cell sumResult() {
@@ -251,6 +288,34 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
             if (value == null || input.compareTo(value) > 0) {
                 value = input;
             }
+        }
+
+        private double numericAsDouble(Vector vector, int rowIndex) {
+            LogicalType type = vector.logicalType();
+            if (type.equals(LogicalType.INTEGER)) {
+                return vector.getInteger(rowIndex);
+            }
+            if (type.equals(LogicalType.BIGINT)) {
+                return vector.getBigint(rowIndex);
+            }
+            if (type.equals(LogicalType.DOUBLE)) {
+                return vector.getDouble(rowIndex);
+            }
+            throw new ExecutionException("Aggregate function expects numeric input");
+        }
+
+        private long numericAsLong(Vector vector, int rowIndex) {
+            LogicalType type = vector.logicalType();
+            if (type.equals(LogicalType.INTEGER)) {
+                return vector.getInteger(rowIndex);
+            }
+            if (type.equals(LogicalType.BIGINT)) {
+                return vector.getBigint(rowIndex);
+            }
+            if (type.equals(LogicalType.DOUBLE)) {
+                return (long) vector.getDouble(rowIndex);
+            }
+            throw new ExecutionException("Aggregate function expects numeric input");
         }
     }
 

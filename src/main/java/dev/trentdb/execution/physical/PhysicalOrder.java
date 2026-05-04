@@ -21,6 +21,10 @@ public final class PhysicalOrder implements PhysicalOperator {
         this.orders = List.copyOf(orders);
     }
 
+    public List<BoundOrderByItem> orders() {
+        return orders;
+    }
+
     @Override
     public PhysicalOperatorType type() {
         return PhysicalOperatorType.ORDER_BY;

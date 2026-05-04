@@ -13,8 +13,34 @@ public final class QueryExecutor {
     }
 
     public QueryResult execute(LogicalOperator operator) {
-        var pipeline = new PhysicalPlanner(storageManager).plan(operator);
+        long totalStart = ExecutionProfiler.start();
+        long planStart = ExecutionProfiler.start();
+        dev.trentdb.execution.physical.Pipeline pipeline = new PhysicalPlanner(storageManager).plan(operator);
+        ExecutionProfiler.log(
+                "QueryExecutor",
+                "plan",
+                planStart,
+                "logical=" + operator.getClass().getSimpleName()
+        );
+
+        long pipelineStart = ExecutionProfiler.start();
         new PipelineExecutor().execute(pipeline);
-        return pipeline.sink().result();
+        ExecutionProfiler.log(
+                "QueryExecutor",
+                "pipeline",
+                pipelineStart,
+                "source=" + pipeline.source().type().name() + " operators=" + pipeline.operators().size()
+        );
+
+        long resultStart = ExecutionProfiler.start();
+        QueryResult result = pipeline.sink().result();
+        ExecutionProfiler.log(
+                "QueryExecutor",
+                "result",
+                resultStart,
+                "rows=" + result.rows().size() + " columns=" + result.columns().size()
+        );
+        ExecutionProfiler.log("QueryExecutor", "total", totalStart, null);
+        return result;
     }
 }

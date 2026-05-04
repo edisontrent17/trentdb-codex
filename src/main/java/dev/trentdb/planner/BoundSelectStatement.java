@@ -39,6 +39,16 @@ public record BoundSelectStatement(
                     || containsAggregate(between.lower())
                     || containsAggregate(between.upper());
             case BoundCastExpression cast -> containsAggregate(cast.child());
+            case BoundCaseExpression caseExpression -> {
+                boolean result = containsAggregate(caseExpression.elseExpression());
+                for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
+                    if (containsAggregate(branch.condition()) || containsAggregate(branch.result())) {
+                        result = true;
+                        break;
+                    }
+                }
+                yield result;
+            }
             case BoundColumnRefExpression ignored -> false;
             case BoundInExpression in -> {
                 boolean result = containsAggregate(in.input());
@@ -62,6 +72,7 @@ public record BoundSelectStatement(
                 yield result;
             }
             case BoundLiteralExpression ignored -> false;
+            case BoundIntervalExpression ignored -> false;
         };
     }
 }

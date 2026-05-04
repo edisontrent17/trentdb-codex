@@ -3,6 +3,7 @@ package dev.trentdb.parser;
 import dev.trentdb.ast.BinaryExpression;
 import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.ast.BetweenExpression;
+import dev.trentdb.ast.CaseExpression;
 import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnDefinition;
 import dev.trentdb.ast.ColumnReferenceExpression;
@@ -13,6 +14,8 @@ import dev.trentdb.ast.FromItem;
 import dev.trentdb.ast.FunctionCallExpression;
 import dev.trentdb.ast.InExpression;
 import dev.trentdb.ast.InsertStatement;
+import dev.trentdb.ast.IntervalLiteralExpression;
+import dev.trentdb.ast.IntervalUnit;
 import dev.trentdb.ast.JoinClause;
 import dev.trentdb.ast.JoinType;
 import dev.trentdb.ast.LiteralExpression;
@@ -31,6 +34,8 @@ import dev.trentdb.ast.UnaryExpression;
 import dev.trentdb.ast.UnaryOperator;
 import dev.trentdb.parser.sql.TrentDbSqlParser;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -211,6 +216,13 @@ final class AstBuilder {
                     inPredicate.NOT() != null
             );
         }
+        if (context instanceof TrentDbSqlParser.LikePredicateContext likePredicate) {
+            return new BinaryExpression(
+                    valueExpression(likePredicate.valueExpression(0)),
+                    likePredicate.NOT() == null ? BinaryOperator.LIKE : BinaryOperator.NOT_LIKE,
+                    valueExpression(likePredicate.valueExpression(1))
+            );
+        }
         if (context instanceof TrentDbSqlParser.ComparisonPredicateContext comparisonPredicate) {
             return new BinaryExpression(
                     valueExpression(comparisonPredicate.valueExpression(0)),
@@ -283,6 +295,9 @@ final class AstBuilder {
         if (context instanceof TrentDbSqlParser.LiteralPrimaryContext literalPrimary) {
             return literal(literalPrimary.literal());
         }
+        if (context instanceof TrentDbSqlParser.IntervalPrimaryContext intervalPrimary) {
+            return intervalLiteral(intervalPrimary.intervalLiteral());
+        }
         if (context instanceof TrentDbSqlParser.ColumnReferencePrimaryContext columnReference) {
             return new ColumnReferenceExpression(qualifiedName(columnReference.qualifiedName()));
         }
@@ -291,6 +306,9 @@ final class AstBuilder {
         }
         if (context instanceof TrentDbSqlParser.CastPrimaryContext castPrimary) {
             return castExpression(castPrimary.castExpression());
+        }
+        if (context instanceof TrentDbSqlParser.CasePrimaryContext casePrimary) {
+            return caseExpression(casePrimary.caseExpression());
         }
         if (context instanceof TrentDbSqlParser.ParenthesizedExpressionContext parenthesizedExpression) {
             return expression(parenthesizedExpression.expression());
@@ -308,7 +326,22 @@ final class AstBuilder {
         return new CastExpression(expression(context.expression()), typeName(context.typeName()));
     }
 
+    private CaseExpression caseExpression(TrentDbSqlParser.CaseExpressionContext context) {
+        ArrayList<CaseExpression.WhenClause> branches = new ArrayList<>(context.caseWhenClause().size());
+        for (TrentDbSqlParser.CaseWhenClauseContext branchContext : context.caseWhenClause()) {
+            branches.add(new CaseExpression.WhenClause(
+                    expression(branchContext.expression(0)),
+                    expression(branchContext.expression(1))
+            ));
+        }
+        Expression elseExpression = context.ELSE() == null ? null : expression(context.expression());
+        return new CaseExpression(branches, elseExpression);
+    }
+
     private LiteralExpression literal(TrentDbSqlParser.LiteralContext context) {
+        if (context.dateLiteral() != null) {
+            return dateLiteral(context.dateLiteral());
+        }
         if (context.integerLiteral() != null) {
             return new LiteralExpression(LiteralKind.INTEGER, Long.parseLong(context.integerLiteral().getText()));
         }
@@ -325,6 +358,36 @@ final class AstBuilder {
             return new LiteralExpression(LiteralKind.BOOLEAN, false);
         }
         return new LiteralExpression(LiteralKind.NULL, null);
+    }
+
+    private LiteralExpression dateLiteral(TrentDbSqlParser.DateLiteralContext context) {
+        String value = unquoteString(context.stringLiteral().getText());
+        try {
+            return new LiteralExpression(LiteralKind.DATE, LocalDate.parse(value));
+        } catch (DateTimeParseException exception) {
+            throw new ParsingException("Invalid DATE literal: " + value);
+        }
+    }
+
+    private IntervalLiteralExpression intervalLiteral(TrentDbSqlParser.IntervalLiteralContext context) {
+        String value = unquoteString(context.stringLiteral().getText());
+        long amount;
+        try {
+            amount = Long.parseLong(value);
+        } catch (NumberFormatException exception) {
+            throw new ParsingException("Invalid INTERVAL literal: " + value);
+        }
+        return new IntervalLiteralExpression(amount, intervalUnit(context.intervalUnit()));
+    }
+
+    private IntervalUnit intervalUnit(TrentDbSqlParser.IntervalUnitContext context) {
+        if (context.YEAR() != null) {
+            return IntervalUnit.YEAR;
+        }
+        if (context.MONTH() != null) {
+            return IntervalUnit.MONTH;
+        }
+        return IntervalUnit.DAY;
     }
 
     private QualifiedName qualifiedName(TrentDbSqlParser.QualifiedNameContext context) {

@@ -243,6 +243,9 @@ public final class Vector {
             case DOUBLE -> doubles[index] = 0.0d;
             case TEXT -> texts[index] = null;
             case DATE -> dates[index] = null;
+            case INTERVAL -> {
+                return;
+            }
             case NULL -> {
                 return;
             }
@@ -257,6 +260,7 @@ public final class Vector {
             case DOUBLE -> new VectorStorage(null, null, null, new double[size], null, null);
             case TEXT -> new VectorStorage(null, null, null, null, new String[size], null);
             case DATE -> new VectorStorage(null, null, null, null, null, new LocalDate[size]);
+            case INTERVAL -> new VectorStorage(null, null, null, null, null, null);
             case NULL -> new VectorStorage(null, null, null, null, null, null);
         };
     }
@@ -407,6 +411,7 @@ public final class Vector {
             case DOUBLE -> setDouble(targetIndex, source.getDouble(sourceIndex));
             case TEXT -> setText(targetIndex, source.getText(sourceIndex));
             case DATE -> setDate(targetIndex, source.getDate(sourceIndex));
+            case INTERVAL -> setNull(targetIndex);
             case NULL -> setNull(targetIndex);
         }
     }
@@ -422,6 +427,7 @@ public final class Vector {
             case DOUBLE -> getDouble(index);
             case TEXT -> getText(index);
             case DATE -> getDate(index);
+            case INTERVAL -> null;
             case NULL -> null;
         };
     }

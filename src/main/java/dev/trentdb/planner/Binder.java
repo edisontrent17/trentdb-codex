@@ -3,12 +3,14 @@ package dev.trentdb.planner;
 import dev.trentdb.ast.BinaryExpression;
 import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.ast.BetweenExpression;
+import dev.trentdb.ast.CaseExpression;
 import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.Expression;
 import dev.trentdb.ast.FunctionCallExpression;
 import dev.trentdb.ast.InExpression;
+import dev.trentdb.ast.IntervalLiteralExpression;
 import dev.trentdb.ast.JoinClause;
 import dev.trentdb.ast.JoinType;
 import dev.trentdb.ast.LiteralExpression;
@@ -31,6 +33,15 @@ import dev.trentdb.types.LogicalType;
 
 import java.util.ArrayList;
 import java.util.List;
+
+import static dev.trentdb.planner.BoundExpressionTypes.bindBinaryType;
+import static dev.trentdb.planner.BoundExpressionTypes.canCast;
+import static dev.trentdb.planner.BoundExpressionTypes.commonCaseType;
+import static dev.trentdb.planner.BoundExpressionTypes.isComparable;
+import static dev.trentdb.planner.BoundExpressionTypes.isNull;
+import static dev.trentdb.planner.BoundExpressionTypes.literalType;
+import static dev.trentdb.planner.BoundExpressionTypes.logicalType;
+import static dev.trentdb.planner.BoundExpressionTypes.typeName;
 
 public final class Binder {
     private record BoundColumnBinding(String relationName, ColumnCatalogEntry column, int ordinal) {
@@ -265,6 +276,9 @@ public final class Binder {
         if (expression instanceof LiteralExpression literal) {
             return new BoundLiteralExpression(literalType(literal.kind()), literal.value());
         }
+        if (expression instanceof IntervalLiteralExpression interval) {
+            return new BoundIntervalExpression(interval.amount(), interval.unit());
+        }
         if (expression instanceof FunctionCallExpression functionCall) {
             return bindFunctionCall(context, functionCall, allowAggregates);
         }
@@ -279,6 +293,9 @@ public final class Binder {
         }
         if (expression instanceof CastExpression cast) {
             return bindCastExpression(context, cast, allowAggregates);
+        }
+        if (expression instanceof CaseExpression caseExpression) {
+            return bindCaseExpression(context, caseExpression, allowAggregates);
         }
         throw new BinderException("Unsupported expression: " + expression.getClass().getSimpleName());
     }
@@ -342,6 +359,30 @@ public final class Binder {
         return new BoundCastExpression(child, targetType);
     }
 
+    private BoundCaseExpression bindCaseExpression(
+            BindingContext context,
+            CaseExpression caseExpression,
+            boolean allowAggregates
+    ) {
+        ArrayList<BoundCaseExpression.WhenClause> branches = new ArrayList<>(caseExpression.branches().size());
+        ArrayList<LogicalType> resultTypes = new ArrayList<>(caseExpression.branches().size() + 1);
+        for (CaseExpression.WhenClause branch : caseExpression.branches()) {
+            BoundExpression condition = bindExpression(context, branch.condition(), allowAggregates);
+            if (!logicalType(condition).equals(LogicalType.BOOLEAN) && !isNull(logicalType(condition))) {
+                throw new BinderException("CASE WHEN condition must evaluate to BOOLEAN but got "
+                        + typeName(logicalType(condition)));
+            }
+            BoundExpression result = bindExpression(context, branch.result(), allowAggregates);
+            resultTypes.add(logicalType(result));
+            branches.add(new BoundCaseExpression.WhenClause(condition, result));
+        }
+        BoundExpression elseExpression = caseExpression.elseExpression() == null
+                ? new BoundLiteralExpression(LogicalType.NULL, null)
+                : bindExpression(context, caseExpression.elseExpression(), allowAggregates);
+        resultTypes.add(logicalType(elseExpression));
+        return new BoundCaseExpression(branches, elseExpression, commonCaseType(resultTypes));
+    }
+
     private BoundExpression bindFunctionCall(BindingContext context, FunctionCallExpression functionCall, boolean allowAggregates) {
         if (functionRegistry.isAggregate(functionCall.name())) {
             if (!allowAggregates) {
@@ -363,7 +404,7 @@ public final class Binder {
 
         dev.trentdb.function.ScalarFunction function = functionRegistry.bindScalar(
                 functionCall.name(),
-                arguments.stream().map(this::logicalType).toList()
+                arguments.stream().map(BoundExpressionTypes::logicalType).toList()
         );
         return new BoundFunctionExpression(function, arguments);
     }
@@ -380,95 +421,10 @@ public final class Binder {
         }
         dev.trentdb.function.AggregateFunction function = functionRegistry.bindAggregate(
                 functionCall.name(),
-                arguments.stream().map(this::logicalType).toList(),
+                arguments.stream().map(BoundExpressionTypes::logicalType).toList(),
                 functionCall.starArgument()
         );
         return new BoundAggregateExpression(function, arguments, functionCall.starArgument());
-    }
-
-    private LogicalType logicalType(BoundExpression expression) {
-        return switch (expression) {
-            case BoundColumnRefExpression column -> column.logicalType();
-            case BoundLiteralExpression literal -> literal.logicalType();
-            case BoundFunctionExpression function -> function.logicalType();
-            case BoundBinaryExpression binary -> binary.logicalType();
-            case BoundAggregateExpression aggregate -> aggregate.logicalType();
-            case BoundBetweenExpression between -> between.logicalType();
-            case BoundInExpression in -> in.logicalType();
-            case BoundCastExpression cast -> cast.logicalType();
-            case BoundOutputColumnExpression output -> output.logicalType();
-        };
-    }
-
-    private LogicalType bindBinaryType(BinaryOperator operator, LogicalType left, LogicalType right) {
-        return switch (operator) {
-            case EQUAL,
-                 NOT_EQUAL,
-                 LESS_THAN,
-                 LESS_THAN_OR_EQUAL,
-                 GREATER_THAN,
-                 GREATER_THAN_OR_EQUAL -> bindComparisonType(operator, left, right);
-            case AND,
-                 OR -> bindBooleanType(operator, left, right);
-            case ADD,
-                 SUBTRACT,
-                 MULTIPLY,
-                 DIVIDE -> bindArithmeticType(operator, left, right);
-        };
-    }
-
-    private LogicalType bindComparisonType(BinaryOperator operator, LogicalType left, LogicalType right) {
-        if (isNull(left) || isNull(right) || isComparable(left, right)) {
-            return LogicalType.BOOLEAN;
-        }
-        throw new BinderException("Operator " + operator + " cannot compare " + typeName(left) + " and " + typeName(right));
-    }
-
-    private LogicalType bindBooleanType(BinaryOperator operator, LogicalType left, LogicalType right) {
-        if ((left.equals(LogicalType.BOOLEAN) || isNull(left)) && (right.equals(LogicalType.BOOLEAN) || isNull(right))) {
-            return LogicalType.BOOLEAN;
-        }
-        throw new BinderException("Operator " + operator + " requires BOOLEAN operands but got " + typeName(left) + " and " + typeName(right));
-    }
-
-    private LogicalType bindArithmeticType(BinaryOperator operator, LogicalType left, LogicalType right) {
-        if ((isNumeric(left) || isNull(left)) && (isNumeric(right) || isNull(right))) {
-            if (operator == BinaryOperator.DIVIDE || left.equals(LogicalType.DOUBLE) || right.equals(LogicalType.DOUBLE)) {
-                return LogicalType.DOUBLE;
-            }
-            return LogicalType.BIGINT;
-        }
-        throw new BinderException("Operator " + operator + " requires numeric operands but got " + typeName(left) + " and " + typeName(right));
-    }
-
-    private boolean isComparable(LogicalType left, LogicalType right) {
-        if (isNumeric(left) && isNumeric(right)) {
-            return true;
-        }
-        return left.equals(right);
-    }
-
-    private boolean canCast(LogicalType source, LogicalType target) {
-        if (source.equals(target) || source.equals(LogicalType.NULL)) {
-            return true;
-        }
-        if (target.equals(LogicalType.TEXT)) {
-            return true;
-        }
-        if (isNumeric(source) && isNumeric(target)) {
-            return true;
-        }
-        return source.equals(LogicalType.TEXT) && target.equals(LogicalType.DATE);
-    }
-
-    private boolean isNumeric(LogicalType logicalType) {
-        return logicalType.equals(LogicalType.INTEGER)
-                || logicalType.equals(LogicalType.BIGINT)
-                || logicalType.equals(LogicalType.DOUBLE);
-    }
-
-    private boolean isNull(LogicalType logicalType) {
-        return logicalType.equals(LogicalType.NULL);
     }
 
     private String defaultSelectName(BoundExpression expression) {
@@ -495,10 +451,7 @@ public final class Binder {
     }
 
     private void validateAggregateSelectExpression(BoundExpression expression, List<BoundExpression> groupBy) {
-        if (containsAggregate(expression)) {
-            if (!(expression instanceof BoundAggregateExpression)) {
-                throw new BinderException("Aggregate expressions inside scalar expressions are not supported yet");
-            }
+        if (expression instanceof BoundAggregateExpression) {
             return;
         }
         for (BoundExpression group : groupBy) {
@@ -506,7 +459,49 @@ public final class Binder {
                 return;
             }
         }
-        throw new BinderException("Column must appear in GROUP BY or be used in an aggregate function");
+        switch (expression) {
+            case BoundBinaryExpression binary -> {
+                validateAggregateSelectExpression(binary.left(), groupBy);
+                validateAggregateSelectExpression(binary.right(), groupBy);
+            }
+            case BoundBetweenExpression between -> {
+                validateAggregateSelectExpression(between.input(), groupBy);
+                validateAggregateSelectExpression(between.lower(), groupBy);
+                validateAggregateSelectExpression(between.upper(), groupBy);
+            }
+            case BoundCastExpression cast -> validateAggregateSelectExpression(cast.child(), groupBy);
+            case BoundCaseExpression caseExpression -> {
+                for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
+                    validateAggregateSelectExpression(branch.condition(), groupBy);
+                    validateAggregateSelectExpression(branch.result(), groupBy);
+                }
+                validateAggregateSelectExpression(caseExpression.elseExpression(), groupBy);
+            }
+            case BoundFunctionExpression function -> {
+                for (BoundExpression argument : function.arguments()) {
+                    validateAggregateSelectExpression(argument, groupBy);
+                }
+            }
+            case BoundInExpression in -> {
+                validateAggregateSelectExpression(in.input(), groupBy);
+                for (BoundExpression candidate : in.candidates()) {
+                    validateAggregateSelectExpression(candidate, groupBy);
+                }
+            }
+            case BoundIntervalExpression ignored -> {
+                return;
+            }
+            case BoundLiteralExpression ignored -> {
+                return;
+            }
+            case BoundColumnRefExpression ignored -> throw new BinderException(
+                    "Column must appear in GROUP BY or be used in an aggregate function");
+            case BoundOutputColumnExpression ignored -> throw new BinderException(
+                    "Column must appear in GROUP BY or be used in an aggregate function");
+            case BoundAggregateExpression ignored -> {
+                return;
+            }
+        }
     }
 
     private boolean containsAggregate(List<BoundExpression> expressions) {
@@ -526,6 +521,16 @@ public final class Binder {
                     || containsAggregate(between.lower())
                     || containsAggregate(between.upper());
             case BoundCastExpression cast -> containsAggregate(cast.child());
+            case BoundCaseExpression caseExpression -> {
+                boolean result = containsAggregate(caseExpression.elseExpression());
+                for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
+                    if (containsAggregate(branch.condition()) || containsAggregate(branch.result())) {
+                        result = true;
+                        break;
+                    }
+                }
+                yield result;
+            }
             case BoundColumnRefExpression ignored -> false;
             case BoundInExpression in -> {
                 boolean result = containsAggregate(in.input());
@@ -549,20 +554,7 @@ public final class Binder {
                 yield result;
             }
             case BoundLiteralExpression ignored -> false;
-        };
-    }
-
-    private String typeName(LogicalType logicalType) {
-        return logicalType.id().name();
-    }
-
-    private LogicalType literalType(LiteralKind kind) {
-        return switch (kind) {
-            case INTEGER -> LogicalType.BIGINT;
-            case DECIMAL -> LogicalType.DOUBLE;
-            case STRING -> LogicalType.TEXT;
-            case BOOLEAN -> LogicalType.BOOLEAN;
-            case NULL -> LogicalType.NULL;
+            case BoundIntervalExpression ignored -> false;
         };
     }
 

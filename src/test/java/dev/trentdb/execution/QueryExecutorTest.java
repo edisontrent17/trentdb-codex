@@ -128,6 +128,62 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesLikePredicate() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT name FROM people WHERE name LIKE 'A%'");
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Alice")), result.rows());
+    }
+
+    @Test
+    void executesNotLikePredicate() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT name FROM people WHERE name NOT LIKE '_lice'");
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Bob")), result.rows());
+    }
+
+    @Test
+    void executesSearchedCaseExpression() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(
+                fixture,
+                "SELECT CASE WHEN id = 1 THEN 'one' WHEN id = 2 THEN 'two' ELSE 'other' END AS label FROM people"
+        );
+
+        assertEquals(List.of("label"), result.columns());
+        assertEquals(List.of(List.of("one"), List.of("two")), result.rows());
+    }
+
+    @Test
+    void searchedCaseUsesNullElseWhenOmitted() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT CASE WHEN id = 1 THEN 10 END AS maybe_ten FROM people");
+
+        assertEquals(List.of("maybe_ten"), result.columns());
+        assertEquals(java.util.Arrays.asList(
+                List.of(10L),
+                java.util.Arrays.asList((Object) null)
+        ), result.rows());
+    }
+
+    @Test
+    void executesAggregateOverCaseExpression() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT sum(CASE WHEN name LIKE 'A%' THEN 1 ELSE 0 END) AS a_count FROM people");
+
+        assertEquals(List.of("a_count"), result.columns());
+        assertEquals(List.of(List.of(1L)), result.rows());
+    }
+
+    @Test
     void inPredicateWithNullCandidateUsesSqlThreeValuedLogic() {
         Fixture fixture = peopleWithNullFixture();
 
@@ -316,6 +372,16 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesScalarExpressionOverAggregate() {
+        Fixture fixture = salesFixture();
+
+        QueryResult result = execute(fixture, "SELECT count(*) + 1 AS adjusted_count FROM sales");
+
+        assertEquals(List.of("adjusted_count"), result.columns());
+        assertEquals(List.of(List.of(5L)), result.rows());
+    }
+
+    @Test
     void executesGroupedAggregates() {
         Fixture fixture = salesFixture();
 
@@ -434,10 +500,17 @@ class QueryExecutorTest {
 
         assertEquals(List.of("explain"), result.columns());
         assertEquals("""
-                LogicalExplain
-                  LogicalProjection [1]
-                    LogicalFilter
-                      LogicalGet people
+                Logical Plan
+                LogicalProjection [1]
+                  LogicalFilter
+                    LogicalGet people
+                
+                Physical Plan
+                  Source: PhysicalTableScan table=people
+                  Operators
+                    PhysicalFilter predicate=(id#0 EQUAL 1)
+                    PhysicalProjection expressions=[1]
+                  Sink: RESULT_COLLECTOR
                 """, result.rows().getFirst().getFirst());
     }
 

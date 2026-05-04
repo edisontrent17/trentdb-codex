@@ -107,6 +107,7 @@ booleanFactor
 predicate
     : valueExpression IS NOT NULL_T                         #isNotNullPredicate
     | valueExpression IS NULL_T                             #isNullPredicate
+    | valueExpression NOT? LIKE valueExpression             #likePredicate
     | valueExpression NOT? IN LPAREN expressionList RPAREN  #inPredicate
     | valueExpression BETWEEN valueExpression AND valueExpression #betweenPredicate
     | valueExpression comparisonOperator valueExpression    #comparisonPredicate
@@ -142,9 +143,11 @@ unaryExpression
 
 primaryExpression
     : literal                                               #literalPrimary
+    | intervalLiteral                                       #intervalPrimary
     | qualifiedName                                         #columnReferencePrimary
     | functionCall                                          #functionCallPrimary
     | castExpression                                        #castPrimary
+    | caseExpression                                        #casePrimary
     | LPAREN expression RPAREN                              #parenthesizedExpression
     ;
 
@@ -154,6 +157,14 @@ functionCall
 
 castExpression
     : CAST LPAREN expression AS typeName RPAREN
+    ;
+
+caseExpression
+    : CASE caseWhenClause+ (ELSE expression)? END
+    ;
+
+caseWhenClause
+    : WHEN expression THEN expression
     ;
 
 qualifiedName
@@ -170,12 +181,27 @@ typeName
     ;
 
 literal
-    : integerLiteral
+    : dateLiteral
+    | integerLiteral
     | decimalLiteral
     | stringLiteral
     | TRUE
     | FALSE
     | NULL_T
+    ;
+
+dateLiteral
+    : DATE_T stringLiteral
+    ;
+
+intervalLiteral
+    : INTERVAL stringLiteral intervalUnit
+    ;
+
+intervalUnit
+    : DAY
+    | MONTH
+    | YEAR
     ;
 
 integerLiteral
@@ -209,6 +235,11 @@ ORDER: 'ORDER';
 LIMIT: 'LIMIT';
 EXPLAIN: 'EXPLAIN';
 CAST: 'CAST';
+CASE: 'CASE';
+WHEN: 'WHEN';
+THEN: 'THEN';
+ELSE: 'ELSE';
+END: 'END';
 JOIN: 'JOIN';
 INNER: 'INNER';
 ON: 'ON';
@@ -216,7 +247,12 @@ AS: 'AS';
 IS: 'IS';
 NOT: 'NOT';
 IN: 'IN';
+LIKE: 'LIKE';
 BETWEEN: 'BETWEEN';
+INTERVAL: 'INTERVAL';
+DAY: 'DAY';
+MONTH: 'MONTH';
+YEAR: 'YEAR';
 NULL_T: 'NULL';
 TRUE: 'TRUE';
 FALSE: 'FALSE';

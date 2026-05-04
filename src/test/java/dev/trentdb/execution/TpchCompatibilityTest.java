@@ -101,6 +101,68 @@ class TpchCompatibilityTest {
                 0.049827539927526504d, 14902L);
     }
 
+    @Test
+    void executesTpchQ12FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String lineitemCsv = resourcePath("tpch/lineitem_q12_q14_sf001.csv");
+        String ordersCsv = resourcePath("tpch/orders_q12_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    l_shipmode,
+                    sum(CASE WHEN o_orderpriority = '1-URGENT' OR o_orderpriority = '2-HIGH' THEN 1 ELSE 0 END) AS high_line_count,
+                    sum(CASE WHEN o_orderpriority <> '1-URGENT' AND o_orderpriority <> '2-HIGH' THEN 1 ELSE 0 END) AS low_line_count
+                FROM
+                    '%s' l
+                JOIN
+                    '%s' o
+                ON
+                    o.o_orderkey = l.l_orderkey
+                WHERE
+                    l_shipmode IN ('MAIL', 'SHIP')
+                    AND l_commitdate < l_receiptdate
+                    AND l_shipdate < l_commitdate
+                    AND l_receiptdate >= DATE '1994-01-01'
+                    AND l_receiptdate < DATE '1994-01-01' + INTERVAL '1' YEAR
+                GROUP BY
+                    l_shipmode
+                ORDER BY
+                    l_shipmode;
+                """.formatted(sqlString(lineitemCsv), sqlString(ordersCsv)));
+
+        assertEquals(List.of("l_shipmode", "high_line_count", "low_line_count"), result.columns());
+        assertEquals(List.of(
+                List.of("MAIL", 64L, 86L),
+                List.of("SHIP", 61L, 96L)
+        ), result.rows());
+    }
+
+    @Test
+    void executesTpchQ14FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String lineitemCsv = resourcePath("tpch/lineitem_q12_q14_sf001.csv");
+        String partCsv = resourcePath("tpch/part_q14_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    100.00 * sum(CASE WHEN p_type LIKE 'PROMO%%' THEN l_extendedprice * (1 - l_discount) ELSE 0 END)
+                    / sum(l_extendedprice * (1 - l_discount)) AS promo_revenue
+                FROM
+                    '%s' l
+                JOIN
+                    '%s' p
+                ON
+                    l.l_partkey = p.p_partkey
+                WHERE
+                    l_shipdate >= DATE '1995-09-01'
+                    AND l_shipdate < DATE '1995-09-01' + INTERVAL '1' MONTH;
+                """.formatted(sqlString(lineitemCsv), sqlString(partCsv)));
+
+        assertEquals(List.of("promo_revenue"), result.columns());
+        assertEquals(1, result.rows().size());
+        assertDoubleEquals(15.486545812284078d, (Double) result.rows().getFirst().getFirst());
+    }
+
     private QueryResult execute(Fixture fixture, String sql) {
         Statement statement = parser.parse(sql);
         BoundStatement bound = new Binder(fixture.catalog()).bind(fixture.transaction(), statement);
