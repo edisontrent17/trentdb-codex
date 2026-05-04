@@ -6,6 +6,7 @@ import dev.trentdb.common.vector.Vector;
 import dev.trentdb.planner.BoundAggregateExpression;
 import dev.trentdb.planner.BoundBetweenExpression;
 import dev.trentdb.planner.BoundBinaryExpression;
+import dev.trentdb.planner.BoundCaseExpression;
 import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
@@ -36,6 +37,7 @@ public final class ExpressionExecutor {
             case BoundBetweenExpression between -> between(between, input);
             case BoundInExpression in -> in(in, input);
             case BoundCastExpression cast -> cast(cast, input);
+            case BoundCaseExpression caseExpression -> caseExpression(caseExpression, input);
             case BoundBinaryExpression binary -> binary(binary, input);
         };
     }
@@ -159,6 +161,60 @@ public final class ExpressionExecutor {
             return castToBoolean(child, input.cardinality());
         }
         throw new ExecutionException("Unsupported cast to " + targetType.id());
+    }
+
+    private Vector caseExpression(BoundCaseExpression caseExpression, DataChunk input) {
+        List<Vector> conditionVectors = caseExpression.branches().stream()
+                .map(branch -> execute(branch.condition(), input))
+                .toList();
+        List<Vector> resultVectors = caseExpression.branches().stream()
+                .map(branch -> execute(branch.result(), input))
+                .toList();
+        Vector elseVector = execute(caseExpression.elseExpression(), input);
+        Vector result = new Vector(caseExpression.logicalType(), input.cardinality());
+
+        for (int rowIndex = 0; rowIndex < input.cardinality(); rowIndex++) {
+            boolean matched = false;
+            for (int branchIndex = 0; branchIndex < conditionVectors.size(); branchIndex++) {
+                Vector conditionVector = conditionVectors.get(branchIndex);
+                if (conditionVector.isNull(rowIndex)) {
+                    continue;
+                }
+                if (!conditionVector.logicalType().equals(LogicalType.BOOLEAN)) {
+                    throw new ExecutionException("CASE WHEN condition did not evaluate to BOOLEAN");
+                }
+                if (conditionVector.getBoolean(rowIndex)) {
+                    writeCastValue(result, rowIndex, resultVectors.get(branchIndex), rowIndex);
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) {
+                writeCastValue(result, rowIndex, elseVector, rowIndex);
+            }
+        }
+        return result;
+    }
+
+    private void writeCastValue(Vector target, int targetIndex, Vector source, int sourceIndex) {
+        if (source.isNull(sourceIndex)) {
+            target.setNull(targetIndex);
+            return;
+        }
+        if (target.logicalType().equals(source.logicalType())) {
+            target.copyFrom(targetIndex, source, sourceIndex);
+            return;
+        }
+        if (target.logicalType().equals(LogicalType.DOUBLE) && isNumeric(source.logicalType())) {
+            target.setDouble(targetIndex, numericAsDouble(source, sourceIndex));
+            return;
+        }
+        if (target.logicalType().equals(LogicalType.BIGINT) && source.logicalType().equals(LogicalType.INTEGER)) {
+            target.setBigint(targetIndex, source.getInteger(sourceIndex));
+            return;
+        }
+        throw new ExecutionException("Cannot write CASE value " + source.logicalType().id().name()
+                + " to " + target.logicalType().id().name());
     }
 
     private Vector castToText(Vector child, int cardinality) {
@@ -330,10 +386,58 @@ public final class ExpressionExecutor {
                     writeTriState(result, index, compareNullable(left, right, index, Comparison.GREATER_THAN));
             case GREATER_THAN_OR_EQUAL ->
                     writeTriState(result, index, compareNullable(left, right, index, Comparison.GREATER_THAN_OR_EQUAL));
+            case LIKE -> writeTriState(result, index, likeNullable(left, right, index, false));
+            case NOT_LIKE -> writeTriState(result, index, likeNullable(left, right, index, true));
             case AND -> writeTriState(result, index, triAnd(readTriState(left, index), readTriState(right, index)));
             case OR -> writeTriState(result, index, triOr(readTriState(left, index), readTriState(right, index)));
             case ADD, SUBTRACT, MULTIPLY, DIVIDE -> writeArithmetic(binary.operator(), binary.logicalType(), left, right, index, result);
         }
+    }
+
+    private byte likeNullable(Vector left, Vector right, int index, boolean negated) {
+        if (left.isNull(index) || right.isNull(index)) {
+            return TRI_NULL;
+        }
+        if (!left.logicalType().equals(LogicalType.TEXT) || !right.logicalType().equals(LogicalType.TEXT)) {
+            throw new ExecutionException("LIKE expects TEXT operands");
+        }
+        boolean matched = likeMatches(left.getText(index), right.getText(index));
+        if (negated) {
+            matched = !matched;
+        }
+        return matched ? TRI_TRUE : TRI_FALSE;
+    }
+
+    private boolean likeMatches(String text, String pattern) {
+        int textIndex = 0;
+        int patternIndex = 0;
+        int starIndex = -1;
+        int starTextIndex = 0;
+        while (textIndex < text.length()) {
+            if (patternIndex < pattern.length()
+                    && (pattern.charAt(patternIndex) == '_' || pattern.charAt(patternIndex) == text.charAt(textIndex))) {
+                textIndex++;
+                patternIndex++;
+                continue;
+            }
+            if (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '%') {
+                starIndex = patternIndex;
+                patternIndex++;
+                starTextIndex = textIndex;
+                continue;
+            }
+            if (starIndex >= 0) {
+                patternIndex = starIndex + 1;
+                starTextIndex++;
+                textIndex = starTextIndex;
+                continue;
+            }
+            return false;
+        }
+        while (patternIndex < pattern.length() && pattern.charAt(patternIndex) == '%') {
+            patternIndex++;
+        }
+        return patternIndex == pattern.length();
     }
 
     private void writeArithmetic(

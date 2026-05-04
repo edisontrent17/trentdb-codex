@@ -3,6 +3,7 @@ package dev.trentdb.planner;
 import dev.trentdb.ast.BinaryExpression;
 import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.ast.BetweenExpression;
+import dev.trentdb.ast.CaseExpression;
 import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.ExplainStatement;
@@ -280,6 +281,9 @@ public final class Binder {
         if (expression instanceof CastExpression cast) {
             return bindCastExpression(context, cast, allowAggregates);
         }
+        if (expression instanceof CaseExpression caseExpression) {
+            return bindCaseExpression(context, caseExpression, allowAggregates);
+        }
         throw new BinderException("Unsupported expression: " + expression.getClass().getSimpleName());
     }
 
@@ -342,6 +346,30 @@ public final class Binder {
         return new BoundCastExpression(child, targetType);
     }
 
+    private BoundCaseExpression bindCaseExpression(
+            BindingContext context,
+            CaseExpression caseExpression,
+            boolean allowAggregates
+    ) {
+        ArrayList<BoundCaseExpression.WhenClause> branches = new ArrayList<>(caseExpression.branches().size());
+        ArrayList<LogicalType> resultTypes = new ArrayList<>(caseExpression.branches().size() + 1);
+        for (CaseExpression.WhenClause branch : caseExpression.branches()) {
+            BoundExpression condition = bindExpression(context, branch.condition(), allowAggregates);
+            if (!logicalType(condition).equals(LogicalType.BOOLEAN) && !isNull(logicalType(condition))) {
+                throw new BinderException("CASE WHEN condition must evaluate to BOOLEAN but got "
+                        + typeName(logicalType(condition)));
+            }
+            BoundExpression result = bindExpression(context, branch.result(), allowAggregates);
+            resultTypes.add(logicalType(result));
+            branches.add(new BoundCaseExpression.WhenClause(condition, result));
+        }
+        BoundExpression elseExpression = caseExpression.elseExpression() == null
+                ? new BoundLiteralExpression(LogicalType.NULL, null)
+                : bindExpression(context, caseExpression.elseExpression(), allowAggregates);
+        resultTypes.add(logicalType(elseExpression));
+        return new BoundCaseExpression(branches, elseExpression, commonCaseType(resultTypes));
+    }
+
     private BoundExpression bindFunctionCall(BindingContext context, FunctionCallExpression functionCall, boolean allowAggregates) {
         if (functionRegistry.isAggregate(functionCall.name())) {
             if (!allowAggregates) {
@@ -394,6 +422,7 @@ public final class Binder {
             case BoundBinaryExpression binary -> binary.logicalType();
             case BoundAggregateExpression aggregate -> aggregate.logicalType();
             case BoundBetweenExpression between -> between.logicalType();
+            case BoundCaseExpression caseExpression -> caseExpression.logicalType();
             case BoundInExpression in -> in.logicalType();
             case BoundCastExpression cast -> cast.logicalType();
             case BoundOutputColumnExpression output -> output.logicalType();
@@ -408,6 +437,8 @@ public final class Binder {
                  LESS_THAN_OR_EQUAL,
                  GREATER_THAN,
                  GREATER_THAN_OR_EQUAL -> bindComparisonType(operator, left, right);
+            case LIKE,
+                 NOT_LIKE -> bindLikeType(operator, left, right);
             case AND,
                  OR -> bindBooleanType(operator, left, right);
             case ADD,
@@ -422,6 +453,14 @@ public final class Binder {
             return LogicalType.BOOLEAN;
         }
         throw new BinderException("Operator " + operator + " cannot compare " + typeName(left) + " and " + typeName(right));
+    }
+
+    private LogicalType bindLikeType(BinaryOperator operator, LogicalType left, LogicalType right) {
+        if ((left.equals(LogicalType.TEXT) || isNull(left)) && (right.equals(LogicalType.TEXT) || isNull(right))) {
+            return LogicalType.BOOLEAN;
+        }
+        throw new BinderException("Operator " + operator + " requires TEXT operands but got "
+                + typeName(left) + " and " + typeName(right));
     }
 
     private LogicalType bindBooleanType(BinaryOperator operator, LogicalType left, LogicalType right) {
@@ -469,6 +508,33 @@ public final class Binder {
 
     private boolean isNull(LogicalType logicalType) {
         return logicalType.equals(LogicalType.NULL);
+    }
+
+    private LogicalType commonCaseType(List<LogicalType> types) {
+        LogicalType result = LogicalType.NULL;
+        boolean numeric = false;
+        boolean hasDouble = false;
+        for (LogicalType type : types) {
+            if (isNull(type)) {
+                continue;
+            }
+            if (isNull(result)) {
+                result = type;
+                numeric = isNumeric(type);
+                hasDouble = type.equals(LogicalType.DOUBLE);
+                continue;
+            }
+            if (numeric && isNumeric(type)) {
+                hasDouble = hasDouble || type.equals(LogicalType.DOUBLE);
+                result = hasDouble ? LogicalType.DOUBLE : LogicalType.BIGINT;
+                continue;
+            }
+            if (!result.equals(type)) {
+                throw new BinderException("CASE result types are incompatible: "
+                        + typeName(result) + " and " + typeName(type));
+            }
+        }
+        return result;
     }
 
     private String defaultSelectName(BoundExpression expression) {
@@ -526,6 +592,16 @@ public final class Binder {
                     || containsAggregate(between.lower())
                     || containsAggregate(between.upper());
             case BoundCastExpression cast -> containsAggregate(cast.child());
+            case BoundCaseExpression caseExpression -> {
+                boolean result = containsAggregate(caseExpression.elseExpression());
+                for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
+                    if (containsAggregate(branch.condition()) || containsAggregate(branch.result())) {
+                        result = true;
+                        break;
+                    }
+                }
+                yield result;
+            }
             case BoundColumnRefExpression ignored -> false;
             case BoundInExpression in -> {
                 boolean result = containsAggregate(in.input());

@@ -3,6 +3,7 @@ package dev.trentdb.parser;
 import dev.trentdb.ast.BinaryExpression;
 import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.ast.BetweenExpression;
+import dev.trentdb.ast.CaseExpression;
 import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnDefinition;
 import dev.trentdb.ast.ColumnReferenceExpression;
@@ -211,6 +212,13 @@ final class AstBuilder {
                     inPredicate.NOT() != null
             );
         }
+        if (context instanceof TrentDbSqlParser.LikePredicateContext likePredicate) {
+            return new BinaryExpression(
+                    valueExpression(likePredicate.valueExpression(0)),
+                    likePredicate.NOT() == null ? BinaryOperator.LIKE : BinaryOperator.NOT_LIKE,
+                    valueExpression(likePredicate.valueExpression(1))
+            );
+        }
         if (context instanceof TrentDbSqlParser.ComparisonPredicateContext comparisonPredicate) {
             return new BinaryExpression(
                     valueExpression(comparisonPredicate.valueExpression(0)),
@@ -292,6 +300,9 @@ final class AstBuilder {
         if (context instanceof TrentDbSqlParser.CastPrimaryContext castPrimary) {
             return castExpression(castPrimary.castExpression());
         }
+        if (context instanceof TrentDbSqlParser.CasePrimaryContext casePrimary) {
+            return caseExpression(casePrimary.caseExpression());
+        }
         if (context instanceof TrentDbSqlParser.ParenthesizedExpressionContext parenthesizedExpression) {
             return expression(parenthesizedExpression.expression());
         }
@@ -306,6 +317,18 @@ final class AstBuilder {
 
     private CastExpression castExpression(TrentDbSqlParser.CastExpressionContext context) {
         return new CastExpression(expression(context.expression()), typeName(context.typeName()));
+    }
+
+    private CaseExpression caseExpression(TrentDbSqlParser.CaseExpressionContext context) {
+        ArrayList<CaseExpression.WhenClause> branches = new ArrayList<>(context.caseWhenClause().size());
+        for (TrentDbSqlParser.CaseWhenClauseContext branchContext : context.caseWhenClause()) {
+            branches.add(new CaseExpression.WhenClause(
+                    expression(branchContext.expression(0)),
+                    expression(branchContext.expression(1))
+            ));
+        }
+        Expression elseExpression = context.ELSE() == null ? null : expression(context.expression());
+        return new CaseExpression(branches, elseExpression);
     }
 
     private LiteralExpression literal(TrentDbSqlParser.LiteralContext context) {

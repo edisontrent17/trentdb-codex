@@ -6,6 +6,7 @@ import dev.trentdb.execution.ExecutionException;
 import dev.trentdb.planner.BoundAggregateExpression;
 import dev.trentdb.planner.BoundBetweenExpression;
 import dev.trentdb.planner.BoundBinaryExpression;
+import dev.trentdb.planner.BoundCaseExpression;
 import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
@@ -315,6 +316,14 @@ public final class PhysicalPlanner {
                     scopeOf(binary.right(), leftColumnCount, rightColumnCount)
             );
             case BoundCastExpression cast -> scopeOf(cast.child(), leftColumnCount, rightColumnCount);
+            case BoundCaseExpression caseExpression -> {
+                PredicateScope scope = scopeOf(caseExpression.elseExpression(), leftColumnCount, rightColumnCount);
+                for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
+                    scope = combineScope(scope, scopeOf(branch.condition(), leftColumnCount, rightColumnCount));
+                    scope = combineScope(scope, scopeOf(branch.result(), leftColumnCount, rightColumnCount));
+                }
+                yield scope;
+            }
             case BoundColumnRefExpression column -> columnScope(column.ordinal(), leftColumnCount, rightColumnCount);
             case BoundFunctionExpression function -> {
                 PredicateScope scope = PredicateScope.NONE;
@@ -383,6 +392,20 @@ public final class PhysicalPlanner {
                     rewriteForJoinSide(cast.child(), leftColumnCount, side),
                     cast.logicalType()
             );
+            case BoundCaseExpression caseExpression -> {
+                ArrayList<BoundCaseExpression.WhenClause> branches = new ArrayList<>(caseExpression.branches().size());
+                for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
+                    branches.add(new BoundCaseExpression.WhenClause(
+                            rewriteForJoinSide(branch.condition(), leftColumnCount, side),
+                            rewriteForJoinSide(branch.result(), leftColumnCount, side)
+                    ));
+                }
+                yield new BoundCaseExpression(
+                        branches,
+                        rewriteForJoinSide(caseExpression.elseExpression(), leftColumnCount, side),
+                        caseExpression.logicalType()
+                );
+            }
             case BoundColumnRefExpression column -> rewriteColumn(column, leftColumnCount, side);
             case BoundFunctionExpression function -> {
                 ArrayList<BoundExpression> arguments = new ArrayList<>(function.arguments().size());

@@ -107,6 +107,7 @@ booleanFactor
 predicate
     : valueExpression IS NOT NULL_T                         #isNotNullPredicate
     | valueExpression IS NULL_T                             #isNullPredicate
+    | valueExpression NOT? LIKE valueExpression             #likePredicate
     | valueExpression NOT? IN LPAREN expressionList RPAREN  #inPredicate
     | valueExpression BETWEEN valueExpression AND valueExpression #betweenPredicate
     | valueExpression comparisonOperator valueExpression    #comparisonPredicate
@@ -145,6 +146,7 @@ primaryExpression
     | qualifiedName                                         #columnReferencePrimary
     | functionCall                                          #functionCallPrimary
     | castExpression                                        #castPrimary
+    | caseExpression                                        #casePrimary
     | LPAREN expression RPAREN                              #parenthesizedExpression
     ;
 
@@ -154,6 +156,14 @@ functionCall
 
 castExpression
     : CAST LPAREN expression AS typeName RPAREN
+    ;
+
+caseExpression
+    : CASE caseWhenClause+ (ELSE expression)? END
+    ;
+
+caseWhenClause
+    : WHEN expression THEN expression
     ;
 
 qualifiedName
@@ -209,6 +219,11 @@ ORDER: 'ORDER';
 LIMIT: 'LIMIT';
 EXPLAIN: 'EXPLAIN';
 CAST: 'CAST';
+CASE: 'CASE';
+WHEN: 'WHEN';
+THEN: 'THEN';
+ELSE: 'ELSE';
+END: 'END';
 JOIN: 'JOIN';
 INNER: 'INNER';
 ON: 'ON';
@@ -216,6 +231,7 @@ AS: 'AS';
 IS: 'IS';
 NOT: 'NOT';
 IN: 'IN';
+LIKE: 'LIKE';
 BETWEEN: 'BETWEEN';
 NULL_T: 'NULL';
 TRUE: 'TRUE';

@@ -3,6 +3,7 @@ package dev.trentdb.execution.physical;
 import dev.trentdb.planner.BoundAggregateExpression;
 import dev.trentdb.planner.BoundBetweenExpression;
 import dev.trentdb.planner.BoundBinaryExpression;
+import dev.trentdb.planner.BoundCaseExpression;
 import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
@@ -106,6 +107,7 @@ public final class PhysicalPlanPrinter {
                     + " BETWEEN " + expression(between.lower()) + " AND " + expression(between.upper()) + ")";
             case BoundBinaryExpression binary -> "(" + expression(binary.left())
                     + " " + binary.operator().name() + " " + expression(binary.right()) + ")";
+            case BoundCaseExpression caseExpression -> caseExpression(caseExpression);
             case BoundCastExpression cast -> "CAST(" + expression(cast.child()) + " AS " + cast.logicalType().id().name() + ")";
             case BoundColumnRefExpression column -> column.name() + "#" + column.ordinal();
             case BoundFunctionExpression function -> function.name() + "(" + expressions(function.arguments()) + ")";
@@ -114,6 +116,17 @@ public final class PhysicalPlanPrinter {
             case BoundLiteralExpression literal -> literal.value() == null ? "NULL" : literal.value().toString();
             case BoundOutputColumnExpression output -> output.name() + "#" + output.ordinal();
         };
+    }
+
+    private String caseExpression(BoundCaseExpression caseExpression) {
+        StringBuilder builder = new StringBuilder("CASE");
+        for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
+            builder.append(" WHEN ").append(expression(branch.condition()));
+            builder.append(" THEN ").append(expression(branch.result()));
+        }
+        builder.append(" ELSE ").append(expression(caseExpression.elseExpression()));
+        builder.append(" END");
+        return builder.toString();
     }
 
     private String expressions(List<BoundExpression> expressions) {

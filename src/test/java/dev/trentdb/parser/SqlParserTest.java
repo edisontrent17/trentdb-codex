@@ -1,6 +1,9 @@
 package dev.trentdb.parser;
 
+import dev.trentdb.ast.BinaryExpression;
+import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.ast.BetweenExpression;
+import dev.trentdb.ast.CaseExpression;
 import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CreateTableStatement;
@@ -114,5 +117,28 @@ class SqlParserTest {
         CastExpression cast = assertInstanceOf(CastExpression.class, select.selectItems().getFirst().expression());
         assertEquals(TypeName.DATE, cast.targetType());
         assertInstanceOf(LiteralExpression.class, cast.child());
+    }
+
+    @Test
+    void parsesLikePredicate() {
+        Statement statement = parser.parse("SELECT id FROM people WHERE name NOT LIKE 'A%'");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        BinaryExpression like = assertInstanceOf(BinaryExpression.class, select.where());
+        assertEquals(BinaryOperator.NOT_LIKE, like.operator());
+    }
+
+    @Test
+    void parsesSearchedCaseExpression() {
+        Statement statement = parser.parse("SELECT CASE WHEN id = 1 THEN 'one' ELSE 'other' END FROM people");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        CaseExpression caseExpression = assertInstanceOf(
+                CaseExpression.class,
+                select.selectItems().getFirst().expression()
+        );
+        assertEquals(1, caseExpression.branches().size());
+        assertInstanceOf(BinaryExpression.class, caseExpression.branches().getFirst().condition());
+        assertInstanceOf(LiteralExpression.class, caseExpression.elseExpression());
     }
 }
