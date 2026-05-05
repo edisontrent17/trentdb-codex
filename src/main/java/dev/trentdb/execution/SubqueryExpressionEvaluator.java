@@ -17,9 +17,9 @@ import java.util.Map;
 import static dev.trentdb.planner.BoundExpressionTypes.logicalType;
 
 final class SubqueryExpressionEvaluator {
-    private static final byte TRI_NULL = -1;
-    private static final byte TRI_FALSE = 0;
-    private static final byte TRI_TRUE = 1;
+    private static final byte SQL_UNKNOWN = -1;
+    private static final byte SQL_FALSE = 0;
+    private static final byte SQL_TRUE = 1;
 
     private final StorageManager storageManager;
     private final LogicalPlanner logicalPlanner = new LogicalPlanner();
@@ -50,9 +50,9 @@ final class SubqueryExpressionEvaluator {
         for (int rowIndex = 0; rowIndex < input.cardinality(); rowIndex++) {
             byte value = evaluateIn(inputValues, rowIndex, candidateVector, result.rows().size());
             if (in.negated()) {
-                value = triNegate(value);
+                value = negateSqlTruth(value);
             }
-            writeTriState(output, rowIndex, value);
+            writeSqlTruth(output, rowIndex, value);
         }
         return output;
     }
@@ -72,7 +72,7 @@ final class SubqueryExpressionEvaluator {
 
     private byte evaluateIn(Vector inputVector, int rowIndex, Vector candidateVector, int candidateCount) {
         if (inputVector.isNull(rowIndex)) {
-            return TRI_NULL;
+            return SQL_UNKNOWN;
         }
         boolean hasNullCandidate = false;
         for (int candidateIndex = 0; candidateIndex < candidateCount; candidateIndex++) {
@@ -81,10 +81,10 @@ final class SubqueryExpressionEvaluator {
                 continue;
             }
             if (compareValues(inputVector, rowIndex, candidateVector, candidateIndex) == 0) {
-                return TRI_TRUE;
+                return SQL_TRUE;
             }
         }
-        return hasNullCandidate ? TRI_NULL : TRI_FALSE;
+        return hasNullCandidate ? SQL_UNKNOWN : SQL_FALSE;
     }
 
     private Vector vectorFromRows(LogicalType logicalType, List<List<Object>> rows) {
@@ -191,18 +191,18 @@ final class SubqueryExpressionEvaluator {
         throw new ExecutionException("Expected numeric value but got " + type.id().name());
     }
 
-    private void writeTriState(Vector result, int index, byte value) {
-        if (value == TRI_NULL) {
+    private void writeSqlTruth(Vector result, int index, byte value) {
+        if (value == SQL_UNKNOWN) {
             result.setNull(index);
             return;
         }
-        result.setBoolean(index, value == TRI_TRUE);
+        result.setBoolean(index, value == SQL_TRUE);
     }
 
-    private byte triNegate(byte value) {
-        if (value == TRI_NULL) {
-            return TRI_NULL;
+    private byte negateSqlTruth(byte value) {
+        if (value == SQL_UNKNOWN) {
+            return SQL_UNKNOWN;
         }
-        return value == TRI_TRUE ? TRI_FALSE : TRI_TRUE;
+        return value == SQL_TRUE ? SQL_FALSE : SQL_TRUE;
     }
 }

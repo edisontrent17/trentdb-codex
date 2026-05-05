@@ -3,6 +3,7 @@ package dev.trentdb.execution.physical;
 import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.execution.ExecutionException;
+import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundAggregateExpression;
 import dev.trentdb.planner.BoundBetweenExpression;
 import dev.trentdb.planner.BoundBinaryExpression;
@@ -45,9 +46,11 @@ public final class PhysicalPlanner {
     }
 
     private final StorageManager storageManager;
+    private final ExpressionExecutor expressionExecutor;
 
     public PhysicalPlanner(StorageManager storageManager) {
         this.storageManager = storageManager;
+        this.expressionExecutor = new ExpressionExecutor(storageManager);
     }
 
     public Pipeline plan(LogicalOperator logical) {
@@ -69,7 +72,7 @@ public final class PhysicalPlanner {
     private PhysicalSource buildPipeline(LogicalOperator logical, ArrayList<PhysicalOperator> operators) {
         if (logical instanceof LogicalProjection projection) {
             PhysicalSource source = buildPipeline(projection.child(), operators);
-            operators.add(new PhysicalProjection(projection.expressions(), projection.names(), storageManager));
+            operators.add(new PhysicalProjection(projection.expressions(), projection.names(), expressionExecutor));
             return source;
         }
         if (logical instanceof LogicalAggregate aggregate) {
@@ -78,7 +81,7 @@ public final class PhysicalPlanner {
                     aggregate.groups(),
                     aggregate.selectList(),
                     aggregate.selectNames(),
-                    storageManager
+                    expressionExecutor
             ));
             return source;
         }
@@ -94,7 +97,7 @@ public final class PhysicalPlanner {
                 return source;
             }
             PhysicalSource source = buildPipeline(filter.child(), operators);
-            operators.add(new PhysicalFilter(filter.predicate(), storageManager));
+            operators.add(new PhysicalFilter(filter.predicate(), expressionExecutor));
             return source;
         }
         if (logical instanceof LogicalLimit limit) {
@@ -104,7 +107,7 @@ public final class PhysicalPlanner {
         }
         if (logical instanceof LogicalOrder order) {
             PhysicalSource source = buildPipeline(order.child(), operators);
-            operators.add(new PhysicalOrder(order.orders(), storageManager));
+            operators.add(new PhysicalOrder(order.orders(), expressionExecutor));
             return source;
         }
         if (logical instanceof LogicalGet get) {
@@ -138,7 +141,8 @@ public final class PhysicalPlanner {
                     hashJoinKeys.leftKeyOrdinal(),
                     hashJoinKeys.rightKeyOrdinal(),
                     rightPredicate,
-                    residualPredicate
+                    residualPredicate,
+                    expressionExecutor
             ));
             return;
         }
@@ -151,7 +155,8 @@ public final class PhysicalPlanner {
                 leftTypes,
                 right,
                 condition,
-                rightPredicate
+                rightPredicate,
+                expressionExecutor
         ));
     }
 

@@ -19,7 +19,6 @@ import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.storage.InMemoryTableStorage;
-import dev.trentdb.storage.StorageManager;
 import dev.trentdb.types.LogicalType;
 
 import java.time.LocalDate;
@@ -33,20 +32,16 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
     private final List<String> selectNames;
     private final ExpressionExecutor expressionExecutor;
 
-    public PhysicalHashAggregate(List<BoundExpression> groups, List<BoundExpression> selectList, List<String> selectNames) {
-        this(groups, selectList, selectNames, null);
-    }
-
     public PhysicalHashAggregate(
             List<BoundExpression> groups,
             List<BoundExpression> selectList,
             List<String> selectNames,
-            StorageManager storageManager
+            ExpressionExecutor expressionExecutor
     ) {
         this.groups = List.copyOf(groups);
         this.selectList = List.copyOf(selectList);
         this.selectNames = List.copyOf(selectNames);
-        this.expressionExecutor = new ExpressionExecutor(storageManager);
+        this.expressionExecutor = expressionExecutor;
     }
 
     public List<BoundExpression> groups() {

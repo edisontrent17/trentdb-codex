@@ -4,7 +4,6 @@ import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.Vector;
 import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundExpression;
-import dev.trentdb.storage.StorageManager;
 
 import java.util.List;
 
@@ -13,14 +12,14 @@ public final class PhysicalProjection implements PhysicalOperator {
     private final List<String> names;
     private final ExpressionExecutor expressionExecutor;
 
-    public PhysicalProjection(List<BoundExpression> expressions, List<String> names) {
-        this(expressions, names, null);
-    }
-
-    public PhysicalProjection(List<BoundExpression> expressions, List<String> names, StorageManager storageManager) {
+    public PhysicalProjection(
+            List<BoundExpression> expressions,
+            List<String> names,
+            ExpressionExecutor expressionExecutor
+    ) {
         this.expressions = List.copyOf(expressions);
         this.names = List.copyOf(names);
-        this.expressionExecutor = new ExpressionExecutor(storageManager);
+        this.expressionExecutor = expressionExecutor;
     }
 
     public List<BoundExpression> expressions() {

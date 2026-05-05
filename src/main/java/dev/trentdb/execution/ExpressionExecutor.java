@@ -25,20 +25,17 @@ import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 public final class ExpressionExecutor {
-    private static final byte TRI_NULL = -1;
-    private static final byte TRI_FALSE = 0;
-    private static final byte TRI_TRUE = 1;
+    private static final byte SQL_UNKNOWN = -1;
+    private static final byte SQL_FALSE = 0;
+    private static final byte SQL_TRUE = 1;
 
     private final SubqueryExpressionEvaluator subqueryEvaluator;
 
-    public ExpressionExecutor() {
-        this(null);
-    }
-
     public ExpressionExecutor(StorageManager storageManager) {
-        this.subqueryEvaluator = new SubqueryExpressionEvaluator(storageManager);
+        this.subqueryEvaluator = new SubqueryExpressionEvaluator(Objects.requireNonNull(storageManager, "storageManager"));
     }
 
     public Vector execute(BoundExpression expression, DataChunk input) {
@@ -119,7 +116,7 @@ public final class ExpressionExecutor {
         for (int index = 0; index < input.cardinality(); index++) {
             byte lower = compareNullable(inputValues, lowerValues, index, Comparison.GREATER_THAN_OR_EQUAL);
             byte upper = compareNullable(inputValues, upperValues, index, Comparison.LESS_THAN_OR_EQUAL);
-            writeTriState(result, index, triAnd(lower, upper));
+            writeSqlTruth(result, index, sqlAnd(lower, upper));
         }
         return result;
     }
@@ -134,16 +131,16 @@ public final class ExpressionExecutor {
         for (int rowIndex = 0; rowIndex < input.cardinality(); rowIndex++) {
             byte value = evaluateIn(inputValues, rowIndex, candidateVectors);
             if (in.negated()) {
-                value = triNegate(value);
+                value = negateSqlTruth(value);
             }
-            writeTriState(result, rowIndex, value);
+            writeSqlTruth(result, rowIndex, value);
         }
         return result;
     }
 
     private byte evaluateIn(Vector inputVector, int rowIndex, List<Vector> candidateVectors) {
         if (inputVector.isNull(rowIndex)) {
-            return TRI_NULL;
+            return SQL_UNKNOWN;
         }
         boolean hasNullCandidate = false;
         for (Vector candidateVector : candidateVectors) {
@@ -152,10 +149,10 @@ public final class ExpressionExecutor {
                 continue;
             }
             if (compareValues(inputVector, rowIndex, candidateVector, rowIndex) == 0) {
-                return TRI_TRUE;
+                return SQL_TRUE;
             }
         }
-        return hasNullCandidate ? TRI_NULL : TRI_FALSE;
+        return hasNullCandidate ? SQL_UNKNOWN : SQL_FALSE;
     }
 
     private Vector cast(BoundCastExpression cast, DataChunk input) {
@@ -450,26 +447,26 @@ public final class ExpressionExecutor {
 
     private void writeBinaryValue(BoundBinaryExpression binary, Vector left, Vector right, int index, Vector result) {
         switch (binary.operator()) {
-            case EQUAL -> writeTriState(result, index, compareNullable(left, right, index, Comparison.EQUAL));
-            case NOT_EQUAL -> writeTriState(result, index, triNegate(compareNullable(left, right, index, Comparison.EQUAL)));
-            case LESS_THAN -> writeTriState(result, index, compareNullable(left, right, index, Comparison.LESS_THAN));
+            case EQUAL -> writeSqlTruth(result, index, compareNullable(left, right, index, Comparison.EQUAL));
+            case NOT_EQUAL -> writeSqlTruth(result, index, negateSqlTruth(compareNullable(left, right, index, Comparison.EQUAL)));
+            case LESS_THAN -> writeSqlTruth(result, index, compareNullable(left, right, index, Comparison.LESS_THAN));
             case LESS_THAN_OR_EQUAL ->
-                    writeTriState(result, index, compareNullable(left, right, index, Comparison.LESS_THAN_OR_EQUAL));
+                    writeSqlTruth(result, index, compareNullable(left, right, index, Comparison.LESS_THAN_OR_EQUAL));
             case GREATER_THAN ->
-                    writeTriState(result, index, compareNullable(left, right, index, Comparison.GREATER_THAN));
+                    writeSqlTruth(result, index, compareNullable(left, right, index, Comparison.GREATER_THAN));
             case GREATER_THAN_OR_EQUAL ->
-                    writeTriState(result, index, compareNullable(left, right, index, Comparison.GREATER_THAN_OR_EQUAL));
-            case LIKE -> writeTriState(result, index, likeNullable(left, right, index, false));
-            case NOT_LIKE -> writeTriState(result, index, likeNullable(left, right, index, true));
-            case AND -> writeTriState(result, index, triAnd(readTriState(left, index), readTriState(right, index)));
-            case OR -> writeTriState(result, index, triOr(readTriState(left, index), readTriState(right, index)));
+                    writeSqlTruth(result, index, compareNullable(left, right, index, Comparison.GREATER_THAN_OR_EQUAL));
+            case LIKE -> writeSqlTruth(result, index, likeNullable(left, right, index, false));
+            case NOT_LIKE -> writeSqlTruth(result, index, likeNullable(left, right, index, true));
+            case AND -> writeSqlTruth(result, index, sqlAnd(readSqlTruth(left, index), readSqlTruth(right, index)));
+            case OR -> writeSqlTruth(result, index, sqlOr(readSqlTruth(left, index), readSqlTruth(right, index)));
             case ADD, SUBTRACT, MULTIPLY, DIVIDE -> writeArithmetic(binary.operator(), binary.logicalType(), left, right, index, result);
         }
     }
 
     private byte likeNullable(Vector left, Vector right, int index, boolean negated) {
         if (left.isNull(index) || right.isNull(index)) {
-            return TRI_NULL;
+            return SQL_UNKNOWN;
         }
         if (!left.logicalType().equals(LogicalType.TEXT) || !right.logicalType().equals(LogicalType.TEXT)) {
             throw new ExecutionException("LIKE expects TEXT operands");
@@ -478,7 +475,7 @@ public final class ExpressionExecutor {
         if (negated) {
             matched = !matched;
         }
-        return matched ? TRI_TRUE : TRI_FALSE;
+        return matched ? SQL_TRUE : SQL_FALSE;
     }
 
     private boolean likeMatches(String text, String pattern) {
@@ -553,15 +550,15 @@ public final class ExpressionExecutor {
 
     private byte compareNullable(Vector left, Vector right, int index, Comparison comparison) {
         if (left.isNull(index) || right.isNull(index)) {
-            return TRI_NULL;
+            return SQL_UNKNOWN;
         }
         int value = compareValues(left, index, right, index);
         return switch (comparison) {
-            case EQUAL -> value == 0 ? TRI_TRUE : TRI_FALSE;
-            case LESS_THAN -> value < 0 ? TRI_TRUE : TRI_FALSE;
-            case LESS_THAN_OR_EQUAL -> value <= 0 ? TRI_TRUE : TRI_FALSE;
-            case GREATER_THAN -> value > 0 ? TRI_TRUE : TRI_FALSE;
-            case GREATER_THAN_OR_EQUAL -> value >= 0 ? TRI_TRUE : TRI_FALSE;
+            case EQUAL -> value == 0 ? SQL_TRUE : SQL_FALSE;
+            case LESS_THAN -> value < 0 ? SQL_TRUE : SQL_FALSE;
+            case LESS_THAN_OR_EQUAL -> value <= 0 ? SQL_TRUE : SQL_FALSE;
+            case GREATER_THAN -> value > 0 ? SQL_TRUE : SQL_FALSE;
+            case GREATER_THAN_OR_EQUAL -> value >= 0 ? SQL_TRUE : SQL_FALSE;
         };
     }
 
@@ -618,49 +615,49 @@ public final class ExpressionExecutor {
         throw new ExecutionException("Expected numeric value but got " + type.id().name());
     }
 
-    private byte readTriState(Vector vector, int index) {
+    private byte readSqlTruth(Vector vector, int index) {
         if (vector.isNull(index)) {
-            return TRI_NULL;
+            return SQL_UNKNOWN;
         }
         if (!vector.logicalType().equals(LogicalType.BOOLEAN)) {
             throw new ExecutionException("Predicate did not evaluate to BOOLEAN");
         }
-        return vector.getBoolean(index) ? TRI_TRUE : TRI_FALSE;
+        return vector.getBoolean(index) ? SQL_TRUE : SQL_FALSE;
     }
 
-    private void writeTriState(Vector result, int index, byte value) {
-        if (value == TRI_NULL) {
+    private void writeSqlTruth(Vector result, int index, byte value) {
+        if (value == SQL_UNKNOWN) {
             result.setNull(index);
             return;
         }
-        result.setBoolean(index, value == TRI_TRUE);
+        result.setBoolean(index, value == SQL_TRUE);
     }
 
-    private byte triNegate(byte value) {
-        if (value == TRI_NULL) {
-            return TRI_NULL;
+    private byte negateSqlTruth(byte value) {
+        if (value == SQL_UNKNOWN) {
+            return SQL_UNKNOWN;
         }
-        return value == TRI_TRUE ? TRI_FALSE : TRI_TRUE;
+        return value == SQL_TRUE ? SQL_FALSE : SQL_TRUE;
     }
 
-    private byte triAnd(byte left, byte right) {
-        if (left == TRI_FALSE || right == TRI_FALSE) {
-            return TRI_FALSE;
+    private byte sqlAnd(byte left, byte right) {
+        if (left == SQL_FALSE || right == SQL_FALSE) {
+            return SQL_FALSE;
         }
-        if (left == TRI_NULL || right == TRI_NULL) {
-            return TRI_NULL;
+        if (left == SQL_UNKNOWN || right == SQL_UNKNOWN) {
+            return SQL_UNKNOWN;
         }
-        return TRI_TRUE;
+        return SQL_TRUE;
     }
 
-    private byte triOr(byte left, byte right) {
-        if (left == TRI_TRUE || right == TRI_TRUE) {
-            return TRI_TRUE;
+    private byte sqlOr(byte left, byte right) {
+        if (left == SQL_TRUE || right == SQL_TRUE) {
+            return SQL_TRUE;
         }
-        if (left == TRI_NULL || right == TRI_NULL) {
-            return TRI_NULL;
+        if (left == SQL_UNKNOWN || right == SQL_UNKNOWN) {
+            return SQL_UNKNOWN;
         }
-        return TRI_FALSE;
+        return SQL_FALSE;
     }
 
     private enum Comparison {
