@@ -27,8 +27,8 @@ public final class LogicalPlanPrinter {
             }
             case LogicalJoin join -> {
                 builder.append("LogicalComparisonJoin\n");
-                appendGet(join.left(), builder, depth + 1);
-                appendGet(join.right(), builder, depth + 1);
+                append(join.left(), builder, depth + 1);
+                append(join.right(), builder, depth + 1);
             }
             case LogicalFilter filter -> {
                 builder.append("LogicalFilter\n");

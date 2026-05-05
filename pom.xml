@@ -7,7 +7,7 @@
     <artifactId>trent-db</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <name>Trent Db</name>
-    <description>Learning-oriented analytical database engine in Java, inspired by DuckDB</description>
+    <description>Production-oriented analytical SQL database in Java, using DuckDB as the architectural and semantic reference</description>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>

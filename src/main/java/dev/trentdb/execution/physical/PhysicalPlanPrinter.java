@@ -37,26 +37,6 @@ public final class PhysicalPlanPrinter {
             appendLine(builder, depth, "Source: PhysicalTableScan table=" + tableName(scan.tableRef()));
             return;
         }
-        if (source instanceof PhysicalHashJoinSource join) {
-            appendLine(builder, depth, "Source: PhysicalHashJoin");
-            appendLine(builder, depth + 1, "left=" + tableName(join.left()));
-            appendLine(builder, depth + 1, "right=" + tableName(join.right()));
-            appendLine(builder, depth + 1, "leftKeyOrdinal=" + join.leftKeyOrdinal());
-            appendLine(builder, depth + 1, "rightKeyOrdinal=" + join.rightKeyOrdinal());
-            appendOptionalExpression(builder, depth + 1, "leftFilter", join.leftFilter());
-            appendOptionalExpression(builder, depth + 1, "rightFilter", join.rightFilter());
-            appendOptionalExpression(builder, depth + 1, "residualFilter", join.residualFilter());
-            return;
-        }
-        if (source instanceof PhysicalNestedLoopJoinSource join) {
-            appendLine(builder, depth, "Source: PhysicalNestedLoopJoin");
-            appendLine(builder, depth + 1, "left=" + tableName(join.left()));
-            appendLine(builder, depth + 1, "right=" + tableName(join.right()));
-            appendOptionalExpression(builder, depth + 1, "condition", join.condition());
-            appendOptionalExpression(builder, depth + 1, "leftFilter", join.leftFilter());
-            appendOptionalExpression(builder, depth + 1, "rightFilter", join.rightFilter());
-            return;
-        }
         appendLine(builder, depth, "Source: " + source.type().name());
     }
 
@@ -74,6 +54,20 @@ public final class PhysicalPlanPrinter {
             appendLine(builder, depth, "PhysicalHashAggregate mode=" + mode
                     + " groups=[" + aggregate.groups().size() + "]"
                     + " expressions=[" + aggregate.selectList().size() + "]");
+            return;
+        }
+        if (operator instanceof PhysicalHashJoin join) {
+            appendLine(builder, depth, "PhysicalHashJoin right=" + tableName(join.right())
+                    + " leftKeyOrdinal=" + join.leftKeyOrdinal()
+                    + " rightKeyOrdinal=" + join.rightKeyOrdinal());
+            appendOptionalExpression(builder, depth + 1, "rightFilter", join.rightFilter());
+            appendOptionalExpression(builder, depth + 1, "residualFilter", join.residualFilter());
+            return;
+        }
+        if (operator instanceof PhysicalNestedLoopJoin join) {
+            appendLine(builder, depth, "PhysicalNestedLoopJoin right=" + tableName(join.right()));
+            appendOptionalExpression(builder, depth + 1, "condition", join.condition());
+            appendOptionalExpression(builder, depth + 1, "rightFilter", join.rightFilter());
             return;
         }
         if (operator instanceof PhysicalOrder order) {

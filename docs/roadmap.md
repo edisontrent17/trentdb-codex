@@ -8,9 +8,9 @@ For supported features, target DuckDB-compatible behavior. For architecture, fol
 
 `SQL -> AST -> bound tree -> logical plan -> optimized plan -> physical plan -> vectorized execution`
 
-The current product target is an in-memory analytical engine first. The priority is a correct DuckDB-shaped SQL pipeline, vectorized execution model, catalog, type system, storage abstractions, optimizer, and compatibility test suite. Persistence, WAL, crash recovery, and multi-client MVCC are explicitly deferred until the core analytical engine is substantially complete.
+The current product target is an in-memory analytical engine first. The priority is a correct DuckDB-shaped SQL pipeline, vectorized execution model, catalog, type system, storage abstractions, optimizer, and compatibility test suite. Durable writes are not implemented yet, but DDL and DML must remain behind write-aware boundaries that can enforce WAL, commit records, flush boundaries, and crash recovery before persistent visibility is advertised.
 
-Write APIs should still stay behind catalog/storage/transaction boundaries so durable storage can be added later without redesigning parser, binder, planner, or execution call sites. Do not start WAL work in the near-term roadmap.
+Read-only operations remain WAL-free and should operate against a consistent catalog and storage snapshot. Full multi-client MVCC is a later milestone, but APIs should not assume direct reads from unversioned global mutable state.
 
 DuckDB source reference: `/home/manoj/Projects/duckdb`.
 
@@ -112,9 +112,10 @@ Deliverables:
 
 Status:
 
-- implemented for single-table reads, replacement scans, star expansion, projection aliases, `WHERE`, scalar `lower`, arithmetic, `LIMIT`, and `EXPLAIN`
+- implemented for table reads, replacement scans, star expansion, projection aliases, `WHERE`, scalar functions, arithmetic, `IN`, `LIKE`, `CASE`, casts, dates, intervals, `LIMIT`, and `EXPLAIN`
 - `ORDER BY` binding is implemented for expressions, aliases, and select-list positions
-- joins, aggregates, casts, and ambiguity handling are pending
+- grouped and ungrouped aggregate binding is implemented
+- explicit `INNER JOIN` binding is implemented for left-deep multi-join trees with ambiguity handling
 
 ## Milestone 7: Logical Planning
 
@@ -130,8 +131,8 @@ Deliverables:
 
 Status:
 
-- implemented for scan, filter, projection, order, limit, and explain
-- aggregate, join, and optimizer-facing rewrites are pending
+- implemented for scan, filter, projection, aggregate, join, order, limit, and explain
+- optimizer-facing rewrites are pending
 
 ## Milestone 8: Execution Substrate
 
@@ -163,8 +164,8 @@ Deliverables:
 
 Status:
 
-- implemented for table/replacement scan, filter, projection, order, limit, explain, and result collection
-- hash aggregate, hash join, and top-N are pending
+- implemented for table/replacement scan, filter, projection, hash aggregate, hash join, nested loop join, order, limit, explain, and result collection
+- top-N is pending
 
 ## Milestone 10: WAL and Recovery
 
@@ -178,7 +179,9 @@ Deliverables:
 
 Status:
 
-- deferred; do not start until the in-memory analytical engine, optimizer, and compatibility suite are mature
+- not implemented yet
+- required before persistent DDL or DML can be advertised as durable
+- current catalog, storage, and transaction APIs should stay compatible with WAL-backed writes
 
 ## Milestone 11: Full MVCC and Isolation
 
@@ -219,5 +222,6 @@ Deliverables:
 Status:
 
 - parser, binder, planner, and read execution tests are in place for the implemented subset
-- broader DuckDB-style behavior tests, plan-shape tests, and execution edge cases are the near-term priority
-- recovery, corruption, and concurrency tests are deferred with persistence and MVCC
+- generated CSV compatibility coverage exists for TPC-H Q1, Q3, Q6, Q12, Q14, and Q19
+- broader DuckDB-style behavior tests, plan-shape tests, and execution edge cases remain near-term priorities
+- recovery, corruption, and concurrency tests depend on the WAL, persistence, and MVCC milestones

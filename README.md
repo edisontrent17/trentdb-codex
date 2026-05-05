@@ -16,6 +16,7 @@ The current implementation includes:
 - DuckDB-shaped physical operator model with source, operator, and sink behavior
 - replacement scan registry for native-feeling file path scans such as `SELECT * FROM 'people.csv'`
 - CLI entry point for exercising simple read queries
+- TPC-H compatibility coverage for the supported query subset
 
 Supported parser coverage currently includes:
 
@@ -38,9 +39,21 @@ Supported execution coverage currently includes:
 - SQL three-valued boolean logic for `AND`, `OR`, and comparisons with `NULL`
 - scalar `lower(text)`
 - arithmetic expressions in `SELECT` and `WHERE`
+- `IN`, `NOT IN`, `LIKE`, `NOT LIKE`, `CASE`, date literals, interval literals, and casts
+- grouped and ungrouped aggregates: `count`, `sum`, `min`, `max`, `avg`
+- single and multiple explicit `INNER JOIN` queries through physical join operators
 - `ORDER BY` with DuckDB default null ordering
 - streaming `LIMIT`
-- logical `EXPLAIN`
+- logical and physical `EXPLAIN`
+
+Current TPC-H coverage from generated scale 0.01 CSV fixtures:
+
+- Q1
+- Q3
+- Q6
+- Q12
+- Q14
+- Q19
 
 Writes are intentionally not advertised as durable yet. DDL and DML must move through write-aware catalog, storage, transaction, WAL, and recovery boundaries before this project claims persistent write safety.
 

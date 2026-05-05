@@ -81,7 +81,7 @@ public final class LogicalPlanner {
             return new LogicalGet(tableRef);
         }
         if (from instanceof BoundJoinRef joinRef) {
-            return new LogicalJoin(joinRef.left(), joinRef.right(), joinRef.condition());
+            return new LogicalJoin(planFrom(joinRef.left()), new LogicalGet(joinRef.right()), joinRef.condition());
         }
         throw new BinderException("Unsupported bound FROM source: " + from.getClass().getSimpleName());
     }
