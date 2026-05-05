@@ -116,6 +116,7 @@ Status:
 - `ORDER BY` binding is implemented for expressions, aliases, and select-list positions
 - grouped and ungrouped aggregate binding is implemented
 - explicit `INNER JOIN` binding is implemented for left-deep multi-join trees with ambiguity handling
+- non-correlated scalar subqueries and `IN`/`NOT IN` subqueries are implemented
 
 ## Milestone 7: Logical Planning
 
@@ -204,6 +205,7 @@ Deliverables:
 - constant folding
 - filter pushdown
 - projection pruning
+- eligible subquery rewrites
 
 Status:
 

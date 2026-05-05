@@ -20,9 +20,11 @@ public final class BoundExpressionTypes {
             case BoundBetweenExpression between -> between.logicalType();
             case BoundCaseExpression caseExpression -> caseExpression.logicalType();
             case BoundInExpression in -> in.logicalType();
+            case BoundInSubqueryExpression in -> in.logicalType();
             case BoundCastExpression cast -> cast.logicalType();
             case BoundIntervalExpression ignored -> LogicalType.INTERVAL;
             case BoundOutputColumnExpression output -> output.logicalType();
+            case BoundSubqueryExpression subquery -> subquery.logicalType();
         };
     }
 

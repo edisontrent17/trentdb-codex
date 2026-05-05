@@ -6,14 +6,20 @@ import dev.trentdb.common.vector.Vector;
 import dev.trentdb.execution.ExecutionException;
 import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundExpression;
+import dev.trentdb.storage.StorageManager;
 import dev.trentdb.types.LogicalType;
 
 public final class PhysicalFilter implements PhysicalOperator {
     private final BoundExpression predicate;
-    private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
+    private final ExpressionExecutor expressionExecutor;
 
     public PhysicalFilter(BoundExpression predicate) {
+        this(predicate, null);
+    }
+
+    public PhysicalFilter(BoundExpression predicate, StorageManager storageManager) {
         this.predicate = predicate;
+        this.expressionExecutor = new ExpressionExecutor(storageManager);
     }
 
     public BoundExpression predicate() {

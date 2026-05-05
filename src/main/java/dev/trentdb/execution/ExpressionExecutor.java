@@ -13,9 +13,12 @@ import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
+import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
+import dev.trentdb.planner.BoundSubqueryExpression;
+import dev.trentdb.storage.StorageManager;
 import dev.trentdb.types.LogicalType;
 
 import java.time.LocalDate;
@@ -28,6 +31,16 @@ public final class ExpressionExecutor {
     private static final byte TRI_FALSE = 0;
     private static final byte TRI_TRUE = 1;
 
+    private final SubqueryExpressionEvaluator subqueryEvaluator;
+
+    public ExpressionExecutor() {
+        this(null);
+    }
+
+    public ExpressionExecutor(StorageManager storageManager) {
+        this.subqueryEvaluator = new SubqueryExpressionEvaluator(storageManager);
+    }
+
     public Vector execute(BoundExpression expression, DataChunk input) {
         return switch (expression) {
             case BoundAggregateExpression aggregate -> throw new ExecutionException(
@@ -38,10 +51,12 @@ public final class ExpressionExecutor {
             case BoundFunctionExpression function -> function(function, input);
             case BoundBetweenExpression between -> between(between, input);
             case BoundInExpression in -> in(in, input);
+            case BoundInSubqueryExpression in -> subqueryEvaluator.in(in, input, execute(in.input(), input));
             case BoundCastExpression cast -> cast(cast, input);
             case BoundCaseExpression caseExpression -> caseExpression(caseExpression, input);
             case BoundIntervalExpression interval -> throw new ExecutionException(
                     "Standalone INTERVAL literal is not supported yet: " + interval.amount() + " " + interval.unit());
+            case BoundSubqueryExpression subquery -> subqueryEvaluator.scalar(subquery, input);
             case BoundBinaryExpression binary -> binary(binary, input);
         };
     }

@@ -10,6 +10,7 @@ import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.Expression;
 import dev.trentdb.ast.FunctionCallExpression;
 import dev.trentdb.ast.InExpression;
+import dev.trentdb.ast.InSubqueryExpression;
 import dev.trentdb.ast.IntervalLiteralExpression;
 import dev.trentdb.ast.JoinClause;
 import dev.trentdb.ast.JoinType;
@@ -21,6 +22,7 @@ import dev.trentdb.ast.SelectItem;
 import dev.trentdb.ast.SelectStatement;
 import dev.trentdb.ast.StarExpression;
 import dev.trentdb.ast.Statement;
+import dev.trentdb.ast.SubqueryExpression;
 import dev.trentdb.ast.TableReference;
 import dev.trentdb.catalog.Catalog;
 import dev.trentdb.catalog.CatalogException;
@@ -47,7 +49,7 @@ public final class Binder {
     private record BoundColumnBinding(String relationName, ColumnCatalogEntry column, int ordinal) {
     }
 
-    private record BindingContext(List<BoundColumnBinding> columns) {
+    private record BindingContext(Transaction transaction, List<BoundColumnBinding> columns) {
     }
 
     private final Catalog catalog;
@@ -80,7 +82,7 @@ public final class Binder {
 
     public BoundSelectStatement bindSelect(Transaction transaction, SelectStatement statement) {
         BoundFrom boundFrom = bindFrom(transaction, statement);
-        BindingContext context = bindingContext(boundFrom);
+        BindingContext context = bindingContext(transaction, boundFrom);
         BoundExpression where = statement.where() == null ? null : bindWhereExpression(context, statement.where());
         List<BoundExpression> groupBy = bindGroupBy(context, statement.groupBy());
         ArrayList<BoundExpression> selectList = new ArrayList<>();
@@ -104,7 +106,7 @@ public final class Binder {
                 throw new BinderException("Only INNER JOIN is supported");
             }
             BoundTableRef right = bindTableRef(transaction, join.right());
-            BindingContext joinContext = bindingContext(left, right);
+            BindingContext joinContext = bindingContext(transaction, left, right);
             BoundExpression condition = bindExpression(joinContext, join.condition(), false);
             if (!logicalType(condition).equals(LogicalType.BOOLEAN)) {
                 throw new BinderException("JOIN condition must evaluate to BOOLEAN but got " + typeName(logicalType(condition)));
@@ -125,33 +127,33 @@ public final class Binder {
         }
     }
 
-    private BindingContext bindingContext(BoundFrom from) {
+    private BindingContext bindingContext(Transaction transaction, BoundFrom from) {
         if (from instanceof BoundTableRef tableRef) {
-            return bindingContext(tableRef);
+            return bindingContext(transaction, tableRef);
         }
         if (from instanceof BoundJoinRef joinRef) {
-            return bindingContext(joinRef.left(), joinRef.right());
+            return bindingContext(transaction, joinRef.left(), joinRef.right());
         }
         throw new BinderException("Unsupported FROM source: " + from.getClass().getSimpleName());
     }
 
-    private BindingContext bindingContext(BoundTableRef tableRef) {
+    private BindingContext bindingContext(Transaction transaction, BoundTableRef tableRef) {
         ArrayList<BoundColumnBinding> bindings = new ArrayList<>();
         List<ColumnCatalogEntry> tableColumns = columns(tableRef);
         for (int index = 0; index < tableColumns.size(); index++) {
             bindings.add(new BoundColumnBinding(relationName(tableRef), tableColumns.get(index), index));
         }
-        return new BindingContext(bindings);
+        return new BindingContext(transaction, bindings);
     }
 
-    private BindingContext bindingContext(BoundFrom left, BoundTableRef right) {
-        ArrayList<BoundColumnBinding> bindings = new ArrayList<>(bindingContext(left).columns());
+    private BindingContext bindingContext(Transaction transaction, BoundFrom left, BoundTableRef right) {
+        ArrayList<BoundColumnBinding> bindings = new ArrayList<>(bindingContext(transaction, left).columns());
         List<ColumnCatalogEntry> rightColumns = columns(right);
         int offset = bindings.size();
         for (int index = 0; index < rightColumns.size(); index++) {
             bindings.add(new BoundColumnBinding(relationName(right), rightColumns.get(index), offset + index));
         }
-        return new BindingContext(bindings);
+        return new BindingContext(transaction, bindings);
     }
 
     private void bindSelectExpression(
@@ -283,11 +285,17 @@ public final class Binder {
         if (expression instanceof InExpression in) {
             return bindInExpression(context, in, allowAggregates);
         }
+        if (expression instanceof InSubqueryExpression inSubquery) {
+            return bindInSubqueryExpression(context, inSubquery, allowAggregates);
+        }
         if (expression instanceof CastExpression cast) {
             return bindCastExpression(context, cast, allowAggregates);
         }
         if (expression instanceof CaseExpression caseExpression) {
             return bindCaseExpression(context, caseExpression, allowAggregates);
+        }
+        if (expression instanceof SubqueryExpression subquery) {
+            return bindSubqueryExpression(context, subquery);
         }
         throw new BinderException("Unsupported expression: " + expression.getClass().getSimpleName());
     }
@@ -339,6 +347,34 @@ public final class Binder {
             candidates.add(candidate);
         }
         return new BoundInExpression(input, candidates, in.negated());
+    }
+
+    private BoundInSubqueryExpression bindInSubqueryExpression(
+            BindingContext context,
+            InSubqueryExpression in,
+            boolean allowAggregates
+    ) {
+        BoundExpression input = bindExpression(context, in.input(), allowAggregates);
+        BoundSelectStatement subquery = bindSelect(context.transaction(), in.subquery());
+        LogicalType inputType = logicalType(input);
+        LogicalType subqueryType = singleColumnType(subquery, "IN subquery");
+        if (!isNull(inputType) && !isNull(subqueryType) && !isComparable(inputType, subqueryType)) {
+            throw new BinderException("IN subquery cannot compare "
+                    + typeName(inputType) + " and " + typeName(subqueryType));
+        }
+        return new BoundInSubqueryExpression(input, subquery, in.negated());
+    }
+
+    private BoundSubqueryExpression bindSubqueryExpression(BindingContext context, SubqueryExpression subquery) {
+        BoundSelectStatement boundSubquery = bindSelect(context.transaction(), subquery.select());
+        return new BoundSubqueryExpression(boundSubquery, singleColumnType(boundSubquery, "Scalar subquery"));
+    }
+
+    private LogicalType singleColumnType(BoundSelectStatement subquery, String context) {
+        if (subquery.selectList().size() != 1) {
+            throw new BinderException(context + " must return exactly one column");
+        }
+        return logicalType(subquery.selectList().getFirst());
     }
 
     private BoundCastExpression bindCastExpression(BindingContext context, CastExpression cast, boolean allowAggregates) {
@@ -480,6 +516,10 @@ public final class Binder {
                     validateAggregateSelectExpression(candidate, groupBy);
                 }
             }
+            case BoundInSubqueryExpression in -> validateAggregateSelectExpression(in.input(), groupBy);
+            case BoundSubqueryExpression ignored -> {
+                return;
+            }
             case BoundIntervalExpression ignored -> {
                 return;
             }
@@ -534,6 +574,8 @@ public final class Binder {
                 }
                 yield result;
             }
+            case BoundInSubqueryExpression in -> containsAggregate(in.input());
+            case BoundSubqueryExpression ignored -> false;
             case BoundOutputColumnExpression ignored -> false;
             case BoundFunctionExpression function -> {
                 boolean result = false;

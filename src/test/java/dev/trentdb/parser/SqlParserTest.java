@@ -9,11 +9,13 @@ import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CreateTableStatement;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.InExpression;
+import dev.trentdb.ast.InSubqueryExpression;
 import dev.trentdb.ast.InsertStatement;
 import dev.trentdb.ast.IntervalLiteralExpression;
 import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.SelectStatement;
 import dev.trentdb.ast.Statement;
+import dev.trentdb.ast.SubqueryExpression;
 import dev.trentdb.ast.TypeName;
 import org.junit.jupiter.api.Test;
 
@@ -108,6 +110,33 @@ class SqlParserTest {
         assertInstanceOf(ColumnReferenceExpression.class, in.input());
         assertEquals(2, in.candidates().size());
         assertEquals(true, in.negated());
+    }
+
+    @Test
+    void parsesInSubqueryPredicate() {
+        Statement statement = parser.parse(
+                "SELECT id FROM people WHERE id IN (SELECT person_id FROM orders)"
+        );
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        InSubqueryExpression in = assertInstanceOf(InSubqueryExpression.class, select.where());
+        assertInstanceOf(ColumnReferenceExpression.class, in.input());
+        assertEquals("orders", in.subquery().from().base().name().last());
+        assertEquals(false, in.negated());
+    }
+
+    @Test
+    void parsesScalarSubqueryExpression() {
+        Statement statement = parser.parse(
+                "SELECT (SELECT max(total) FROM orders) AS max_total FROM people"
+        );
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        SubqueryExpression subquery = assertInstanceOf(
+                SubqueryExpression.class,
+                select.selectItems().getFirst().expression()
+        );
+        assertEquals("orders", subquery.select().from().base().name().last());
     }
 
     @Test

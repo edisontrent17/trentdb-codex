@@ -7,6 +7,7 @@ import dev.trentdb.execution.ExecutionException;
 import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundOrderByItem;
 import dev.trentdb.storage.InMemoryTableStorage;
+import dev.trentdb.storage.StorageManager;
 import dev.trentdb.types.LogicalType;
 
 import java.util.ArrayList;
@@ -15,10 +16,15 @@ import java.util.List;
 
 public final class PhysicalOrder implements PhysicalOperator {
     private final List<BoundOrderByItem> orders;
-    private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
+    private final ExpressionExecutor expressionExecutor;
 
     public PhysicalOrder(List<BoundOrderByItem> orders) {
+        this(orders, null);
+    }
+
+    public PhysicalOrder(List<BoundOrderByItem> orders, StorageManager storageManager) {
         this.orders = List.copyOf(orders);
+        this.expressionExecutor = new ExpressionExecutor(storageManager);
     }
 
     public List<BoundOrderByItem> orders() {

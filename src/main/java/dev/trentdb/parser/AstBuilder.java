@@ -13,6 +13,7 @@ import dev.trentdb.ast.Expression;
 import dev.trentdb.ast.FromItem;
 import dev.trentdb.ast.FunctionCallExpression;
 import dev.trentdb.ast.InExpression;
+import dev.trentdb.ast.InSubqueryExpression;
 import dev.trentdb.ast.InsertStatement;
 import dev.trentdb.ast.IntervalLiteralExpression;
 import dev.trentdb.ast.IntervalUnit;
@@ -28,6 +29,7 @@ import dev.trentdb.ast.SelectStatement;
 import dev.trentdb.ast.SortDirection;
 import dev.trentdb.ast.StarExpression;
 import dev.trentdb.ast.Statement;
+import dev.trentdb.ast.SubqueryExpression;
 import dev.trentdb.ast.TableReference;
 import dev.trentdb.ast.TypeName;
 import dev.trentdb.ast.UnaryExpression;
@@ -209,11 +211,18 @@ final class AstBuilder {
                     valueExpression(betweenPredicate.valueExpression(2))
             );
         }
-        if (context instanceof TrentDbSqlParser.InPredicateContext inPredicate) {
+        if (context instanceof TrentDbSqlParser.InListPredicateContext inPredicate) {
             return new InExpression(
                     valueExpression(inPredicate.valueExpression()),
                     expressionList(inPredicate.expressionList()),
                     inPredicate.NOT() != null
+            );
+        }
+        if (context instanceof TrentDbSqlParser.InSubqueryPredicateContext inSubqueryPredicate) {
+            return new InSubqueryExpression(
+                    valueExpression(inSubqueryPredicate.valueExpression()),
+                    select(inSubqueryPredicate.select()),
+                    inSubqueryPredicate.NOT() != null
             );
         }
         if (context instanceof TrentDbSqlParser.LikePredicateContext likePredicate) {
@@ -309,6 +318,9 @@ final class AstBuilder {
         }
         if (context instanceof TrentDbSqlParser.CasePrimaryContext casePrimary) {
             return caseExpression(casePrimary.caseExpression());
+        }
+        if (context instanceof TrentDbSqlParser.SubqueryPrimaryContext subqueryPrimary) {
+            return new SubqueryExpression(select(subqueryPrimary.select()));
         }
         if (context instanceof TrentDbSqlParser.ParenthesizedExpressionContext parenthesizedExpression) {
             return expression(parenthesizedExpression.expression());
