@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -163,6 +164,57 @@ class TpchCompatibilityTest {
         assertDoubleEquals(15.486545812284078d, (Double) result.rows().getFirst().getFirst());
     }
 
+    @Test
+    void executesTpchQ3FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String customerCsv = resourcePath("tpch/customer_q3_sf001.csv");
+        String ordersCsv = resourcePath("tpch/orders_q3_sf001.csv");
+        String lineitemCsv = resourcePath("tpch/lineitem_q12_q14_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    l_orderkey,
+                    sum(l_extendedprice * (1 - l_discount)) AS revenue,
+                    o_orderdate,
+                    o_shippriority
+                FROM
+                    '%s' c
+                JOIN
+                    '%s' o
+                ON
+                    c.c_custkey = o.o_custkey
+                JOIN
+                    '%s' l
+                ON
+                    l.l_orderkey = o.o_orderkey
+                WHERE
+                    c_mktsegment = 'BUILDING'
+                    AND o_orderdate < DATE '1995-03-15'
+                    AND l_shipdate > DATE '1995-03-15'
+                GROUP BY
+                    l_orderkey,
+                    o_orderdate,
+                    o_shippriority
+                ORDER BY
+                    revenue DESC,
+                    o_orderdate
+                LIMIT 10;
+                """.formatted(sqlString(customerCsv), sqlString(ordersCsv), sqlString(lineitemCsv)));
+
+        assertEquals(List.of("l_orderkey", "revenue", "o_orderdate", "o_shippriority"), result.columns());
+        assertEquals(10, result.rows().size());
+        assertQ3Row(result.rows().get(0), 47714L, 267010.5894d, LocalDate.of(1995, 3, 11), 0L);
+        assertQ3Row(result.rows().get(1), 22276L, 266351.55620000005d, LocalDate.of(1995, 1, 29), 0L);
+        assertQ3Row(result.rows().get(2), 32965L, 263768.3414d, LocalDate.of(1995, 2, 25), 0L);
+        assertQ3Row(result.rows().get(3), 21956L, 254541.1285d, LocalDate.of(1995, 2, 2), 0L);
+        assertQ3Row(result.rows().get(4), 1637L, 243512.79809999999d, LocalDate.of(1995, 2, 8), 0L);
+        assertQ3Row(result.rows().get(5), 10916L, 241320.08140000002d, LocalDate.of(1995, 3, 11), 0L);
+        assertQ3Row(result.rows().get(6), 30497L, 208566.69689999998d, LocalDate.of(1995, 2, 7), 0L);
+        assertQ3Row(result.rows().get(7), 450L, 205447.42320000002d, LocalDate.of(1995, 3, 5), 0L);
+        assertQ3Row(result.rows().get(8), 47204L, 204478.5213d, LocalDate.of(1995, 3, 13), 0L);
+        assertQ3Row(result.rows().get(9), 9696L, 201502.21879999997d, LocalDate.of(1995, 2, 20), 0L);
+    }
+
     private QueryResult execute(Fixture fixture, String sql) {
         Statement statement = parser.parse(sql);
         BoundStatement bound = new Binder(fixture.catalog()).bind(fixture.transaction(), statement);
@@ -193,6 +245,19 @@ class TpchCompatibilityTest {
         assertDoubleEquals(averagePrice, (Double) row.get(7));
         assertDoubleEquals(averageDiscount, (Double) row.get(8));
         assertEquals(countOrder, row.get(9));
+    }
+
+    private void assertQ3Row(
+            List<Object> row,
+            long orderKey,
+            double revenue,
+            LocalDate orderDate,
+            long shipPriority
+    ) {
+        assertEquals(orderKey, row.get(0));
+        assertDoubleEquals(revenue, (Double) row.get(1));
+        assertEquals(orderDate, row.get(2));
+        assertEquals(shipPriority, row.get(3));
     }
 
     private void assertDoubleEquals(double expected, double actual) {

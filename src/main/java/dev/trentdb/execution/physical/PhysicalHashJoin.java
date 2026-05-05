@@ -5,8 +5,8 @@ import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.SelectionVector;
 import dev.trentdb.common.vector.Vector;
 import dev.trentdb.execution.ExecutionException;
-import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.execution.ExecutionProfiler;
+import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundTableRef;
 import dev.trentdb.storage.InMemoryTableStorage;
@@ -16,39 +16,35 @@ import dev.trentdb.types.LogicalType;
 import java.util.ArrayList;
 import java.util.List;
 
-public final class PhysicalHashJoinSource implements PhysicalSource {
+public final class PhysicalHashJoin implements PhysicalOperator {
     private final StorageManager storageManager;
-    private final BoundTableRef left;
+    private final List<String> leftNames;
+    private final List<LogicalType> leftTypes;
     private final BoundTableRef right;
     private final int leftKeyOrdinal;
     private final int rightKeyOrdinal;
-    private final BoundExpression leftFilter;
     private final BoundExpression rightFilter;
     private final BoundExpression residualFilter;
     private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
 
-    public PhysicalHashJoinSource(
+    public PhysicalHashJoin(
             StorageManager storageManager,
-            BoundTableRef left,
+            List<String> leftNames,
+            List<LogicalType> leftTypes,
             BoundTableRef right,
             int leftKeyOrdinal,
             int rightKeyOrdinal,
-            BoundExpression leftFilter,
             BoundExpression rightFilter,
             BoundExpression residualFilter
     ) {
         this.storageManager = storageManager;
-        this.left = left;
+        this.leftNames = List.copyOf(leftNames);
+        this.leftTypes = List.copyOf(leftTypes);
         this.right = right;
         this.leftKeyOrdinal = leftKeyOrdinal;
         this.rightKeyOrdinal = rightKeyOrdinal;
-        this.leftFilter = leftFilter;
         this.rightFilter = rightFilter;
         this.residualFilter = residualFilter;
-    }
-
-    public BoundTableRef left() {
-        return left;
     }
 
     public BoundTableRef right() {
@@ -61,10 +57,6 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
 
     public int rightKeyOrdinal() {
         return rightKeyOrdinal;
-    }
-
-    public BoundExpression leftFilter() {
-        return leftFilter;
     }
 
     public BoundExpression rightFilter() {
@@ -81,137 +73,71 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
     }
 
     @Override
-    public void execute(PhysicalChunkConsumer consumer) {
-        long totalStart = ExecutionProfiler.start();
-        List<ColumnCatalogEntry> leftColumns = columns(left);
+    public LocalOperatorState createLocalOperatorState(GlobalOperatorState globalState) {
         List<ColumnCatalogEntry> rightColumns = columns(right);
-        List<String> outputNames = outputNames(leftColumns, rightColumns);
-        List<LogicalType> outputTypes = outputTypes(leftColumns, rightColumns);
-        long leftScanStart = ExecutionProfiler.start();
-        List<DataChunk> leftChunks = filterChunks(scanChunks(left), leftFilter, "filter_left");
-        ExecutionProfiler.log(
-                "PhysicalHashJoinSource",
-                "scan_left",
-                leftScanStart,
-                "chunks=" + leftChunks.size() + " rows=" + countRows(leftChunks)
-        );
+        List<String> outputNames = outputNames(rightColumns);
+        List<LogicalType> outputTypes = outputTypes(rightColumns);
         long rightScanStart = ExecutionProfiler.start();
         List<DataChunk> rightChunks = filterChunks(scanChunks(right), rightFilter, "filter_right");
         ExecutionProfiler.log(
-                "PhysicalHashJoinSource",
+                "PhysicalHashJoin",
                 "scan_right",
                 rightScanStart,
                 "chunks=" + rightChunks.size() + " rows=" + countRows(rightChunks)
         );
         LogicalType keyType = rightColumns.get(rightKeyOrdinal).logicalType();
-
         long buildStart = ExecutionProfiler.start();
         BuildIndex buildIndex = buildRightIndex(rightChunks, keyType);
         ExecutionProfiler.log(
-                "PhysicalHashJoinSource",
+                "PhysicalHashJoin",
                 "build_index",
                 buildStart,
                 "entries=" + buildIndex.size() + " keyType=" + keyType.id().name()
         );
-
-        long probeStart = ExecutionProfiler.start();
-        List<Vector> outputVectors = createVectors(outputTypes, InMemoryTableStorage.STANDARD_VECTOR_SIZE);
-        int bufferedCount = 0;
-        int outputChunks = 0;
-        int probedRows = 0;
-        int nullKeyRows = 0;
-        int matchedRows = 0;
-        int emittedRows = 0;
         DataChunk residualRow = residualFilter == null ? null : singleRowChunk(outputNames, outputTypes);
+        return new HashJoinLocalState(rightChunks, buildIndex, keyType, outputNames, outputTypes, residualRow);
+    }
 
-        for (DataChunk leftChunk : leftChunks) {
-            Vector leftKeyVector = leftChunk.column(leftKeyOrdinal);
-            for (int leftRowIndex = 0; leftRowIndex < leftChunk.cardinality(); leftRowIndex++) {
-                probedRows++;
-                if (leftKeyVector.isNull(leftRowIndex)) {
-                    nullKeyRows++;
-                    continue;
-                }
-                long probeKey = keyAsLong(leftKeyVector, leftRowIndex, keyType);
-                int match = buildIndex.firstEntry(probeKey);
-                if (match < 0) {
-                    continue;
-                }
-                for (int entry = match; entry >= 0; entry = buildIndex.nextEntry(entry, probeKey)) {
-                    DataChunk rightChunk = rightChunks.get(buildIndex.chunkIndex(entry));
-                    int rightRowIndex = buildIndex.rowIndex(entry);
-                    matchedRows++;
-                    if (residualRow != null) {
-                        writeJoinedValues(residualRow.vectors(), 0, leftChunk, leftRowIndex, rightChunk, rightRowIndex);
-                        if (!matchesResidual(residualRow)) {
-                            continue;
-                        }
-                        copyResidualRow(outputVectors, bufferedCount, residualRow);
-                    } else {
-                        writeJoinedValues(outputVectors, bufferedCount, leftChunk, leftRowIndex, rightChunk, rightRowIndex);
+    @Override
+    public void execute(DataChunk input, OperatorInput operatorInput, PhysicalChunkConsumer downstream) {
+        HashJoinLocalState state = (HashJoinLocalState) operatorInput.localState();
+        Vector leftKeyVector = input.column(leftKeyOrdinal);
+        List<Vector> outputVectors = createVectors(state.outputTypes, InMemoryTableStorage.STANDARD_VECTOR_SIZE);
+        int bufferedCount = 0;
+
+        for (int leftRowIndex = 0; leftRowIndex < input.cardinality(); leftRowIndex++) {
+            if (leftKeyVector.isNull(leftRowIndex)) {
+                continue;
+            }
+            long probeKey = keyAsLong(leftKeyVector, leftRowIndex, state.keyType);
+            int match = state.buildIndex.firstEntry(probeKey);
+            if (match < 0) {
+                continue;
+            }
+            for (int entry = match; entry >= 0; entry = state.buildIndex.nextEntry(entry, probeKey)) {
+                DataChunk rightChunk = state.rightChunks.get(state.buildIndex.chunkIndex(entry));
+                int rightRowIndex = state.buildIndex.rowIndex(entry);
+                if (state.residualRow != null) {
+                    writeJoinedValues(state.residualRow.vectors(), 0, input, leftRowIndex, rightChunk, rightRowIndex);
+                    if (!matchesResidual(state.residualRow)) {
+                        continue;
                     }
-                    bufferedCount++;
-                    emittedRows++;
-                    if (bufferedCount >= InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
-                        consumer.accept(new DataChunk(outputNames, outputVectors));
-                        outputVectors = createVectors(outputTypes, InMemoryTableStorage.STANDARD_VECTOR_SIZE);
-                        bufferedCount = 0;
-                        outputChunks++;
-                    }
+                    copyResidualRow(outputVectors, bufferedCount, state.residualRow);
+                } else {
+                    writeJoinedValues(outputVectors, bufferedCount, input, leftRowIndex, rightChunk, rightRowIndex);
+                }
+                bufferedCount++;
+                if (bufferedCount >= InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
+                    downstream.accept(new DataChunk(state.outputNames, outputVectors));
+                    outputVectors = createVectors(state.outputTypes, InMemoryTableStorage.STANDARD_VECTOR_SIZE);
+                    bufferedCount = 0;
                 }
             }
         }
 
         if (bufferedCount > 0) {
-            consumer.accept(compactChunk(outputNames, outputTypes, outputVectors, bufferedCount));
-            outputChunks++;
+            downstream.accept(compactChunk(state.outputNames, state.outputTypes, outputVectors, bufferedCount));
         }
-        ExecutionProfiler.log(
-                "PhysicalHashJoinSource",
-                "probe_emit",
-                probeStart,
-                "probedRows=" + probedRows
-                        + " nullKeyRows=" + nullKeyRows
-                        + " matchedRows=" + matchedRows
-                        + " emittedRows=" + emittedRows
-                        + " outputChunks=" + outputChunks
-        );
-        ExecutionProfiler.log("PhysicalHashJoinSource", "total", totalStart, null);
-    }
-
-    private BuildIndex buildRightIndex(List<DataChunk> rightChunks, LogicalType keyType) {
-        int rowCapacity = 0;
-        for (DataChunk chunk : rightChunks) {
-            rowCapacity += chunk.cardinality();
-        }
-        BuildIndex index = new BuildIndex(rowCapacity);
-        for (int chunkIndex = 0; chunkIndex < rightChunks.size(); chunkIndex++) {
-            DataChunk chunk = rightChunks.get(chunkIndex);
-            Vector keyVector = chunk.column(rightKeyOrdinal);
-            for (int rowIndex = 0; rowIndex < chunk.cardinality(); rowIndex++) {
-                if (keyVector.isNull(rowIndex)) {
-                    continue;
-                }
-                index.insert(keyAsLong(keyVector, rowIndex, keyType), chunkIndex, rowIndex);
-            }
-        }
-        return index;
-    }
-
-    private long keyAsLong(Vector keyVector, int rowIndex, LogicalType keyType) {
-        if (keyType.equals(LogicalType.BOOLEAN)) {
-            return keyVector.getBoolean(rowIndex) ? 1L : 0L;
-        }
-        if (keyType.equals(LogicalType.INTEGER)) {
-            return keyVector.getInteger(rowIndex);
-        }
-        if (keyType.equals(LogicalType.BIGINT)) {
-            return keyVector.getBigint(rowIndex);
-        }
-        if (keyType.equals(LogicalType.DATE)) {
-            return keyVector.getDate(rowIndex).toEpochDay();
-        }
-        throw new ExecutionException("Unsupported HASH JOIN key type: " + keyType.id().name());
     }
 
     private List<DataChunk> scanChunks(BoundTableRef tableRef) {
@@ -238,7 +164,7 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
             }
         }
         ExecutionProfiler.log(
-                "PhysicalHashJoinSource",
+                "PhysicalHashJoin",
                 profileEvent,
                 filterStart,
                 "inputRows=" + inputRows + " outputRows=" + outputRows + " chunks=" + filtered.size()
@@ -283,26 +209,56 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
         return tableRef.table().columns();
     }
 
-    private List<String> outputNames(List<ColumnCatalogEntry> leftColumns, List<ColumnCatalogEntry> rightColumns) {
-        ArrayList<String> names = new ArrayList<>(leftColumns.size() + rightColumns.size());
-        for (ColumnCatalogEntry column : leftColumns) {
-            names.add(column.name());
-        }
+    private List<String> outputNames(List<ColumnCatalogEntry> rightColumns) {
+        ArrayList<String> names = new ArrayList<>(leftNames.size() + rightColumns.size());
+        names.addAll(leftNames);
         for (ColumnCatalogEntry column : rightColumns) {
             names.add(column.name());
         }
         return names;
     }
 
-    private List<LogicalType> outputTypes(List<ColumnCatalogEntry> leftColumns, List<ColumnCatalogEntry> rightColumns) {
-        ArrayList<LogicalType> types = new ArrayList<>(leftColumns.size() + rightColumns.size());
-        for (ColumnCatalogEntry column : leftColumns) {
-            types.add(column.logicalType());
-        }
+    private List<LogicalType> outputTypes(List<ColumnCatalogEntry> rightColumns) {
+        ArrayList<LogicalType> types = new ArrayList<>(leftTypes.size() + rightColumns.size());
+        types.addAll(leftTypes);
         for (ColumnCatalogEntry column : rightColumns) {
             types.add(column.logicalType());
         }
         return types;
+    }
+
+    private BuildIndex buildRightIndex(List<DataChunk> rightChunks, LogicalType keyType) {
+        int rowCapacity = 0;
+        for (DataChunk chunk : rightChunks) {
+            rowCapacity += chunk.cardinality();
+        }
+        BuildIndex index = new BuildIndex(rowCapacity);
+        for (int chunkIndex = 0; chunkIndex < rightChunks.size(); chunkIndex++) {
+            DataChunk chunk = rightChunks.get(chunkIndex);
+            Vector keyVector = chunk.column(rightKeyOrdinal);
+            for (int rowIndex = 0; rowIndex < chunk.cardinality(); rowIndex++) {
+                if (!keyVector.isNull(rowIndex)) {
+                    index.insert(keyAsLong(keyVector, rowIndex, keyType), chunkIndex, rowIndex);
+                }
+            }
+        }
+        return index;
+    }
+
+    private long keyAsLong(Vector keyVector, int rowIndex, LogicalType keyType) {
+        if (keyType.equals(LogicalType.BOOLEAN)) {
+            return keyVector.getBoolean(rowIndex) ? 1L : 0L;
+        }
+        if (keyType.equals(LogicalType.INTEGER)) {
+            return keyVector.getInteger(rowIndex);
+        }
+        if (keyType.equals(LogicalType.BIGINT)) {
+            return keyVector.getBigint(rowIndex);
+        }
+        if (keyType.equals(LogicalType.DATE)) {
+            return keyVector.getDate(rowIndex).toEpochDay();
+        }
+        throw new ExecutionException("Unsupported HASH JOIN key type: " + keyType.id().name());
     }
 
     private void writeJoinedValues(
@@ -322,18 +278,6 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
         }
     }
 
-    private List<Vector> createVectors(List<LogicalType> types, int cardinality) {
-        ArrayList<Vector> vectors = new ArrayList<>(types.size());
-        for (LogicalType type : types) {
-            vectors.add(new Vector(type, cardinality));
-        }
-        return vectors;
-    }
-
-    private DataChunk singleRowChunk(List<String> names, List<LogicalType> types) {
-        return new DataChunk(names, createVectors(types, 1));
-    }
-
     private boolean matchesResidual(DataChunk rowChunk) {
         Vector valueVector = expressionExecutor.execute(residualFilter, rowChunk);
         if (valueVector.isNull(0)) {
@@ -351,6 +295,18 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
         }
     }
 
+    private List<Vector> createVectors(List<LogicalType> types, int cardinality) {
+        ArrayList<Vector> vectors = new ArrayList<>(types.size());
+        for (LogicalType type : types) {
+            vectors.add(new Vector(type, cardinality));
+        }
+        return vectors;
+    }
+
+    private DataChunk singleRowChunk(List<String> names, List<LogicalType> types) {
+        return new DataChunk(names, createVectors(types, 1));
+    }
+
     private DataChunk compactChunk(List<String> names, List<LogicalType> types, List<Vector> sourceVectors, int cardinality) {
         List<Vector> vectors = createVectors(types, cardinality);
         for (int columnIndex = 0; columnIndex < vectors.size(); columnIndex++) {
@@ -360,6 +316,31 @@ public final class PhysicalHashJoinSource implements PhysicalSource {
             }
         }
         return new DataChunk(names, vectors);
+    }
+
+    private static final class HashJoinLocalState extends LocalOperatorState {
+        private final List<DataChunk> rightChunks;
+        private final BuildIndex buildIndex;
+        private final LogicalType keyType;
+        private final List<String> outputNames;
+        private final List<LogicalType> outputTypes;
+        private final DataChunk residualRow;
+
+        private HashJoinLocalState(
+                List<DataChunk> rightChunks,
+                BuildIndex buildIndex,
+                LogicalType keyType,
+                List<String> outputNames,
+                List<LogicalType> outputTypes,
+                DataChunk residualRow
+        ) {
+            this.rightChunks = List.copyOf(rightChunks);
+            this.buildIndex = buildIndex;
+            this.keyType = keyType;
+            this.outputNames = List.copyOf(outputNames);
+            this.outputTypes = List.copyOf(outputTypes);
+            this.residualRow = residualRow;
+        }
     }
 
     private static final class BuildIndex {

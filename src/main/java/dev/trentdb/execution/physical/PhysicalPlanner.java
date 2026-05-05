@@ -15,6 +15,7 @@ import dev.trentdb.planner.BoundInExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
+import dev.trentdb.planner.BoundExpressionTypes;
 import dev.trentdb.planner.logical.LogicalAggregate;
 import dev.trentdb.planner.logical.LogicalExplain;
 import dev.trentdb.planner.logical.LogicalFilter;
@@ -77,15 +78,12 @@ public final class PhysicalPlanner {
         if (logical instanceof LogicalFilter filter) {
             if (filter.child() instanceof LogicalJoin join) {
                 JoinFilterSplit split = splitJoinFilter(join, filter.predicate());
-                PhysicalSource source = buildJoinSource(
-                        join,
-                        split.leftPredicate(),
-                        split.rightPredicate(),
-                        split.residualPredicate()
-                );
-                if (split.residualPredicate() != null && !(source instanceof PhysicalHashJoinSource)) {
-                    operators.add(new PhysicalFilter(split.residualPredicate()));
+                LogicalOperator left = join.left();
+                if (split.leftPredicate() != null) {
+                    left = new LogicalFilter(split.leftPredicate(), left);
                 }
+                PhysicalSource source = buildPipeline(left, operators);
+                addJoinOperator(join, operators, split.rightPredicate(), split.residualPredicate());
                 return source;
             }
             PhysicalSource source = buildPipeline(filter.child(), operators);
@@ -106,41 +104,51 @@ public final class PhysicalPlanner {
             return new PhysicalTableScan(storageManager, get.tableRef());
         }
         if (logical instanceof LogicalJoin join) {
-            return buildJoinSource(join, null, null, null);
+            PhysicalSource source = buildPipeline(join.left(), operators);
+            addJoinOperator(join, operators, null, null);
+            return source;
         }
         throw new ExecutionException("Unsupported logical operator for physical planning: " + logical.getClass().getSimpleName());
     }
 
-    private PhysicalSource buildJoinSource(
+    private void addJoinOperator(
             LogicalJoin join,
-            BoundExpression leftPredicate,
+            ArrayList<PhysicalOperator> operators,
             BoundExpression rightPredicate,
             BoundExpression residualPredicate
     ) {
-        HashJoinKeys hashJoinKeys = hashJoinKeys(join.left(), join.right(), join.condition());
+        BoundTableRef right = rightTable(join.right());
+        List<ColumnCatalogEntry> leftColumns = columns(join.left());
+        List<String> leftNames = names(leftColumns);
+        List<LogicalType> leftTypes = types(leftColumns);
+        HashJoinKeys hashJoinKeys = hashJoinKeys(join.left(), right, join.condition());
         if (hashJoinKeys != null) {
-            return new PhysicalHashJoinSource(
+            operators.add(new PhysicalHashJoin(
                     storageManager,
-                    join.left(),
-                    join.right(),
+                    leftNames,
+                    leftTypes,
+                    right,
                     hashJoinKeys.leftKeyOrdinal(),
                     hashJoinKeys.rightKeyOrdinal(),
-                    leftPredicate,
                     rightPredicate,
                     residualPredicate
-            );
+            ));
+            return;
         }
-        return new PhysicalNestedLoopJoinSource(
+        BoundExpression condition = residualPredicate == null
+                ? join.condition()
+                : new BoundBinaryExpression(join.condition(), BinaryOperator.AND, residualPredicate, LogicalType.BOOLEAN);
+        operators.add(new PhysicalNestedLoopJoin(
                 storageManager,
-                join.left(),
-                join.right(),
-                join.condition(),
-                leftPredicate,
+                leftNames,
+                leftTypes,
+                right,
+                condition,
                 rightPredicate
-        );
+        ));
     }
 
-    private HashJoinKeys hashJoinKeys(BoundTableRef left, BoundTableRef right, BoundExpression condition) {
+    private HashJoinKeys hashJoinKeys(LogicalOperator left, BoundTableRef right, BoundExpression condition) {
         if (!(condition instanceof BoundBinaryExpression binary)) {
             return null;
         }
@@ -180,7 +188,7 @@ public final class PhysicalPlanner {
             return disjunctiveSplit;
         }
         List<ColumnCatalogEntry> leftColumns = columns(join.left());
-        List<ColumnCatalogEntry> rightColumns = columns(join.right());
+        List<ColumnCatalogEntry> rightColumns = columns(rightTable(join.right()));
         int leftColumnCount = leftColumns.size();
         int rightColumnCount = rightColumns.size();
         ArrayList<BoundExpression> leftPredicates = new ArrayList<>();
@@ -215,7 +223,7 @@ public final class PhysicalPlanner {
         }
 
         List<ColumnCatalogEntry> leftColumns = columns(join.left());
-        List<ColumnCatalogEntry> rightColumns = columns(join.right());
+        List<ColumnCatalogEntry> rightColumns = columns(rightTable(join.right()));
         int leftColumnCount = leftColumns.size();
         int rightColumnCount = rightColumns.size();
         ArrayList<BoundExpression> leftBranches = new ArrayList<>();
@@ -465,6 +473,61 @@ public final class PhysicalPlanner {
             return tableRef.replacementScan().columns();
         }
         return tableRef.table().columns();
+    }
+
+    private List<ColumnCatalogEntry> columns(LogicalOperator logical) {
+        if (logical instanceof LogicalGet get) {
+            return columns(get.tableRef());
+        }
+        if (logical instanceof LogicalFilter filter) {
+            return columns(filter.child());
+        }
+        if (logical instanceof LogicalLimit limit) {
+            return columns(limit.child());
+        }
+        if (logical instanceof LogicalOrder order) {
+            return columns(order.child());
+        }
+        if (logical instanceof LogicalJoin join) {
+            ArrayList<ColumnCatalogEntry> result = new ArrayList<>(columns(join.left()));
+            result.addAll(columns(rightTable(join.right())));
+            return result;
+        }
+        if (logical instanceof LogicalProjection projection) {
+            ArrayList<ColumnCatalogEntry> result = new ArrayList<>(projection.expressions().size());
+            for (int index = 0; index < projection.expressions().size(); index++) {
+                result.add(new ColumnCatalogEntry(
+                        projection.names().get(index),
+                        BoundExpressionTypes.logicalType(projection.expressions().get(index)),
+                        index
+                ));
+            }
+            return result;
+        }
+        throw new ExecutionException("Cannot derive output columns for " + logical.getClass().getSimpleName());
+    }
+
+    private List<String> names(List<ColumnCatalogEntry> columns) {
+        ArrayList<String> names = new ArrayList<>(columns.size());
+        for (ColumnCatalogEntry column : columns) {
+            names.add(column.name());
+        }
+        return names;
+    }
+
+    private List<LogicalType> types(List<ColumnCatalogEntry> columns) {
+        ArrayList<LogicalType> types = new ArrayList<>(columns.size());
+        for (ColumnCatalogEntry column : columns) {
+            types.add(column.logicalType());
+        }
+        return types;
+    }
+
+    private BoundTableRef rightTable(LogicalOperator logical) {
+        if (logical instanceof LogicalGet get) {
+            return get.tableRef();
+        }
+        throw new ExecutionException("Only left-deep joins with table right sides are supported");
     }
 
     private boolean supportsHashJoinKeyType(LogicalType logicalType) {

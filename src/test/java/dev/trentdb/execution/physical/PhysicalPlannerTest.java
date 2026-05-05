@@ -60,7 +60,7 @@ class PhysicalPlannerTest {
     }
 
     @Test
-    void plansEquiJoinAsHashSource() {
+    void plansEquiJoinAsHashOperator() {
         Catalog catalog = new Catalog();
         Transaction transaction = transactionManager.startTransaction();
         TableCatalogEntry people = catalog.createTable(
@@ -95,19 +95,24 @@ class PhysicalPlannerTest {
 
         Pipeline pipeline = new PhysicalPlanner(storageManager).plan(logical);
 
-        assertInstanceOf(PhysicalHashJoinSource.class, pipeline.source());
-        assertEquals(PhysicalOperatorType.HASH_JOIN, pipeline.source().type());
-        assertEquals(2, pipeline.operators().size());
-        assertInstanceOf(PhysicalOrder.class, pipeline.operators().get(0));
-        assertEquals(PhysicalOperatorType.ORDER_BY, pipeline.operators().get(0).type());
-        assertInstanceOf(PhysicalProjection.class, pipeline.operators().get(1));
-        assertEquals(PhysicalOperatorType.PROJECTION, pipeline.operators().get(1).type());
+        assertInstanceOf(PhysicalTableScan.class, pipeline.source());
+        assertEquals(PhysicalOperatorType.TABLE_SCAN, pipeline.source().type());
+        assertEquals(3, pipeline.operators().size());
+        PhysicalHashJoin join = assertInstanceOf(PhysicalHashJoin.class, pipeline.operators().get(0));
+        assertEquals(PhysicalOperatorType.HASH_JOIN, join.type());
+        assertEquals("orders", join.right().table().name());
+        assertEquals(0, join.leftKeyOrdinal());
+        assertEquals(0, join.rightKeyOrdinal());
+        assertInstanceOf(PhysicalOrder.class, pipeline.operators().get(1));
+        assertEquals(PhysicalOperatorType.ORDER_BY, pipeline.operators().get(1).type());
+        assertInstanceOf(PhysicalProjection.class, pipeline.operators().get(2));
+        assertEquals(PhysicalOperatorType.PROJECTION, pipeline.operators().get(2).type());
         assertInstanceOf(PhysicalResultCollector.class, pipeline.sink());
         assertEquals(PhysicalOperatorType.RESULT_COLLECTOR, pipeline.sink().type());
     }
 
     @Test
-    void plansNonEquiJoinAsNestedLoopSource() {
+    void plansNonEquiJoinAsNestedLoopOperator() {
         Catalog catalog = new Catalog();
         Transaction transaction = transactionManager.startTransaction();
         TableCatalogEntry people = catalog.createTable(
@@ -142,8 +147,10 @@ class PhysicalPlannerTest {
 
         Pipeline pipeline = new PhysicalPlanner(storageManager).plan(logical);
 
-        assertInstanceOf(PhysicalNestedLoopJoinSource.class, pipeline.source());
-        assertEquals(PhysicalOperatorType.NESTED_LOOP_JOIN, pipeline.source().type());
+        assertInstanceOf(PhysicalTableScan.class, pipeline.source());
+        assertEquals(PhysicalOperatorType.TABLE_SCAN, pipeline.source().type());
+        assertInstanceOf(PhysicalNestedLoopJoin.class, pipeline.operators().getFirst());
+        assertEquals(PhysicalOperatorType.NESTED_LOOP_JOIN, pipeline.operators().getFirst().type());
     }
 
     @Test
@@ -182,9 +189,11 @@ class PhysicalPlannerTest {
 
         Pipeline pipeline = new PhysicalPlanner(storageManager).plan(logical);
 
-        assertInstanceOf(PhysicalHashJoinSource.class, pipeline.source());
-        assertEquals(2, pipeline.operators().size());
-        assertInstanceOf(PhysicalOrder.class, pipeline.operators().get(0));
-        assertInstanceOf(PhysicalProjection.class, pipeline.operators().get(1));
+        assertInstanceOf(PhysicalTableScan.class, pipeline.source());
+        assertEquals(3, pipeline.operators().size());
+        PhysicalHashJoin join = assertInstanceOf(PhysicalHashJoin.class, pipeline.operators().get(0));
+        assertEquals(PhysicalOperatorType.HASH_JOIN, join.type());
+        assertInstanceOf(PhysicalOrder.class, pipeline.operators().get(1));
+        assertInstanceOf(PhysicalProjection.class, pipeline.operators().get(2));
     }
 }

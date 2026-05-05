@@ -338,6 +338,29 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesMultipleInnerJoins() {
+        Fixture fixture = customersOrdersLineitemsFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT c.name, l.amount
+                FROM customers c
+                JOIN orders o ON c.cust_id = o.cust_id
+                JOIN lineitems l ON o.order_id = l.order_id
+                WHERE l.amount >= 20
+                ORDER BY c.name, l.amount
+                """
+        );
+
+        assertEquals(List.of("name", "amount"), result.columns());
+        assertEquals(List.of(
+                List.of("Alice", 20L),
+                List.of("Bob", 30L)
+        ), result.rows());
+    }
+
+    @Test
     void ordersNullsLastAscending() {
         Fixture fixture = peopleWithNullFixture();
 
@@ -627,6 +650,53 @@ class QueryExecutorTest {
         storage.appendRow(List.of(2L, 30L));
         storage.appendRow(List.of(3L, 40L));
         return fixture;
+    }
+
+    private Fixture customersOrdersLineitemsFixture() {
+        Catalog catalog = new Catalog();
+        Transaction transaction = transactionManager.startTransaction();
+        TableCatalogEntry customers = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("customers")),
+                List.of(
+                        new ColumnDefinition("cust_id", TypeName.BIGINT),
+                        new ColumnDefinition("name", TypeName.TEXT)
+                )
+        );
+        TableCatalogEntry orders = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("order_id", TypeName.BIGINT),
+                        new ColumnDefinition("cust_id", TypeName.BIGINT)
+                )
+        );
+        TableCatalogEntry lineitems = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("lineitems")),
+                List.of(
+                        new ColumnDefinition("order_id", TypeName.BIGINT),
+                        new ColumnDefinition("amount", TypeName.BIGINT)
+                )
+        );
+
+        StorageManager storageManager = new StorageManager();
+        InMemoryTableStorage customerStorage = storageManager.createTable(customers);
+        customerStorage.appendRow(List.of(1L, "Alice"));
+        customerStorage.appendRow(List.of(2L, "Bob"));
+
+        InMemoryTableStorage orderStorage = storageManager.createTable(orders);
+        orderStorage.appendRow(List.of(10L, 1L));
+        orderStorage.appendRow(List.of(20L, 2L));
+        orderStorage.appendRow(List.of(30L, 3L));
+
+        InMemoryTableStorage lineitemStorage = storageManager.createTable(lineitems);
+        lineitemStorage.appendRow(List.of(10L, 20L));
+        lineitemStorage.appendRow(List.of(10L, 5L));
+        lineitemStorage.appendRow(List.of(20L, 30L));
+        lineitemStorage.appendRow(List.of(40L, 99L));
+
+        return new Fixture(catalog, transaction, storageManager);
     }
 
     private Fixture emptyFixture() {

@@ -364,8 +364,9 @@ class BinderTest {
         );
 
         BoundJoinRef join = assertInstanceOf(BoundJoinRef.class, bound.from());
-        assertSame(fixture.table, join.left().table());
-        assertEquals("p", join.left().alias());
+        BoundTableRef leftTable = assertInstanceOf(BoundTableRef.class, join.left());
+        assertSame(fixture.table, leftTable.table());
+        assertEquals("p", leftTable.alias());
         assertEquals("orders", join.right().table().name());
         assertEquals("o", join.right().alias());
 
@@ -375,6 +376,50 @@ class BinderTest {
         BoundColumnRefExpression right = assertInstanceOf(BoundColumnRefExpression.class, predicate.right());
         assertEquals(0, left.ordinal());
         assertEquals(2, right.ordinal());
+    }
+
+    @Test
+    void bindsMultipleInnerJoinsAsLeftDeepTree() {
+        Fixture fixture = peopleFixture();
+        fixture.catalog.createTable(
+                fixture.transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("person_id", TypeName.BIGINT),
+                        new ColumnDefinition("order_id", TypeName.BIGINT)
+                )
+        );
+        fixture.catalog.createTable(
+                fixture.transaction,
+                new QualifiedName(List.of("lineitems")),
+                List.of(
+                        new ColumnDefinition("order_id", TypeName.BIGINT),
+                        new ColumnDefinition("amount", TypeName.BIGINT)
+                )
+        );
+
+        BoundSelectStatement bound = bindSelect(
+                fixture,
+                """
+                SELECT p.id, l.amount
+                FROM people p
+                JOIN orders o ON p.id = o.person_id
+                JOIN lineitems l ON o.order_id = l.order_id
+                """
+        );
+
+        BoundJoinRef lineitemJoin = assertInstanceOf(BoundJoinRef.class, bound.from());
+        assertEquals("lineitems", lineitemJoin.right().table().name());
+        BoundJoinRef orderJoin = assertInstanceOf(BoundJoinRef.class, lineitemJoin.left());
+        assertEquals("orders", orderJoin.right().table().name());
+        BoundTableRef people = assertInstanceOf(BoundTableRef.class, orderJoin.left());
+        assertSame(fixture.table, people.table());
+
+        BoundBinaryExpression predicate = assertInstanceOf(BoundBinaryExpression.class, lineitemJoin.condition());
+        BoundColumnRefExpression left = assertInstanceOf(BoundColumnRefExpression.class, predicate.left());
+        BoundColumnRefExpression right = assertInstanceOf(BoundColumnRefExpression.class, predicate.right());
+        assertEquals(3, left.ordinal());
+        assertEquals(4, right.ordinal());
     }
 
     @Test
@@ -496,8 +541,10 @@ class BinderTest {
         LogicalProjection projection = assertInstanceOf(LogicalProjection.class, logical);
         LogicalJoin join = assertInstanceOf(LogicalJoin.class, projection.child());
         assertEquals(LogicalOperatorType.LOGICAL_COMPARISON_JOIN, join.type());
-        assertEquals("people", join.left().table().name());
-        assertEquals("orders", join.right().table().name());
+        LogicalGet left = assertInstanceOf(LogicalGet.class, join.left());
+        LogicalGet right = assertInstanceOf(LogicalGet.class, join.right());
+        assertEquals("people", left.tableRef().table().name());
+        assertEquals("orders", right.tableRef().table().name());
     }
 
     @Test

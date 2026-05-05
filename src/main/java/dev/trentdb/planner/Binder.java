@@ -97,25 +97,21 @@ public final class Binder {
     }
 
     private BoundFrom bindFrom(Transaction transaction, SelectStatement statement) {
-        BoundTableRef left = bindTableRef(transaction, statement.from().base());
+        BoundFrom left = bindTableRef(transaction, statement.from().base());
         List<JoinClause> joins = statement.from().joins();
-        if (joins.isEmpty()) {
-            return left;
+        for (JoinClause join : joins) {
+            if (join.type() != JoinType.INNER) {
+                throw new BinderException("Only INNER JOIN is supported");
+            }
+            BoundTableRef right = bindTableRef(transaction, join.right());
+            BindingContext joinContext = bindingContext(left, right);
+            BoundExpression condition = bindExpression(joinContext, join.condition(), false);
+            if (!logicalType(condition).equals(LogicalType.BOOLEAN)) {
+                throw new BinderException("JOIN condition must evaluate to BOOLEAN but got " + typeName(logicalType(condition)));
+            }
+            left = new BoundJoinRef(left, right, condition);
         }
-        if (joins.size() > 1) {
-            throw new BinderException("Only a single INNER JOIN is supported");
-        }
-        JoinClause join = joins.getFirst();
-        if (join.type() != JoinType.INNER) {
-            throw new BinderException("Only INNER JOIN is supported");
-        }
-        BoundTableRef right = bindTableRef(transaction, join.right());
-        BindingContext joinContext = bindingContext(left, right);
-        BoundExpression condition = bindExpression(joinContext, join.condition(), false);
-        if (!logicalType(condition).equals(LogicalType.BOOLEAN)) {
-            throw new BinderException("JOIN condition must evaluate to BOOLEAN but got " + typeName(logicalType(condition)));
-        }
-        return new BoundJoinRef(left, right, condition);
+        return left;
     }
 
     private BoundTableRef bindTableRef(Transaction transaction, TableReference tableReference) {
@@ -148,14 +144,10 @@ public final class Binder {
         return new BindingContext(bindings);
     }
 
-    private BindingContext bindingContext(BoundTableRef left, BoundTableRef right) {
-        ArrayList<BoundColumnBinding> bindings = new ArrayList<>();
-        List<ColumnCatalogEntry> leftColumns = columns(left);
-        for (int index = 0; index < leftColumns.size(); index++) {
-            bindings.add(new BoundColumnBinding(relationName(left), leftColumns.get(index), index));
-        }
+    private BindingContext bindingContext(BoundFrom left, BoundTableRef right) {
+        ArrayList<BoundColumnBinding> bindings = new ArrayList<>(bindingContext(left).columns());
         List<ColumnCatalogEntry> rightColumns = columns(right);
-        int offset = leftColumns.size();
+        int offset = bindings.size();
         for (int index = 0; index < rightColumns.size(); index++) {
             bindings.add(new BoundColumnBinding(relationName(right), rightColumns.get(index), offset + index));
         }

@@ -5,12 +5,14 @@
 - Build a production-quality in-memory analytical engine first.
 - Mirror DuckDB's parser -> binder -> logical operator -> physical operator -> vectorized execution shape.
 - Use `/home/manoj/Projects/duckdb` as the local architecture reference.
-- Defer WAL, crash recovery, persistence, and full multi-client MVCC.
+- Keep write paths behind WAL-capable catalog, storage, and transaction boundaries before claiming durable DDL or DML.
 
 ## Next
 
-- implement inner joins through explicit logical and physical join operators
-- add ambiguity handling for unqualified column references once joins are bound
+- add subquery support, starting with non-correlated scalar and `IN` subqueries
+- extend TPC-H coverage to the next non-outer-join query shapes
+- introduce optimizer scaffolding once the unoptimized behavior is covered by compatibility tests
+- design the durable write path for `CREATE TABLE` and `INSERT` around WAL and recovery boundaries
 
 ## Done
 
@@ -19,6 +21,10 @@
 - implement aggregate binding and execution for `count`, `sum`, `min`, `max`, and `avg`
 - add `GROUP BY` planning and hash aggregate execution
 - run canonical TPC-H Q6 from generated SF 0.01 `lineitem` CSV data
+- implement single and multiple explicit `INNER JOIN` queries with DuckDB-shaped logical joins
+- execute joins through physical hash join and nested loop join operators in the operator pipeline
+- run generated CSV TPC-H compatibility tests for Q1, Q3, Q6, Q12, Q14, and Q19
+- add ambiguity handling for unqualified column references in join binding
 
 ## DuckDB Reference Areas
 
@@ -42,11 +48,11 @@
 
 ## Later
 
-- optimizer passes: constant folding, filter pushdown, projection pruning
+- optimizer passes: constant folding, filter pushdown, projection pruning, top-N rewrite
 - richer DuckDB-compatibility tests
 - primitive-specialized vectors for fixed-width types
 - columnar append storage with segments and scan state
-- order/top-N physical operators
+- top-N physical operator
 - broader scalar function coverage
 - benchmark suite for scan, filter, projection, aggregate, join, and CSV scans
 - replace the current minimal CSV replacement scan typing with DuckDB-shaped CSV sniffing:
@@ -55,7 +61,6 @@
 ## Deferred
 
 - persistence
-- WAL and crash recovery
 - full MVCC and multi-client isolation
 - indexes
 - concurrency

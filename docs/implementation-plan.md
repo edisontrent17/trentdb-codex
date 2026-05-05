@@ -522,12 +522,12 @@ Keep the package layout close to the engine pipeline:
 
 The next implementation sequence should be:
 
-1. Add aggregate binding and execution for `count`, `sum`, `min`, `max`, and `avg`.
-2. Add `GROUP BY` planning and hash aggregate execution through bound, logical, physical, and execution layers.
-3. Add inner joins through explicit logical and physical join operators.
-4. Harden CSV replacement scans behind the generic replacement scan abstraction with quote-aware parsing and type inference.
-5. Connect `CREATE TABLE` and `INSERT ... VALUES` to in-memory catalog/storage write paths without advertising durable persistence.
-6. Introduce optimizer scaffolding after unoptimized execution behavior is covered by tests.
+1. Add subquery support, starting with non-correlated scalar and `IN` subqueries.
+2. Extend TPC-H compatibility coverage to the next query shapes that do not require outer joins.
+3. Harden CSV replacement scans behind the generic replacement scan abstraction with quote-aware parsing and DuckDB-shaped sniffing.
+4. Connect `CREATE TABLE` and `INSERT ... VALUES` through WAL-capable catalog/storage/transaction write boundaries before advertising durable persistence.
+5. Introduce optimizer scaffolding after unoptimized execution behavior is covered by tests.
+6. Add optimizer passes for constant folding, filter pushdown, projection pruning, and top-N.
 
 ## Explicit Non-Goals For Now
 
