@@ -632,6 +632,22 @@ class QueryExecutorTest {
         assertEquals(List.of(List.of("Alice")), result.rows());
     }
 
+    @Test
+    void readsQuotedCsvFields(@TempDir Path tempDir) throws Exception {
+        Path csv = tempDir.resolve("quoted.csv");
+        Files.writeString(csv, "id,note\n1,\"Alice, A.\"\n2,\"Bob said \"\"hello\"\"\"\n");
+
+        Fixture fixture = emptyFixture();
+
+        QueryResult result = execute(fixture, "SELECT note FROM '" + sqlString(csv.toString()) + "' ORDER BY id");
+
+        assertEquals(List.of("note"), result.columns());
+        assertEquals(List.of(
+                List.of("Alice, A."),
+                List.of("Bob said \"hello\"")
+        ), result.rows());
+    }
+
     private QueryResult execute(Fixture fixture, String sql) {
         Statement statement = parser.parse(sql);
         BoundStatement bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);

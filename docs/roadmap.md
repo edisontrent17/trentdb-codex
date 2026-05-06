@@ -224,6 +224,6 @@ Deliverables:
 Status:
 
 - parser, binder, planner, and read execution tests are in place for the implemented subset
-- generated CSV compatibility coverage exists for TPC-H Q1, Q3, Q5, Q6, Q12, Q14, and Q19
+- generated CSV compatibility coverage exists for TPC-H Q1, Q3, Q5, Q6, Q10, Q12, Q14, and Q19
 - broader DuckDB-style behavior tests, plan-shape tests, and execution edge cases remain near-term priorities
 - recovery, corruption, and concurrency tests depend on the WAL, persistence, and MVCC milestones

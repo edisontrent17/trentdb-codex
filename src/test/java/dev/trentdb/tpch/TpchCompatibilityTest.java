@@ -281,6 +281,115 @@ class TpchCompatibilityTest {
     }
 
     @Test
+    void executesTpchQ10FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String customerCsv = resourcePath("tpch/customer_q10_sf001.csv");
+        String ordersCsv = resourcePath("tpch/orders_q10_sf001.csv");
+        String lineitemCsv = resourcePath("tpch/lineitem_q10_sf001.csv");
+        String nationCsv = resourcePath("tpch/nation_q10_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    c_custkey,
+                    c_name,
+                    sum(l_extendedprice * (1 - l_discount)) AS revenue,
+                    c_acctbal,
+                    n_name,
+                    c_address,
+                    c_phone,
+                    c_comment
+                FROM
+                    '%s' c
+                JOIN
+                    '%s' o
+                ON
+                    c.c_custkey = o.o_custkey
+                JOIN
+                    '%s' l
+                ON
+                    l.l_orderkey = o.o_orderkey
+                JOIN
+                    '%s' n
+                ON
+                    c.c_nationkey = n.n_nationkey
+                WHERE
+                    o_orderdate >= DATE '1993-10-01'
+                    AND o_orderdate < DATE '1993-10-01' + INTERVAL '3' MONTH
+                    AND l_returnflag = 'R'
+                GROUP BY
+                    c_custkey,
+                    c_name,
+                    c_acctbal,
+                    c_phone,
+                    n_name,
+                    c_address,
+                    c_comment
+                ORDER BY
+                    revenue DESC
+                LIMIT 20;
+                """.formatted(
+                        sqlString(customerCsv),
+                        sqlString(ordersCsv),
+                        sqlString(lineitemCsv),
+                        sqlString(nationCsv)
+                ));
+
+        assertEquals(List.of(
+                "c_custkey",
+                "c_name",
+                "revenue",
+                "c_acctbal",
+                "n_name",
+                "c_address",
+                "c_phone",
+                "c_comment"
+        ), result.columns());
+        assertEquals(20, result.rows().size());
+        assertQ10Summary(result.rows().get(0), 679L, 378211.3252d);
+        assertQ10Summary(result.rows().get(1), 1201L, 374331.534d);
+        assertQ10Summary(result.rows().get(2), 422L, 366451.0126d);
+        assertQ10Summary(result.rows().get(3), 334L, 360370.755d);
+        assertQ10Summary(result.rows().get(4), 805L, 359448.9036d);
+        assertQ10Summary(result.rows().get(5), 932L, 341608.2753d);
+        assertQ10Summary(result.rows().get(6), 853L, 341236.6246d);
+        assertQ10Summary(result.rows().get(7), 872L, 338328.7808d);
+        assertQ10Summary(result.rows().get(8), 737L, 338185.3365d);
+        assertQ10Summary(result.rows().get(9), 1118L, 319875.728d);
+        assertQ10Summary(result.rows().get(10), 223L, 319564.27499999997d);
+        assertQ10Summary(result.rows().get(11), 808L, 314774.6167d);
+        assertQ10Summary(result.rows().get(12), 478L, 299651.8026d);
+        assertQ10Summary(result.rows().get(13), 1441L, 294705.3935d);
+        assertQ10Summary(result.rows().get(14), 1478L, 294431.91780000005d);
+        assertQ10Summary(result.rows().get(15), 211L, 287905.6367999999d);
+        assertQ10Summary(result.rows().get(16), 197L, 283190.4807d);
+        assertQ10Summary(result.rows().get(17), 1030L, 282557.3566d);
+        assertQ10Summary(result.rows().get(18), 1049L, 281134.1117d);
+        assertQ10Summary(result.rows().get(19), 1094L, 274877.444d);
+        assertQ10Row(
+                result.rows().get(2),
+                422L,
+                "Customer#000000422",
+                366451.0126d,
+                -272.14d,
+                "INDONESIA",
+                "rtds1qwEinDWYhyIbRusRgXBDxGJraP,C,S zDwA",
+                "19-299-247-2444",
+                " are carefully. slyly regular requests hag"
+        );
+        assertQ10Row(
+                result.rows().get(3),
+                334L,
+                "Customer#000000334",
+                360370.755d,
+                -405.91d,
+                "EGYPT",
+                "dbdZdUyWQaZX7DoCO",
+                "14-947-291-5002",
+                "r, bold pinto beans according to the blithely final theodolites can snooze slyly even packages. carefully ironic acc"
+        );
+    }
+
+    @Test
     void executesTpchQ19FromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String lineitemCsv = resourcePath("tpch/lineitem_q19_sf001.csv");
@@ -380,6 +489,32 @@ class TpchCompatibilityTest {
     private void assertQ5Row(List<Object> row, String nation, double revenue) {
         assertEquals(nation, row.get(0));
         assertDoubleEquals(revenue, (Double) row.get(1));
+    }
+
+    private void assertQ10Summary(List<Object> row, long customerKey, double revenue) {
+        assertEquals(customerKey, row.get(0));
+        assertDoubleEquals(revenue, (Double) row.get(2));
+    }
+
+    private void assertQ10Row(
+            List<Object> row,
+            long customerKey,
+            String customerName,
+            double revenue,
+            double accountBalance,
+            String nation,
+            String address,
+            String phone,
+            String comment
+    ) {
+        assertEquals(customerKey, row.get(0));
+        assertEquals(customerName, row.get(1));
+        assertDoubleEquals(revenue, (Double) row.get(2));
+        assertDoubleEquals(accountBalance, (Double) row.get(3));
+        assertEquals(nation, row.get(4));
+        assertEquals(address, row.get(5));
+        assertEquals(phone, row.get(6));
+        assertEquals(comment, row.get(7));
     }
 
     private void assertDoubleEquals(double expected, double actual) {
