@@ -453,6 +453,88 @@ class TpchCompatibilityTest {
     }
 
     @Test
+    void executesTpchQ18FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String customerCsv = resourcePath("tpch/customer_q18_sf001.csv");
+        String ordersCsv = resourcePath("tpch/orders_q18_sf001.csv");
+        String lineitemCsv = resourcePath("tpch/lineitem_q18_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    c_name,
+                    c_custkey,
+                    o_orderkey,
+                    o_orderdate,
+                    o_totalprice,
+                    sum(l_quantity) AS sum_quantity
+                FROM
+                    '%s' c
+                JOIN
+                    '%s' o
+                ON
+                    c.c_custkey = o.o_custkey
+                JOIN
+                    '%s' l
+                ON
+                    o.o_orderkey = l.l_orderkey
+                WHERE
+                    o_orderkey IN (
+                        SELECT
+                            l_orderkey
+                        FROM
+                            '%s'
+                        GROUP BY
+                            l_orderkey
+                        HAVING
+                            sum(l_quantity) > 300
+                    )
+                GROUP BY
+                    c_name,
+                    c_custkey,
+                    o_orderkey,
+                    o_orderdate,
+                    o_totalprice
+                ORDER BY
+                    o_totalprice DESC,
+                    o_orderdate
+                LIMIT 100;
+                """.formatted(
+                        sqlString(customerCsv),
+                        sqlString(ordersCsv),
+                        sqlString(lineitemCsv),
+                        sqlString(lineitemCsv)
+                ));
+
+        assertEquals(List.of(
+                "c_name",
+                "c_custkey",
+                "o_orderkey",
+                "o_orderdate",
+                "o_totalprice",
+                "sum_quantity"
+        ), result.columns());
+        assertEquals(2, result.rows().size());
+        assertQ18Row(
+                result.rows().get(0),
+                "Customer#000000667",
+                667L,
+                29158L,
+                LocalDate.of(1995, 10, 21),
+                439687.23d,
+                305.0d
+        );
+        assertQ18Row(
+                result.rows().get(1),
+                "Customer#000000178",
+                178L,
+                6882L,
+                LocalDate.of(1997, 4, 9),
+                422359.65d,
+                303.0d
+        );
+    }
+
+    @Test
     void executesTpchQ19FromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String lineitemCsv = resourcePath("tpch/lineitem_q19_sf001.csv");
@@ -562,6 +644,23 @@ class TpchCompatibilityTest {
     private void assertQ11Row(List<Object> row, long partKey, double value) {
         assertEquals(partKey, row.get(0));
         assertDoubleEquals(value, (Double) row.get(1));
+    }
+
+    private void assertQ18Row(
+            List<Object> row,
+            String customerName,
+            long customerKey,
+            long orderKey,
+            LocalDate orderDate,
+            double totalPrice,
+            double sumQuantity
+    ) {
+        assertEquals(customerName, row.get(0));
+        assertEquals(customerKey, row.get(1));
+        assertEquals(orderKey, row.get(2));
+        assertEquals(orderDate, row.get(3));
+        assertDoubleEquals(totalPrice, (Double) row.get(4));
+        assertDoubleEquals(sumQuantity, (Double) row.get(5));
     }
 
     private void assertQ10Row(

@@ -59,6 +59,7 @@ Current TPC-H coverage from generated scale 0.01 CSV fixtures:
 - Q11
 - Q12
 - Q14
+- Q18
 - Q19
 
 Writes are intentionally not advertised as durable yet. DDL and DML must move through write-aware catalog, storage, transaction, WAL, and recovery boundaries before this project claims persistent write safety.
