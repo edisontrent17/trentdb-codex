@@ -46,6 +46,11 @@
 - add `IS NULL` and `IS NOT NULL`
 - add physical `EXPLAIN` output in addition to logical output
 - add operator-level memory/accounting hooks
+- evaluate CSV parser replacement using real data before choosing a dependency:
+  compare the current parser against candidate libraries on generated TPC-H CSV fixtures,
+  quoted/comma-heavy Q10-style data, and malformed/edge-case CSV files; record throughput,
+  allocation profile, correctness coverage, streaming behavior, dependency size, license,
+  and maintenance activity before selecting an implementation
 
 ## Later
 
