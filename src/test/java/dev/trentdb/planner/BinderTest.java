@@ -160,11 +160,35 @@ class BinderTest {
         assertEquals("count", count.name());
         assertEquals(LogicalType.BIGINT, count.logicalType());
         assertEquals(true, count.starArgument());
+        assertEquals(false, count.distinct());
 
         BoundAggregateExpression sum = assertInstanceOf(BoundAggregateExpression.class, bound.selectList().get(1));
         assertEquals("sum", sum.name());
         assertEquals(LogicalType.BIGINT, sum.logicalType());
         assertInstanceOf(BoundColumnRefExpression.class, sum.arguments().getFirst());
+    }
+
+    @Test
+    void bindsDistinctAggregateFunction() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT count(DISTINCT id) FROM people");
+
+        BoundAggregateExpression count = assertInstanceOf(BoundAggregateExpression.class, bound.selectList().getFirst());
+        assertEquals("count", count.name());
+        assertEquals(LogicalType.BIGINT, count.logicalType());
+        assertEquals(false, count.starArgument());
+        assertEquals(true, count.distinct());
+        assertInstanceOf(BoundColumnRefExpression.class, count.arguments().getFirst());
+    }
+
+    @Test
+    void rejectsDistinctScalarFunction() {
+        Fixture fixture = peopleFixture();
+
+        BinderException error = assertThrows(BinderException.class, () -> bindSelect(fixture, "SELECT lower(DISTINCT name) FROM people"));
+
+        assertEquals("DISTINCT is only supported for aggregate functions", error.getMessage());
     }
 
     @Test

@@ -23,8 +23,10 @@ import dev.trentdb.types.LogicalType;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 
 public final class PhysicalHashAggregate implements PhysicalOperator {
     private final List<BoundExpression> groups;
@@ -225,6 +227,8 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
     private static final class AggregateState {
         private final String name;
         private final LogicalType returnType;
+        private final boolean distinct;
+        private final Set<Cell> distinctValues;
         private long count;
         private double doubleSum;
         private long longSum;
@@ -233,9 +237,14 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
         private AggregateState(BoundAggregateExpression aggregate) {
             this.name = aggregate.name().toLowerCase(java.util.Locale.ROOT);
             this.returnType = aggregate.logicalType();
+            this.distinct = aggregate.distinct();
+            this.distinctValues = distinct ? new HashSet<>() : null;
         }
 
         private void update(Vector inputVector, int rowIndex, boolean starArgument) {
+            if (distinct && !acceptDistinct(inputVector, rowIndex)) {
+                return;
+            }
             if (name.equals("count")) {
                 if (starArgument || (inputVector != null && !inputVector.isNull(rowIndex))) {
                     count++;
@@ -252,6 +261,13 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
                 case "max" -> updateMax(Cell.fromVector(inputVector, rowIndex));
                 default -> throw new ExecutionException("Unsupported aggregate function: " + name);
             }
+        }
+
+        private boolean acceptDistinct(Vector inputVector, int rowIndex) {
+            if (inputVector == null || inputVector.isNull(rowIndex)) {
+                return false;
+            }
+            return distinctValues.add(Cell.fromVector(inputVector, rowIndex));
         }
 
         private Cell resultCell() {

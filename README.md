@@ -41,7 +41,7 @@ Supported execution coverage currently includes:
 - scalar `lower(text)`
 - arithmetic expressions in `SELECT` and `WHERE`
 - `IN`, `NOT IN`, `LIKE`, `NOT LIKE`, `CASE`, date literals, interval literals, and casts
-- grouped and ungrouped aggregates: `count`, `sum`, `min`, `max`, `avg`
+- grouped and ungrouped aggregates: `count`, `sum`, `min`, `max`, `avg`, including distinct aggregate arguments
 - `HAVING` filters over grouped and ungrouped aggregate queries
 - single and multiple explicit `INNER JOIN` queries through physical join operators
 - non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
@@ -59,6 +59,7 @@ Current TPC-H coverage from generated scale 0.01 CSV fixtures:
 - Q11
 - Q12
 - Q14
+- Q16
 - Q18
 - Q19
 

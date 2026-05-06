@@ -331,8 +331,9 @@ final class AstBuilder {
 
     private FunctionCallExpression functionCall(TrentDbSqlParser.FunctionCallContext context) {
         boolean starArgument = context.STAR() != null;
+        boolean distinct = context.DISTINCT() != null;
         List<Expression> arguments = context.expressionList() == null ? List.of() : expressionList(context.expressionList());
-        return new FunctionCallExpression(unquote(context.identifier().getText()), arguments, starArgument);
+        return new FunctionCallExpression(unquote(context.identifier().getText()), arguments, starArgument, distinct);
     }
 
     private CastExpression castExpression(TrentDbSqlParser.CastExpressionContext context) {

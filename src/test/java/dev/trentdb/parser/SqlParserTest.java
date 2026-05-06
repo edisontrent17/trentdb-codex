@@ -8,6 +8,7 @@ import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CreateTableStatement;
 import dev.trentdb.ast.ExplainStatement;
+import dev.trentdb.ast.FunctionCallExpression;
 import dev.trentdb.ast.InExpression;
 import dev.trentdb.ast.InSubqueryExpression;
 import dev.trentdb.ast.InsertStatement;
@@ -139,6 +140,21 @@ class SqlParserTest {
                 select.selectItems().getFirst().expression()
         );
         assertEquals("orders", subquery.select().from().base().name().last());
+    }
+
+    @Test
+    void parsesDistinctAggregateArgument() {
+        Statement statement = parser.parse("SELECT count(DISTINCT id) FROM people");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        FunctionCallExpression function = assertInstanceOf(
+                FunctionCallExpression.class,
+                select.selectItems().getFirst().expression()
+        );
+        assertEquals("count", function.name());
+        assertEquals(true, function.distinct());
+        assertEquals(false, function.starArgument());
+        assertEquals(1, function.arguments().size());
     }
 
     @Test

@@ -473,6 +473,38 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesDistinctAggregates() {
+        Fixture fixture = salesFixture();
+
+        QueryResult result = execute(fixture, """
+                SELECT count(DISTINCT amount) AS distinct_amounts,
+                       sum(DISTINCT amount) AS distinct_total
+                FROM sales
+                """);
+
+        assertEquals(List.of("distinct_amounts", "distinct_total"), result.columns());
+        assertEquals(List.of(List.of(3L, 35L)), result.rows());
+    }
+
+    @Test
+    void executesGroupedDistinctAggregates() {
+        Fixture fixture = salesFixture();
+
+        QueryResult result = execute(fixture, """
+                SELECT region, count(DISTINCT amount) AS distinct_amounts
+                FROM sales
+                GROUP BY region
+                ORDER BY region
+                """);
+
+        assertEquals(List.of("region", "distinct_amounts"), result.columns());
+        assertEquals(List.of(
+                List.of("east", 2L),
+                List.of("west", 1L)
+        ), result.rows());
+    }
+
+    @Test
     void executesScalarExpressionOverAggregate() {
         Fixture fixture = salesFixture();
 

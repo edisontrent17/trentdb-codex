@@ -76,7 +76,7 @@ final class HavingAliasResolver {
         for (Expression argument : function.arguments()) {
             arguments.add(resolve(argument));
         }
-        return new FunctionCallExpression(function.name(), arguments, function.starArgument());
+        return new FunctionCallExpression(function.name(), arguments, function.starArgument(), function.distinct());
     }
 
     private InExpression resolveInExpression(InExpression in) {

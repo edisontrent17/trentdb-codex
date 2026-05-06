@@ -437,6 +437,9 @@ public final class Binder {
             }
             return bindAggregateFunctionCall(context, functionCall);
         }
+        if (functionCall.distinct()) {
+            throw new BinderException("DISTINCT is only supported for aggregate functions");
+        }
         if (functionCall.starArgument()) {
             throw new BinderException("Star arguments are not supported for scalar functions yet");
         }
@@ -457,6 +460,9 @@ public final class Binder {
     }
 
     private BoundAggregateExpression bindAggregateFunctionCall(BindingContext context, FunctionCallExpression functionCall) {
+        if (functionCall.distinct() && functionCall.starArgument()) {
+            throw new BinderException("DISTINCT aggregate functions do not accept *");
+        }
         ArrayList<BoundExpression> arguments = new ArrayList<>(functionCall.arguments().size());
         if (!functionCall.starArgument()) {
             for (Expression argument : functionCall.arguments()) {
@@ -471,7 +477,7 @@ public final class Binder {
                 arguments.stream().map(BoundExpressionTypes::logicalType).toList(),
                 functionCall.starArgument()
         );
-        return new BoundAggregateExpression(function, arguments, functionCall.starArgument());
+        return new BoundAggregateExpression(function, arguments, functionCall.starArgument(), functionCall.distinct());
     }
 
     private String defaultSelectName(BoundExpression expression) {
