@@ -7,6 +7,7 @@ public record SelectStatement(
         FromItem from,
         Expression where,
         List<Expression> groupBy,
+        Expression having,
         List<OrderByItem> orderBy,
         Long limit
 ) implements Statement {

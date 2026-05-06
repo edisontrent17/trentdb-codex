@@ -390,6 +390,69 @@ class TpchCompatibilityTest {
     }
 
     @Test
+    void executesTpchQ11FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String partsuppCsv = resourcePath("tpch/partsupp_q11_sf001.csv");
+        String supplierCsv = resourcePath("tpch/supplier_q11_sf001.csv");
+        String nationCsv = resourcePath("tpch/nation_q11_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    ps_partkey,
+                    sum(ps_supplycost * ps_availqty) AS value
+                FROM
+                    '%s' ps
+                JOIN
+                    '%s' s
+                ON
+                    ps.ps_suppkey = s.s_suppkey
+                JOIN
+                    '%s' n
+                ON
+                    s.s_nationkey = n.n_nationkey
+                WHERE
+                    n_name = 'GERMANY'
+                GROUP BY
+                    ps_partkey
+                HAVING
+                    sum(ps_supplycost * ps_availqty) > (
+                        SELECT
+                            sum(ps_supplycost * ps_availqty) * 0.0001
+                        FROM
+                            '%s' ps
+                        JOIN
+                            '%s' s
+                        ON
+                            ps.ps_suppkey = s.s_suppkey
+                        JOIN
+                            '%s' n
+                        ON
+                            s.s_nationkey = n.n_nationkey
+                        WHERE
+                            n_name = 'GERMANY'
+                    )
+                ORDER BY
+                    value DESC;
+                """.formatted(
+                        sqlString(partsuppCsv),
+                        sqlString(supplierCsv),
+                        sqlString(nationCsv),
+                        sqlString(partsuppCsv),
+                        sqlString(supplierCsv),
+                        sqlString(nationCsv)
+                ));
+
+        assertEquals(List.of("ps_partkey", "value"), result.columns());
+        assertEquals(359, result.rows().size());
+        assertQ11Row(result.rows().get(0), 1376L, 13271249.89d);
+        assertQ11Row(result.rows().get(1), 788L, 9498648.06d);
+        assertQ11Row(result.rows().get(2), 1071L, 9388264.4d);
+        assertQ11Row(result.rows().get(356), 332L, 112181.3d);
+        assertQ11Row(result.rows().get(357), 1596L, 110565.0d);
+        assertQ11Row(result.rows().get(358), 295L, 97604.25d);
+    }
+
+    @Test
     void executesTpchQ19FromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String lineitemCsv = resourcePath("tpch/lineitem_q19_sf001.csv");
@@ -494,6 +557,11 @@ class TpchCompatibilityTest {
     private void assertQ10Summary(List<Object> row, long customerKey, double revenue) {
         assertEquals(customerKey, row.get(0));
         assertDoubleEquals(revenue, (Double) row.get(2));
+    }
+
+    private void assertQ11Row(List<Object> row, long partKey, double value) {
+        assertEquals(partKey, row.get(0));
+        assertDoubleEquals(value, (Double) row.get(1));
     }
 
     private void assertQ10Row(

@@ -9,7 +9,7 @@
 
 ## Next
 
-- extend TPC-H coverage to the next non-outer-join query shapes
+- extend TPC-H coverage to the next query shapes while deferring correlated subquery execution until later
 - add correlated subqueries and `EXISTS`/`NOT EXISTS` support
 - introduce optimizer scaffolding once the unoptimized behavior is covered by compatibility tests
 - design the durable write path for `CREATE TABLE` and `INSERT` around WAL and recovery boundaries
@@ -23,7 +23,8 @@
 - run canonical TPC-H Q6 from generated SF 0.01 `lineitem` CSV data
 - implement single and multiple explicit `INNER JOIN` queries with DuckDB-shaped logical joins
 - execute joins through physical hash join and nested loop join operators in the operator pipeline
-- run generated CSV TPC-H compatibility tests for Q1, Q3, Q5, Q6, Q10, Q12, Q14, and Q19
+- implement DuckDB-shaped `HAVING` binding and planning as a filter above `LogicalAggregate`
+- run generated CSV TPC-H compatibility tests for Q1, Q3, Q5, Q6, Q10, Q11, Q12, Q14, and Q19
 - add ambiguity handling for unqualified column references in join binding
 - add non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
 

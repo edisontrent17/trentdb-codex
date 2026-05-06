@@ -30,7 +30,8 @@ public final class LogicalPlanner {
     private record AggregatePlan(
             List<BoundExpression> aggregateOutputs,
             List<String> aggregateNames,
-            List<BoundExpression> projections
+            List<BoundExpression> projections,
+            BoundExpression having
     ) {
         private AggregatePlan {
             aggregateOutputs = List.copyOf(aggregateOutputs);
@@ -62,11 +63,17 @@ public final class LogicalPlanner {
                     aggregatePlan.aggregateNames(),
                     root
             );
+            if (aggregatePlan.having() != null) {
+                root = new LogicalFilter(aggregatePlan.having(), root);
+            }
             root = new LogicalProjection(aggregatePlan.projections(), statement.selectNames(), root);
             if (!statement.orderBy().isEmpty()) {
                 root = new LogicalOrder(statement.orderBy(), root);
             }
         } else {
+            if (statement.having() != null) {
+                root = new LogicalFilter(statement.having(), root);
+            }
             if (!statement.orderBy().isEmpty()) {
                 root = new LogicalOrder(statement.orderBy(), root);
             }
@@ -100,7 +107,10 @@ public final class LogicalPlanner {
         for (BoundExpression expression : statement.selectList()) {
             projections.add(rewriteAggregateProjection(expression, statement.groupBy(), outputs, names));
         }
-        return new AggregatePlan(outputs, names, projections);
+        BoundExpression having = statement.having() == null
+                ? null
+                : rewriteAggregateProjection(statement.having(), statement.groupBy(), outputs, names);
+        return new AggregatePlan(outputs, names, projections, having);
     }
 
     private BoundExpression rewriteAggregateProjection(

@@ -87,15 +87,22 @@ public final class Binder {
         List<BoundExpression> groupBy = bindGroupBy(context, statement.groupBy());
         ArrayList<BoundExpression> selectList = new ArrayList<>();
         ArrayList<String> selectNames = new ArrayList<>();
+        ArrayList<HavingAliasResolver.SelectAlias> havingAliases = new ArrayList<>();
 
         for (SelectItem item : statement.selectItems()) {
             bindSelectExpression(context, item.expression(), item.alias(), selectList, selectNames, true);
+            if (item.alias() != null) {
+                havingAliases.add(new HavingAliasResolver.SelectAlias(item.alias(), item.expression()));
+            }
         }
 
-        validateAggregates(selectList, groupBy);
-        boolean aggregateQuery = containsAggregate(selectList) || !groupBy.isEmpty();
+        BoundExpression having = statement.having() == null
+                ? null
+                : bindHavingExpression(context, statement.having(), havingAliases);
+        validateAggregates(selectList, groupBy, having);
+        boolean aggregateQuery = containsAggregate(selectList) || containsAggregate(having) || !groupBy.isEmpty();
         List<BoundOrderByItem> orderBy = bindOrderBy(context, statement.orderBy(), selectList, selectNames, aggregateQuery);
-        return new BoundSelectStatement(boundFrom, selectList, selectNames, where, groupBy, orderBy, statement.limit());
+        return new BoundSelectStatement(boundFrom, selectList, selectNames, where, groupBy, having, orderBy, statement.limit());
     }
 
     private BoundFrom bindFrom(Transaction transaction, SelectStatement statement) {
@@ -186,6 +193,18 @@ public final class Binder {
         BoundExpression bound = bindExpression(context, expression, false);
         if (!logicalType(bound).equals(LogicalType.BOOLEAN)) {
             throw new BinderException("WHERE expression must evaluate to BOOLEAN but got " + typeName(logicalType(bound)));
+        }
+        return bound;
+    }
+
+    private BoundExpression bindHavingExpression(
+            BindingContext context,
+            Expression expression,
+            List<HavingAliasResolver.SelectAlias> aliases
+    ) {
+        BoundExpression bound = bindExpression(context, new HavingAliasResolver(aliases).resolve(expression), true);
+        if (!logicalType(bound).equals(LogicalType.BOOLEAN)) {
+            throw new BinderException("HAVING expression must evaluate to BOOLEAN but got " + typeName(logicalType(bound)));
         }
         return bound;
     }
@@ -468,13 +487,23 @@ public final class Binder {
         return "?column?";
     }
 
-    private void validateAggregates(List<BoundExpression> selectList, List<BoundExpression> groupBy) {
-        boolean hasAggregates = containsAggregate(selectList);
-        if (!hasAggregates && groupBy.isEmpty()) {
+    private void validateAggregates(
+            List<BoundExpression> selectList,
+            List<BoundExpression> groupBy,
+            BoundExpression having
+    ) {
+        boolean aggregateQuery = containsAggregate(selectList)
+                || containsAggregate(having)
+                || !groupBy.isEmpty()
+                || having != null;
+        if (!aggregateQuery) {
             return;
         }
         for (BoundExpression expression : selectList) {
             validateAggregateSelectExpression(expression, groupBy);
+        }
+        if (having != null) {
+            validateAggregateSelectExpression(having, groupBy);
         }
     }
 
@@ -546,17 +575,25 @@ public final class Binder {
     }
 
     private boolean containsAggregate(BoundExpression expression) {
+        if (expression == null) {
+            return false;
+        }
+        return containsAggregateExpression(expression);
+    }
+
+    private boolean containsAggregateExpression(BoundExpression expression) {
         return switch (expression) {
             case BoundAggregateExpression ignored -> true;
-            case BoundBinaryExpression binary -> containsAggregate(binary.left()) || containsAggregate(binary.right());
-            case BoundBetweenExpression between -> containsAggregate(between.input())
-                    || containsAggregate(between.lower())
-                    || containsAggregate(between.upper());
-            case BoundCastExpression cast -> containsAggregate(cast.child());
+            case BoundBinaryExpression binary -> containsAggregateExpression(binary.left())
+                    || containsAggregateExpression(binary.right());
+            case BoundBetweenExpression between -> containsAggregateExpression(between.input())
+                    || containsAggregateExpression(between.lower())
+                    || containsAggregateExpression(between.upper());
+            case BoundCastExpression cast -> containsAggregateExpression(cast.child());
             case BoundCaseExpression caseExpression -> {
-                boolean result = containsAggregate(caseExpression.elseExpression());
+                boolean result = containsAggregateExpression(caseExpression.elseExpression());
                 for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
-                    if (containsAggregate(branch.condition()) || containsAggregate(branch.result())) {
+                    if (containsAggregateExpression(branch.condition()) || containsAggregateExpression(branch.result())) {
                         result = true;
                         break;
                     }
@@ -565,9 +602,9 @@ public final class Binder {
             }
             case BoundColumnRefExpression ignored -> false;
             case BoundInExpression in -> {
-                boolean result = containsAggregate(in.input());
+                boolean result = containsAggregateExpression(in.input());
                 for (BoundExpression candidate : in.candidates()) {
-                    if (containsAggregate(candidate)) {
+                    if (containsAggregateExpression(candidate)) {
                         result = true;
                         break;
                     }
@@ -580,7 +617,7 @@ public final class Binder {
             case BoundFunctionExpression function -> {
                 boolean result = false;
                 for (BoundExpression argument : function.arguments()) {
-                    if (containsAggregate(argument)) {
+                    if (containsAggregateExpression(argument)) {
                         result = true;
                         break;
                     }

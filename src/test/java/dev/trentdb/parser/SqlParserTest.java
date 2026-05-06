@@ -63,6 +63,7 @@ class SqlParserTest {
                 JOIN orders o ON p.id = o.person_id
                 WHERE o.total > 100
                 GROUP BY p.id
+                HAVING sum(o.total) > 1000
                 ORDER BY total_spend DESC
                 LIMIT 10
                 """);
@@ -71,6 +72,7 @@ class SqlParserTest {
         assertEquals(2, select.selectItems().size());
         assertEquals(1, select.from().joins().size());
         assertEquals(1, select.groupBy().size());
+        assertInstanceOf(BinaryExpression.class, select.having());
         assertEquals(1, select.orderBy().size());
         assertEquals(10L, select.limit());
     }

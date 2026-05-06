@@ -196,6 +196,56 @@ class BinderTest {
     }
 
     @Test
+    void bindsAggregateInHaving() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT name FROM people GROUP BY name HAVING count(*) > 1");
+
+        BoundBinaryExpression having = assertInstanceOf(BoundBinaryExpression.class, bound.having());
+        assertEquals(BinaryOperator.GREATER_THAN, having.operator());
+        assertInstanceOf(BoundAggregateExpression.class, having.left());
+        assertInstanceOf(BoundLiteralExpression.class, having.right());
+        assertEquals(true, bound.isAggregateQuery());
+    }
+
+    @Test
+    void bindsSelectAliasInHaving() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT count(*) AS c FROM people HAVING c > 1");
+
+        BoundBinaryExpression having = assertInstanceOf(BoundBinaryExpression.class, bound.having());
+        assertInstanceOf(BoundAggregateExpression.class, having.left());
+    }
+
+    @Test
+    void rejectsNonBooleanHaving() {
+        Fixture fixture = peopleFixture();
+
+        BinderException error = assertThrows(BinderException.class, () -> bindSelect(fixture, "SELECT count(*) FROM people HAVING count(*)"));
+
+        assertEquals("HAVING expression must evaluate to BOOLEAN but got BIGINT", error.getMessage());
+    }
+
+    @Test
+    void rejectsUngroupedColumnInHaving() {
+        Fixture fixture = peopleFixture();
+
+        BinderException error = assertThrows(BinderException.class, () -> bindSelect(fixture, "SELECT count(*) FROM people HAVING name = 'Alice'"));
+
+        assertEquals("Column must appear in GROUP BY or be used in an aggregate function", error.getMessage());
+    }
+
+    @Test
+    void treatsConstantHavingWithoutAggregatesAsNonAggregateQuery() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT 1 FROM people HAVING true");
+
+        assertEquals(false, bound.isAggregateQuery());
+    }
+
+    @Test
     void bindsAggregateInsideScalarExpression() {
         Fixture fixture = peopleFixture();
 
@@ -667,6 +717,34 @@ class BinderTest {
         assertEquals(1, aggregate.groups().size());
         assertEquals(2, aggregate.selectList().size());
         assertInstanceOf(LogicalGet.class, aggregate.child());
+    }
+
+    @Test
+    void plansLogicalHavingFilterOverAggregate() {
+        Fixture fixture = peopleFixture();
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT name FROM people GROUP BY name HAVING count(*) > 1");
+
+        LogicalOperator logical = new LogicalPlanner().plan(bound);
+
+        LogicalProjection projection = assertInstanceOf(LogicalProjection.class, logical);
+        LogicalFilter having = assertInstanceOf(LogicalFilter.class, projection.child());
+        LogicalAggregate aggregate = assertInstanceOf(LogicalAggregate.class, having.child());
+        assertEquals(LogicalOperatorType.LOGICAL_AGGREGATE_AND_GROUP_BY, aggregate.type());
+        assertEquals(1, aggregate.groups().size());
+        assertEquals(2, aggregate.selectList().size());
+        assertInstanceOf(LogicalGet.class, aggregate.child());
+    }
+
+    @Test
+    void plansConstantHavingWithoutAggregateAsFilter() {
+        Fixture fixture = peopleFixture();
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT 1 FROM people HAVING true");
+
+        LogicalOperator logical = new LogicalPlanner().plan(bound);
+
+        LogicalProjection projection = assertInstanceOf(LogicalProjection.class, logical);
+        LogicalFilter filter = assertInstanceOf(LogicalFilter.class, projection.child());
+        assertInstanceOf(LogicalGet.class, filter.child());
     }
 
     @Test
