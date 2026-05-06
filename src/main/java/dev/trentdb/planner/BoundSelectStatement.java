@@ -8,6 +8,7 @@ public record BoundSelectStatement(
         List<String> selectNames,
         BoundExpression where,
         List<BoundExpression> groupBy,
+        BoundExpression having,
         List<BoundOrderByItem> orderBy,
         Long limit
 ) implements BoundStatement {
@@ -24,7 +25,7 @@ public record BoundSelectStatement(
                 return true;
             }
         }
-        return false;
+        return having != null && containsAggregate(having);
     }
 
     public boolean isAggregateQuery() {

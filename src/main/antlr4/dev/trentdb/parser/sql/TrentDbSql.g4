@@ -32,7 +32,7 @@ insert
     ;
 
 select
-    : SELECT selectItemList FROM fromItem (whereClause)? (groupByClause)? (orderByClause)? (limitClause)?
+    : SELECT selectItemList FROM fromItem (whereClause)? (groupByClause)? (havingClause)? (orderByClause)? (limitClause)?
     ;
 
 selectItemList
@@ -63,6 +63,10 @@ whereClause
 
 groupByClause
     : GROUP BY expressionList
+    ;
+
+havingClause
+    : HAVING expression
     ;
 
 orderByClause
@@ -233,6 +237,7 @@ FROM: 'FROM';
 WHERE: 'WHERE';
 GROUP: 'GROUP';
 BY: 'BY';
+HAVING: 'HAVING';
 ORDER: 'ORDER';
 LIMIT: 'LIMIT';
 EXPLAIN: 'EXPLAIN';

@@ -91,6 +91,7 @@ The first complete vertical slice should support:
 - `LIMIT`
 - `INNER JOIN`
 - `GROUP BY`
+- `HAVING`
 - `sum`, `count`, `avg`, `min`, `max`
 - `EXPLAIN`
 
@@ -268,7 +269,7 @@ Design rule:
 
 ### 5. Binder
 
-Status: implemented for single-table reads, replacement scans, projection, filters, aliases, scalar `lower`, arithmetic, `LIMIT`, and `EXPLAIN`
+Status: implemented for single-table reads, replacement scans, projection, filters, `HAVING`, aliases, scalar `lower`, arithmetic, `LIMIT`, and `EXPLAIN`
 
 Purpose:
 
@@ -287,7 +288,7 @@ DuckDB parity rules:
 
 - column ambiguity should fail explicitly
 - invalid aggregate usage should fail explicitly
-- `GROUP BY` semantics should match DuckDB for supported cases
+- `GROUP BY` and `HAVING` semantics should match DuckDB for supported cases
 
 DuckDB reference areas:
 
@@ -296,7 +297,7 @@ DuckDB reference areas:
 
 ### 6. Logical Planning
 
-Status: implemented for scan, filter, projection, limit, and explain
+Status: implemented for scan, filter, projection, aggregate, join, order, limit, and explain
 
 Purpose:
 
@@ -458,12 +459,13 @@ Exit criteria:
 Ship:
 
 - `GROUP BY`
+- `HAVING`
 - aggregate functions
 - aggregate validation in binder
 
 Exit criteria:
 
-- grouped queries return correct results and reject invalid select lists
+- grouped queries return correct results and reject invalid select lists and `HAVING` predicates
 
 ### Phase D: Join Processing
 

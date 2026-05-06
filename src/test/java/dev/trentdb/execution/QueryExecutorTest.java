@@ -518,6 +518,48 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesHavingOverGroupedAggregate() {
+        Fixture fixture = salesFixture();
+
+        QueryResult result = execute(fixture, """
+                SELECT region, sum(amount) AS total
+                FROM sales
+                GROUP BY region
+                HAVING sum(amount) > 10
+                ORDER BY region
+                """);
+
+        assertEquals(List.of("region", "total"), result.columns());
+        assertEquals(List.of(List.of("east", 30L)), result.rows());
+    }
+
+    @Test
+    void executesHavingWithSelectAlias() {
+        Fixture fixture = salesFixture();
+
+        QueryResult result = execute(fixture, """
+                SELECT region AS r, sum(amount) AS total
+                FROM sales
+                GROUP BY region
+                HAVING total > 10
+                ORDER BY r
+                """);
+
+        assertEquals(List.of("r", "total"), result.columns());
+        assertEquals(List.of(List.of("east", 30L)), result.rows());
+    }
+
+    @Test
+    void executesConstantHavingWithoutAggregatingRows() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT 1 AS one FROM people HAVING true");
+
+        assertEquals(List.of("one"), result.columns());
+        assertEquals(List.of(List.of(1L), List.of(1L)), result.rows());
+    }
+
+    @Test
     void executesCountStarOnEmptyInput() {
         Fixture fixture = emptySalesFixture();
 

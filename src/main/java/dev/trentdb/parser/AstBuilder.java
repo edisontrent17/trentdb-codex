@@ -101,9 +101,10 @@ final class AstBuilder {
         List<Expression> groupBy = context.groupByClause() == null
                 ? List.of()
                 : expressionList(context.groupByClause().expressionList());
+        Expression having = context.havingClause() == null ? null : expression(context.havingClause().expression());
         List<OrderByItem> orderBy = context.orderByClause() == null ? List.of() : orderByItems(context.orderByClause());
         Long limit = context.limitClause() == null ? null : Long.parseLong(context.limitClause().integerLiteral().getText());
-        return new SelectStatement(selectItems, fromItem(context.fromItem()), where, groupBy, orderBy, limit);
+        return new SelectStatement(selectItems, fromItem(context.fromItem()), where, groupBy, having, orderBy, limit);
     }
 
     private SelectItem selectItem(TrentDbSqlParser.SelectItemContext context) {
