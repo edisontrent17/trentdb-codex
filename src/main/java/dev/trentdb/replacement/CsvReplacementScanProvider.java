@@ -68,7 +68,7 @@ final class CsvReplacementScanProvider implements ReplacementScanProvider {
 
             String header = lines.stream().findFirst()
                     .orElseThrow(() -> new IllegalArgumentException("CSV file is empty: " + originalPath));
-            String[] names = header.split(",", -1);
+            String[] names = splitCsvLine(header);
 
             long schemaStart = ExecutionProfiler.start();
             List<String> dataLines = lines.subList(1, lines.size());
@@ -148,24 +148,40 @@ final class CsvReplacementScanProvider implements ReplacementScanProvider {
     }
 
     private String[] splitCsvLine(String line) {
-        int valueCount = 1;
+        ArrayList<String> values = new ArrayList<>();
+        StringBuilder value = new StringBuilder();
+        boolean quoted = false;
         for (int index = 0; index < line.length(); index++) {
-            if (line.charAt(index) == ',') {
-                valueCount++;
+            char ch = line.charAt(index);
+            if (quoted) {
+                if (ch == '"') {
+                    if (index + 1 < line.length() && line.charAt(index + 1) == '"') {
+                        value.append('"');
+                        index++;
+                        continue;
+                    }
+                    quoted = false;
+                    continue;
+                }
+                value.append(ch);
+                continue;
             }
-        }
-        String[] values = new String[valueCount];
-        int start = 0;
-        int valueIndex = 0;
-        for (int index = 0; index < line.length(); index++) {
-            if (line.charAt(index) == ',') {
-                values[valueIndex] = line.substring(start, index);
-                valueIndex++;
-                start = index + 1;
+            if (ch == ',') {
+                values.add(value.toString());
+                value.setLength(0);
+                continue;
             }
+            if (ch == '"' && value.isEmpty()) {
+                quoted = true;
+                continue;
+            }
+            value.append(ch);
         }
-        values[valueIndex] = line.substring(start);
-        return values;
+        if (quoted) {
+            throw new IllegalArgumentException("Unterminated quoted CSV field: " + line);
+        }
+        values.add(value.toString());
+        return values.toArray(String[]::new);
     }
 
     private void writeValue(Vector vector, int rowIndex, String value, LogicalType type) {

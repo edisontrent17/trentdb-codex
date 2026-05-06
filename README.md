@@ -53,6 +53,7 @@ Current TPC-H coverage from generated scale 0.01 CSV fixtures:
 - Q3
 - Q5
 - Q6
+- Q10
 - Q12
 - Q14
 - Q19
