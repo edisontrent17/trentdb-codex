@@ -1,7 +1,9 @@
-package dev.trentdb.execution;
+package dev.trentdb.tpch;
 
 import dev.trentdb.ast.Statement;
 import dev.trentdb.catalog.Catalog;
+import dev.trentdb.execution.QueryExecutor;
+import dev.trentdb.execution.QueryResult;
 import dev.trentdb.parser.SqlParser;
 import dev.trentdb.planner.Binder;
 import dev.trentdb.planner.BoundStatement;
@@ -213,6 +215,58 @@ class TpchCompatibilityTest {
         assertQ3Row(result.rows().get(7), 450L, 205447.42320000002d, LocalDate.of(1995, 3, 5), 0L);
         assertQ3Row(result.rows().get(8), 47204L, 204478.5213d, LocalDate.of(1995, 3, 13), 0L);
         assertQ3Row(result.rows().get(9), 9696L, 201502.21879999997d, LocalDate.of(1995, 2, 20), 0L);
+    }
+
+    @Test
+    void executesTpchQ19FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String lineitemCsv = resourcePath("tpch/lineitem_q19_sf001.csv");
+        String partCsv = resourcePath("tpch/part_q19_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    sum(l_extendedprice * (1 - l_discount)) AS revenue
+                FROM
+                    '%s' l
+                JOIN
+                    '%s' p
+                ON
+                    p.p_partkey = l.l_partkey
+                WHERE
+                    (
+                        p_brand = 'Brand#12'
+                        AND p_container IN ('SM CASE', 'SM BOX', 'SM PACK', 'SM PKG')
+                        AND l_quantity >= 1
+                        AND l_quantity <= 11
+                        AND p_size BETWEEN 1 AND 5
+                        AND l_shipmode IN ('AIR', 'AIR REG')
+                        AND l_shipinstruct = 'DELIVER IN PERSON'
+                    )
+                    OR
+                    (
+                        p_brand = 'Brand#23'
+                        AND p_container IN ('MED BAG', 'MED BOX', 'MED PKG', 'MED PACK')
+                        AND l_quantity >= 10
+                        AND l_quantity <= 20
+                        AND p_size BETWEEN 1 AND 10
+                        AND l_shipmode IN ('AIR', 'AIR REG')
+                        AND l_shipinstruct = 'DELIVER IN PERSON'
+                    )
+                    OR
+                    (
+                        p_brand = 'Brand#34'
+                        AND p_container IN ('LG CASE', 'LG BOX', 'LG PACK', 'LG PKG')
+                        AND l_quantity >= 20
+                        AND l_quantity <= 30
+                        AND p_size BETWEEN 1 AND 15
+                        AND l_shipmode IN ('AIR', 'AIR REG')
+                        AND l_shipinstruct = 'DELIVER IN PERSON'
+                    );
+                """.formatted(sqlString(lineitemCsv), sqlString(partCsv)));
+
+        assertEquals(List.of("revenue"), result.columns());
+        assertEquals(1, result.rows().size());
+        assertDoubleEquals(22923.028d, (Double) result.rows().getFirst().getFirst());
     }
 
     private QueryResult execute(Fixture fixture, String sql) {
