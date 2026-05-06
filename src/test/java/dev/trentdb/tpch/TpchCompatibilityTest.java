@@ -218,6 +218,69 @@ class TpchCompatibilityTest {
     }
 
     @Test
+    void executesTpchQ5FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String customerCsv = resourcePath("tpch/customer_q5_sf001.csv");
+        String ordersCsv = resourcePath("tpch/orders_q5_sf001.csv");
+        String lineitemCsv = resourcePath("tpch/lineitem_q5_sf001.csv");
+        String supplierCsv = resourcePath("tpch/supplier_q5_sf001.csv");
+        String nationCsv = resourcePath("tpch/nation_q5_sf001.csv");
+        String regionCsv = resourcePath("tpch/region_q5_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    n_name,
+                    sum(l_extendedprice * (1 - l_discount)) AS revenue
+                FROM
+                    '%s' c
+                JOIN
+                    '%s' o
+                ON
+                    c.c_custkey = o.o_custkey
+                JOIN
+                    '%s' l
+                ON
+                    l.l_orderkey = o.o_orderkey
+                JOIN
+                    '%s' s
+                ON
+                    l.l_suppkey = s.s_suppkey
+                JOIN
+                    '%s' n
+                ON
+                    c.c_nationkey = n.n_nationkey
+                JOIN
+                    '%s' r
+                ON
+                    n.n_regionkey = r.r_regionkey
+                WHERE
+                    s.s_nationkey = n.n_nationkey
+                    AND r_name = 'ASIA'
+                    AND o_orderdate >= DATE '1994-01-01'
+                    AND o_orderdate < DATE '1994-01-01' + INTERVAL '1' YEAR
+                GROUP BY
+                    n_name
+                ORDER BY
+                    revenue DESC;
+                """.formatted(
+                        sqlString(customerCsv),
+                        sqlString(ordersCsv),
+                        sqlString(lineitemCsv),
+                        sqlString(supplierCsv),
+                        sqlString(nationCsv),
+                        sqlString(regionCsv)
+                ));
+
+        assertEquals(List.of("n_name", "revenue"), result.columns());
+        assertEquals(5, result.rows().size());
+        assertQ5Row(result.rows().get(0), "VIETNAM", 1000926.6999d);
+        assertQ5Row(result.rows().get(1), "CHINA", 740210.757d);
+        assertQ5Row(result.rows().get(2), "JAPAN", 660651.2424999999d);
+        assertQ5Row(result.rows().get(3), "INDONESIA", 566379.5276d);
+        assertQ5Row(result.rows().get(4), "INDIA", 422874.68439999997d);
+    }
+
+    @Test
     void executesTpchQ19FromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String lineitemCsv = resourcePath("tpch/lineitem_q19_sf001.csv");
@@ -312,6 +375,11 @@ class TpchCompatibilityTest {
         assertDoubleEquals(revenue, (Double) row.get(1));
         assertEquals(orderDate, row.get(2));
         assertEquals(shipPriority, row.get(3));
+    }
+
+    private void assertQ5Row(List<Object> row, String nation, double revenue) {
+        assertEquals(nation, row.get(0));
+        assertDoubleEquals(revenue, (Double) row.get(1));
     }
 
     private void assertDoubleEquals(double expected, double actual) {
