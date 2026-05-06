@@ -399,7 +399,12 @@ public final class PhysicalPlanner {
                 for (BoundExpression argument : aggregate.arguments()) {
                     arguments.add(rewriteForJoinSide(argument, leftColumnCount, side));
                 }
-                yield new BoundAggregateExpression(aggregate.function(), arguments, aggregate.starArgument());
+                yield new BoundAggregateExpression(
+                        aggregate.function(),
+                        arguments,
+                        aggregate.starArgument(),
+                        aggregate.distinct()
+                );
             }
             case BoundBetweenExpression between -> new BoundBetweenExpression(
                     rewriteForJoinSide(between.input(), leftColumnCount, side),

@@ -158,7 +158,7 @@ primaryExpression
     ;
 
 functionCall
-    : identifier LPAREN (STAR | expressionList)? RPAREN
+    : identifier LPAREN (DISTINCT expressionList | STAR | expressionList)? RPAREN
     ;
 
 castExpression
@@ -267,6 +267,7 @@ AND: 'AND';
 OR: 'OR';
 ASC: 'ASC';
 DESC: 'DESC';
+DISTINCT: 'DISTINCT';
 INT_T: 'INT';
 BIGINT_T: 'BIGINT';
 DOUBLE_T: 'DOUBLE';

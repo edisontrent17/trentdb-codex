@@ -99,6 +99,7 @@ public final class PhysicalPlanPrinter {
     private String expression(BoundExpression expression) {
         return switch (expression) {
             case BoundAggregateExpression aggregate -> aggregate.name() + "("
+                    + (aggregate.distinct() ? "DISTINCT " : "")
                     + (aggregate.starArgument() ? "*" : expressions(aggregate.arguments())) + ")";
             case BoundBetweenExpression between -> "(" + expression(between.input())
                     + " BETWEEN " + expression(between.lower()) + " AND " + expression(between.upper()) + ")";

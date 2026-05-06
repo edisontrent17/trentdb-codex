@@ -8,7 +8,8 @@ import java.util.List;
 public record BoundAggregateExpression(
         AggregateFunction function,
         List<BoundExpression> arguments,
-        boolean starArgument
+        boolean starArgument,
+        boolean distinct
 ) implements BoundExpression {
     public BoundAggregateExpression {
         arguments = List.copyOf(arguments);

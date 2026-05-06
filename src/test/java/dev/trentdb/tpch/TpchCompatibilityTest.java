@@ -453,6 +453,58 @@ class TpchCompatibilityTest {
     }
 
     @Test
+    void executesTpchQ16FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String partCsv = resourcePath("tpch/part_q16_sf001.csv");
+        String partsuppCsv = resourcePath("tpch/partsupp_q16_sf001.csv");
+        String supplierCsv = resourcePath("tpch/supplier_q16_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    p_brand,
+                    p_type,
+                    p_size,
+                    count(DISTINCT ps_suppkey) AS supplier_cnt
+                FROM
+                    '%s' p
+                JOIN
+                    '%s' ps
+                ON
+                    p.p_partkey = ps.ps_partkey
+                WHERE
+                    p_brand <> 'Brand#45'
+                    AND p_type NOT LIKE 'MEDIUM POLISHED%%'
+                    AND p_size IN (49, 14, 23, 45, 19, 3, 36, 9)
+                    AND ps_suppkey NOT IN (
+                        SELECT
+                            s_suppkey
+                        FROM
+                            '%s'
+                        WHERE
+                            s_comment LIKE '%%Customer%%Complaints%%'
+                    )
+                GROUP BY
+                    p_brand,
+                    p_type,
+                    p_size
+                ORDER BY
+                    supplier_cnt DESC,
+                    p_brand,
+                    p_type,
+                    p_size;
+                """.formatted(sqlString(partCsv), sqlString(partsuppCsv), sqlString(supplierCsv)));
+
+        assertEquals(List.of("p_brand", "p_type", "p_size", "supplier_cnt"), result.columns());
+        assertEquals(296, result.rows().size());
+        assertQ16Row(result.rows().get(0), "Brand#14", "PROMO BRUSHED STEEL", 9L, 8L);
+        assertQ16Row(result.rows().get(1), "Brand#35", "SMALL POLISHED COPPER", 14L, 8L);
+        assertQ16Row(result.rows().get(2), "Brand#22", "LARGE BURNISHED TIN", 36L, 6L);
+        assertQ16Row(result.rows().get(293), "Brand#55", "STANDARD ANODIZED BRASS", 36L, 4L);
+        assertQ16Row(result.rows().get(294), "Brand#55", "STANDARD BRUSHED COPPER", 3L, 4L);
+        assertQ16Row(result.rows().get(295), "Brand#55", "STANDARD BRUSHED STEEL", 19L, 4L);
+    }
+
+    @Test
     void executesTpchQ18FromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String customerCsv = resourcePath("tpch/customer_q18_sf001.csv");
@@ -644,6 +696,19 @@ class TpchCompatibilityTest {
     private void assertQ11Row(List<Object> row, long partKey, double value) {
         assertEquals(partKey, row.get(0));
         assertDoubleEquals(value, (Double) row.get(1));
+    }
+
+    private void assertQ16Row(
+            List<Object> row,
+            String brand,
+            String type,
+            long size,
+            long supplierCount
+    ) {
+        assertEquals(brand, row.get(0));
+        assertEquals(type, row.get(1));
+        assertEquals(size, row.get(2));
+        assertEquals(supplierCount, row.get(3));
     }
 
     private void assertQ18Row(

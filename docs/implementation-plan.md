@@ -93,6 +93,7 @@ The first complete vertical slice should support:
 - `GROUP BY`
 - `HAVING`
 - `sum`, `count`, `avg`, `min`, `max`
+- distinct aggregate arguments for supported aggregate functions
 - `EXPLAIN`
 
 The first vertical slice is successful when a query can move from SQL text to a materialized result through all engine layers without shortcuts.
@@ -461,6 +462,7 @@ Ship:
 - `GROUP BY`
 - `HAVING`
 - aggregate functions
+- distinct aggregate arguments
 - aggregate validation in binder
 
 Exit criteria:

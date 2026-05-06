@@ -113,6 +113,7 @@ Deliverables:
 Status:
 
 - implemented for table reads, replacement scans, star expansion, projection aliases, `WHERE`, `HAVING`, scalar functions, arithmetic, `IN`, `LIKE`, `CASE`, casts, dates, intervals, `LIMIT`, and `EXPLAIN`
+- grouped and ungrouped aggregate binding includes distinct aggregate arguments for the supported aggregate functions
 - `ORDER BY` binding is implemented for expressions, aliases, and select-list positions
 - grouped and ungrouped aggregate binding is implemented
 - explicit `INNER JOIN` binding is implemented for left-deep multi-join trees with ambiguity handling
@@ -224,6 +225,6 @@ Deliverables:
 Status:
 
 - parser, binder, planner, and read execution tests are in place for the implemented subset
-- generated CSV compatibility coverage exists for TPC-H Q1, Q3, Q5, Q6, Q10, Q11, Q12, Q14, Q18, and Q19
+- generated CSV compatibility coverage exists for TPC-H Q1, Q3, Q5, Q6, Q10, Q11, Q12, Q14, Q16, Q18, and Q19
 - broader DuckDB-style behavior tests, plan-shape tests, and execution edge cases remain near-term priorities
 - recovery, corruption, and concurrency tests depend on the WAL, persistence, and MVCC milestones
