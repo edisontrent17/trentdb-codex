@@ -60,6 +60,8 @@ public record BoundSelectStatement(
                 }
                 yield result;
             }
+            case BoundInSubqueryExpression in -> containsAggregate(in.input());
+            case BoundSubqueryExpression ignored -> false;
             case BoundOutputColumnExpression ignored -> false;
             case BoundFunctionExpression function -> {
                 boolean result = false;

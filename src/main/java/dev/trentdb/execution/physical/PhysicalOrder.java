@@ -15,10 +15,11 @@ import java.util.List;
 
 public final class PhysicalOrder implements PhysicalOperator {
     private final List<BoundOrderByItem> orders;
-    private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
+    private final ExpressionExecutor expressionExecutor;
 
-    public PhysicalOrder(List<BoundOrderByItem> orders) {
+    public PhysicalOrder(List<BoundOrderByItem> orders, ExpressionExecutor expressionExecutor) {
         this.orders = List.copyOf(orders);
+        this.expressionExecutor = expressionExecutor;
     }
 
     public List<BoundOrderByItem> orders() {

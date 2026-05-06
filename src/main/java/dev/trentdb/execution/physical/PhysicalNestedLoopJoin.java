@@ -22,7 +22,7 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
     private final BoundTableRef right;
     private final BoundExpression condition;
     private final BoundExpression rightFilter;
-    private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
+    private final ExpressionExecutor expressionExecutor;
 
     public PhysicalNestedLoopJoin(
             StorageManager storageManager,
@@ -30,7 +30,8 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
             List<LogicalType> leftTypes,
             BoundTableRef right,
             BoundExpression condition,
-            BoundExpression rightFilter
+            BoundExpression rightFilter,
+            ExpressionExecutor expressionExecutor
     ) {
         this.storageManager = storageManager;
         this.leftNames = List.copyOf(leftNames);
@@ -38,6 +39,7 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
         this.right = right;
         this.condition = condition;
         this.rightFilter = rightFilter;
+        this.expressionExecutor = expressionExecutor;
     }
 
     public BoundTableRef right() {

@@ -13,9 +13,11 @@ import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
+import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
+import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.storage.InMemoryTableStorage;
 import dev.trentdb.types.LogicalType;
 
@@ -28,12 +30,18 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
     private final List<BoundExpression> groups;
     private final List<BoundExpression> selectList;
     private final List<String> selectNames;
-    private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
+    private final ExpressionExecutor expressionExecutor;
 
-    public PhysicalHashAggregate(List<BoundExpression> groups, List<BoundExpression> selectList, List<String> selectNames) {
+    public PhysicalHashAggregate(
+            List<BoundExpression> groups,
+            List<BoundExpression> selectList,
+            List<String> selectNames,
+            ExpressionExecutor expressionExecutor
+    ) {
         this.groups = List.copyOf(groups);
         this.selectList = List.copyOf(selectList);
         this.selectNames = List.copyOf(selectNames);
+        this.expressionExecutor = expressionExecutor;
     }
 
     public List<BoundExpression> groups() {
@@ -164,9 +172,11 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
             case BoundColumnRefExpression column -> column.logicalType();
             case BoundFunctionExpression function -> function.logicalType();
             case BoundInExpression in -> in.logicalType();
+            case BoundInSubqueryExpression in -> in.logicalType();
             case BoundIntervalExpression ignored -> LogicalType.INTERVAL;
             case BoundLiteralExpression literal -> literal.logicalType();
             case BoundOutputColumnExpression output -> output.logicalType();
+            case BoundSubqueryExpression subquery -> subquery.logicalType();
         };
     }
 

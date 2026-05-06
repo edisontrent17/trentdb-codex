@@ -25,7 +25,7 @@ public final class PhysicalHashJoin implements PhysicalOperator {
     private final int rightKeyOrdinal;
     private final BoundExpression rightFilter;
     private final BoundExpression residualFilter;
-    private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
+    private final ExpressionExecutor expressionExecutor;
 
     public PhysicalHashJoin(
             StorageManager storageManager,
@@ -35,7 +35,8 @@ public final class PhysicalHashJoin implements PhysicalOperator {
             int leftKeyOrdinal,
             int rightKeyOrdinal,
             BoundExpression rightFilter,
-            BoundExpression residualFilter
+            BoundExpression residualFilter,
+            ExpressionExecutor expressionExecutor
     ) {
         this.storageManager = storageManager;
         this.leftNames = List.copyOf(leftNames);
@@ -45,6 +46,7 @@ public final class PhysicalHashJoin implements PhysicalOperator {
         this.rightKeyOrdinal = rightKeyOrdinal;
         this.rightFilter = rightFilter;
         this.residualFilter = residualFilter;
+        this.expressionExecutor = expressionExecutor;
     }
 
     public BoundTableRef right() {

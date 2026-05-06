@@ -10,11 +10,16 @@ import java.util.List;
 public final class PhysicalProjection implements PhysicalOperator {
     private final List<BoundExpression> expressions;
     private final List<String> names;
-    private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
+    private final ExpressionExecutor expressionExecutor;
 
-    public PhysicalProjection(List<BoundExpression> expressions, List<String> names) {
+    public PhysicalProjection(
+            List<BoundExpression> expressions,
+            List<String> names,
+            ExpressionExecutor expressionExecutor
+    ) {
         this.expressions = List.copyOf(expressions);
         this.names = List.copyOf(names);
+        this.expressionExecutor = expressionExecutor;
     }
 
     public List<BoundExpression> expressions() {

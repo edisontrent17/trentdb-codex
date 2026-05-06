@@ -42,6 +42,7 @@ Supported execution coverage currently includes:
 - `IN`, `NOT IN`, `LIKE`, `NOT LIKE`, `CASE`, date literals, interval literals, and casts
 - grouped and ungrouped aggregates: `count`, `sum`, `min`, `max`, `avg`
 - single and multiple explicit `INNER JOIN` queries through physical join operators
+- non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
 - `ORDER BY` with DuckDB default null ordering
 - streaming `LIMIT`
 - logical and physical `EXPLAIN`

@@ -10,10 +10,11 @@ import dev.trentdb.types.LogicalType;
 
 public final class PhysicalFilter implements PhysicalOperator {
     private final BoundExpression predicate;
-    private final ExpressionExecutor expressionExecutor = new ExpressionExecutor();
+    private final ExpressionExecutor expressionExecutor;
 
-    public PhysicalFilter(BoundExpression predicate) {
+    public PhysicalFilter(BoundExpression predicate, ExpressionExecutor expressionExecutor) {
         this.predicate = predicate;
+        this.expressionExecutor = expressionExecutor;
     }
 
     public BoundExpression predicate() {

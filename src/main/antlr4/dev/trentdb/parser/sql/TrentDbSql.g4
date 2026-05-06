@@ -108,7 +108,8 @@ predicate
     : valueExpression IS NOT NULL_T                         #isNotNullPredicate
     | valueExpression IS NULL_T                             #isNullPredicate
     | valueExpression NOT? LIKE valueExpression             #likePredicate
-    | valueExpression NOT? IN LPAREN expressionList RPAREN  #inPredicate
+    | valueExpression NOT? IN LPAREN expressionList RPAREN  #inListPredicate
+    | valueExpression NOT? IN LPAREN select RPAREN          #inSubqueryPredicate
     | valueExpression BETWEEN valueExpression AND valueExpression #betweenPredicate
     | valueExpression comparisonOperator valueExpression    #comparisonPredicate
     | valueExpression                                       #valuePredicate
@@ -148,6 +149,7 @@ primaryExpression
     | functionCall                                          #functionCallPrimary
     | castExpression                                        #castPrimary
     | caseExpression                                        #casePrimary
+    | LPAREN select RPAREN                                  #subqueryPrimary
     | LPAREN expression RPAREN                              #parenthesizedExpression
     ;
 

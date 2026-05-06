@@ -3,6 +3,7 @@ package dev.trentdb.execution.physical;
 import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.execution.ExecutionException;
+import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundAggregateExpression;
 import dev.trentdb.planner.BoundBetweenExpression;
 import dev.trentdb.planner.BoundBinaryExpression;
@@ -12,10 +13,12 @@ import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
+import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundExpressionTypes;
+import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.planner.logical.LogicalAggregate;
 import dev.trentdb.planner.logical.LogicalExplain;
 import dev.trentdb.planner.logical.LogicalFilter;
@@ -43,9 +46,11 @@ public final class PhysicalPlanner {
     }
 
     private final StorageManager storageManager;
+    private final ExpressionExecutor expressionExecutor;
 
     public PhysicalPlanner(StorageManager storageManager) {
         this.storageManager = storageManager;
+        this.expressionExecutor = new ExpressionExecutor(storageManager);
     }
 
     public Pipeline plan(LogicalOperator logical) {
@@ -67,12 +72,17 @@ public final class PhysicalPlanner {
     private PhysicalSource buildPipeline(LogicalOperator logical, ArrayList<PhysicalOperator> operators) {
         if (logical instanceof LogicalProjection projection) {
             PhysicalSource source = buildPipeline(projection.child(), operators);
-            operators.add(new PhysicalProjection(projection.expressions(), projection.names()));
+            operators.add(new PhysicalProjection(projection.expressions(), projection.names(), expressionExecutor));
             return source;
         }
         if (logical instanceof LogicalAggregate aggregate) {
             PhysicalSource source = buildPipeline(aggregate.child(), operators);
-            operators.add(new PhysicalHashAggregate(aggregate.groups(), aggregate.selectList(), aggregate.selectNames()));
+            operators.add(new PhysicalHashAggregate(
+                    aggregate.groups(),
+                    aggregate.selectList(),
+                    aggregate.selectNames(),
+                    expressionExecutor
+            ));
             return source;
         }
         if (logical instanceof LogicalFilter filter) {
@@ -87,7 +97,7 @@ public final class PhysicalPlanner {
                 return source;
             }
             PhysicalSource source = buildPipeline(filter.child(), operators);
-            operators.add(new PhysicalFilter(filter.predicate()));
+            operators.add(new PhysicalFilter(filter.predicate(), expressionExecutor));
             return source;
         }
         if (logical instanceof LogicalLimit limit) {
@@ -97,7 +107,7 @@ public final class PhysicalPlanner {
         }
         if (logical instanceof LogicalOrder order) {
             PhysicalSource source = buildPipeline(order.child(), operators);
-            operators.add(new PhysicalOrder(order.orders()));
+            operators.add(new PhysicalOrder(order.orders(), expressionExecutor));
             return source;
         }
         if (logical instanceof LogicalGet get) {
@@ -131,7 +141,8 @@ public final class PhysicalPlanner {
                     hashJoinKeys.leftKeyOrdinal(),
                     hashJoinKeys.rightKeyOrdinal(),
                     rightPredicate,
-                    residualPredicate
+                    residualPredicate,
+                    expressionExecutor
             ));
             return;
         }
@@ -144,7 +155,8 @@ public final class PhysicalPlanner {
                 leftTypes,
                 right,
                 condition,
-                rightPredicate
+                rightPredicate,
+                expressionExecutor
         ));
     }
 
@@ -348,9 +360,11 @@ public final class PhysicalPlanner {
                 }
                 yield scope;
             }
+            case BoundInSubqueryExpression in -> scopeOf(in.input(), leftColumnCount, rightColumnCount);
             case BoundLiteralExpression ignored -> PredicateScope.NONE;
             case BoundIntervalExpression ignored -> PredicateScope.NONE;
             case BoundOutputColumnExpression output -> columnScope(output.ordinal(), leftColumnCount, rightColumnCount);
+            case BoundSubqueryExpression ignored -> PredicateScope.NONE;
         };
     }
 
@@ -435,9 +449,15 @@ public final class PhysicalPlanner {
                         in.negated()
                 );
             }
+            case BoundInSubqueryExpression in -> new BoundInSubqueryExpression(
+                    rewriteForJoinSide(in.input(), leftColumnCount, side),
+                    in.subquery(),
+                    in.negated()
+            );
             case BoundLiteralExpression literal -> literal;
             case BoundIntervalExpression interval -> interval;
             case BoundOutputColumnExpression output -> rewriteOutputColumn(output, leftColumnCount, side);
+            case BoundSubqueryExpression subquery -> subquery;
         };
     }
 

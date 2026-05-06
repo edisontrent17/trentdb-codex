@@ -23,6 +23,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class QueryExecutorTest {
     private final SqlParser parser = new SqlParser();
@@ -128,6 +129,42 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesInSubqueryPredicate() {
+        Fixture fixture = peopleOrdersFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT name
+                FROM people
+                WHERE id IN (SELECT person_id FROM orders WHERE total > 20)
+                ORDER BY name
+                """
+        );
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Bob")), result.rows());
+    }
+
+    @Test
+    void executesNotInSubqueryPredicate() {
+        Fixture fixture = peopleOrdersFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT name
+                FROM people
+                WHERE id NOT IN (SELECT person_id FROM orders WHERE total > 20)
+                ORDER BY name
+                """
+        );
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Alice")), result.rows());
+    }
+
+    @Test
     void executesLikePredicate() {
         Fixture fixture = peopleFixture();
 
@@ -181,6 +218,47 @@ class QueryExecutorTest {
 
         assertEquals(List.of("a_count"), result.columns());
         assertEquals(List.of(List.of(1L)), result.rows());
+    }
+
+    @Test
+    void executesScalarSubqueryExpression() {
+        Fixture fixture = peopleOrdersFixture();
+
+        QueryResult result = execute(
+                fixture,
+                "SELECT name, (SELECT max(total) FROM orders) AS max_total FROM people ORDER BY id"
+        );
+
+        assertEquals(List.of("name", "max_total"), result.columns());
+        assertEquals(List.of(
+                List.of("Alice", 40L),
+                List.of("Bob", 40L)
+        ), result.rows());
+    }
+
+    @Test
+    void scalarSubqueryWithoutRowsReturnsNull() {
+        Fixture fixture = peopleOrdersFixture();
+
+        QueryResult result = execute(
+                fixture,
+                "SELECT (SELECT total FROM orders WHERE total > 100) AS maybe_total FROM people LIMIT 1"
+        );
+
+        assertEquals(List.of("maybe_total"), result.columns());
+        assertEquals(List.of(java.util.Arrays.asList((Object) null)), result.rows());
+    }
+
+    @Test
+    void scalarSubqueryRejectsMultipleRows() {
+        Fixture fixture = peopleOrdersFixture();
+
+        ExecutionException error = assertThrows(
+                ExecutionException.class,
+                () -> execute(fixture, "SELECT (SELECT total FROM orders) AS total FROM people LIMIT 1")
+        );
+
+        assertEquals("Scalar subquery returned more than one row", error.getMessage());
     }
 
     @Test

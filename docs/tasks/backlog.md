@@ -9,8 +9,8 @@
 
 ## Next
 
-- add subquery support, starting with non-correlated scalar and `IN` subqueries
 - extend TPC-H coverage to the next non-outer-join query shapes
+- add correlated subqueries and `EXISTS`/`NOT EXISTS` support
 - introduce optimizer scaffolding once the unoptimized behavior is covered by compatibility tests
 - design the durable write path for `CREATE TABLE` and `INSERT` around WAL and recovery boundaries
 
@@ -25,6 +25,7 @@
 - execute joins through physical hash join and nested loop join operators in the operator pipeline
 - run generated CSV TPC-H compatibility tests for Q1, Q3, Q6, Q12, Q14, and Q19
 - add ambiguity handling for unqualified column references in join binding
+- add non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
 
 ## DuckDB Reference Areas
 
@@ -49,6 +50,7 @@
 ## Later
 
 - optimizer passes: constant folding, filter pushdown, projection pruning, top-N rewrite
+- rewrite eligible subqueries into semi joins, mark joins, or scalar subquery operators
 - richer DuckDB-compatibility tests
 - primitive-specialized vectors for fixed-width types
 - columnar append storage with segments and scan state

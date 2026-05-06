@@ -284,6 +284,86 @@ class BinderTest {
     }
 
     @Test
+    void bindsWhereInSubqueryPredicate() {
+        Fixture fixture = peopleFixture();
+        fixture.catalog.createTable(
+                fixture.transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("person_id", TypeName.BIGINT),
+                        new ColumnDefinition("total", TypeName.BIGINT)
+                )
+        );
+
+        BoundSelectStatement bound = bindSelect(
+                fixture,
+                "SELECT id FROM people WHERE id IN (SELECT person_id FROM orders)"
+        );
+
+        BoundInSubqueryExpression predicate = assertInstanceOf(BoundInSubqueryExpression.class, bound.where());
+        assertEquals(false, predicate.negated());
+        assertEquals(LogicalType.BOOLEAN, predicate.logicalType());
+        assertInstanceOf(BoundColumnRefExpression.class, predicate.input());
+        assertEquals(1, predicate.subquery().selectList().size());
+    }
+
+    @Test
+    void rejectsInSubqueryWithIncomparableColumn() {
+        Fixture fixture = peopleFixture();
+        fixture.catalog.createTable(
+                fixture.transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(new ColumnDefinition("person_name", TypeName.TEXT))
+        );
+
+        BinderException error = assertThrows(
+                BinderException.class,
+                () -> bindSelect(fixture, "SELECT id FROM people WHERE id IN (SELECT person_name FROM orders)")
+        );
+
+        assertEquals("IN subquery cannot compare BIGINT and TEXT", error.getMessage());
+    }
+
+    @Test
+    void rejectsMultiColumnInSubquery() {
+        Fixture fixture = peopleFixture();
+        fixture.catalog.createTable(
+                fixture.transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("person_id", TypeName.BIGINT),
+                        new ColumnDefinition("total", TypeName.BIGINT)
+                )
+        );
+
+        BinderException error = assertThrows(
+                BinderException.class,
+                () -> bindSelect(fixture, "SELECT id FROM people WHERE id IN (SELECT person_id, total FROM orders)")
+        );
+
+        assertEquals("IN subquery must return exactly one column", error.getMessage());
+    }
+
+    @Test
+    void bindsScalarSubqueryExpression() {
+        Fixture fixture = peopleFixture();
+        fixture.catalog.createTable(
+                fixture.transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(new ColumnDefinition("total", TypeName.BIGINT))
+        );
+
+        BoundSelectStatement bound = bindSelect(
+                fixture,
+                "SELECT (SELECT max(total) FROM orders) AS max_total FROM people"
+        );
+
+        BoundSubqueryExpression expression = assertInstanceOf(BoundSubqueryExpression.class, bound.selectList().getFirst());
+        assertEquals(LogicalType.BIGINT, expression.logicalType());
+        assertEquals(1, expression.subquery().selectList().size());
+    }
+
+    @Test
     void rejectsTextArithmetic() {
         Fixture fixture = peopleFixture();
 

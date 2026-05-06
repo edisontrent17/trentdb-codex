@@ -12,12 +12,14 @@ import dev.trentdb.planner.BoundExplainStatement;
 import dev.trentdb.planner.BoundFrom;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
+import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundJoinRef;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSelectStatement;
 import dev.trentdb.planner.BoundStatement;
+import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.planner.BoundTableRef;
 import dev.trentdb.planner.BinderException;
 
@@ -134,8 +136,14 @@ public final class LogicalPlanner {
             );
             case BoundFunctionExpression function -> rewriteFunctionExpression(function, groups, outputs, names);
             case BoundInExpression in -> rewriteInExpression(in, groups, outputs, names);
+            case BoundInSubqueryExpression in -> new BoundInSubqueryExpression(
+                    rewriteAggregateProjection(in.input(), groups, outputs, names),
+                    in.subquery(),
+                    in.negated()
+            );
             case BoundIntervalExpression interval -> interval;
             case BoundLiteralExpression literal -> literal;
+            case BoundSubqueryExpression subquery -> subquery;
             case BoundColumnRefExpression column -> throw new BinderException(
                     "Column must appear in GROUP BY or be used in an aggregate function: " + column.name());
             case BoundOutputColumnExpression output -> output;
