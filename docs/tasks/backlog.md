@@ -23,7 +23,7 @@
 - run canonical TPC-H Q6 from generated SF 0.01 `lineitem` CSV data
 - implement single and multiple explicit `INNER JOIN` queries with DuckDB-shaped logical joins
 - execute joins through physical hash join and nested loop join operators in the operator pipeline
-- run generated CSV TPC-H compatibility tests for Q1, Q3, Q6, Q12, Q14, and Q19
+- run generated CSV TPC-H compatibility tests for Q1, Q3, Q5, Q6, Q12, Q14, and Q19
 - add ambiguity handling for unqualified column references in join binding
 - add non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
 
