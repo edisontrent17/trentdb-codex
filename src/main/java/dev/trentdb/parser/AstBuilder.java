@@ -125,18 +125,41 @@ final class AstBuilder {
 
     private TableReference relationPrimary(TrentDbSqlParser.RelationPrimaryContext context) {
         if (context instanceof TrentDbSqlParser.NamedRelationPrimaryContext namedRelation) {
-            String alias = namedRelation.identifier() == null ? null : unquote(namedRelation.identifier().getText());
-            return new TableReference(qualifiedName(namedRelation.qualifiedName()), alias);
+            TableAlias alias = tableAlias(namedRelation.tableAlias());
+            return new TableReference(qualifiedName(namedRelation.qualifiedName()), null, null, alias.name(), alias.columnAliases());
         }
         if (context instanceof TrentDbSqlParser.PathRelationPrimaryContext pathRelation) {
-            String alias = pathRelation.identifier() == null ? null : unquote(pathRelation.identifier().getText());
-            return TableReference.path(unquoteString(pathRelation.stringLiteral().getText()), alias);
+            TableAlias alias = tableAlias(pathRelation.tableAlias());
+            return new TableReference(null, unquoteString(pathRelation.stringLiteral().getText()), null, alias.name(), alias.columnAliases());
+        }
+        if (context instanceof TrentDbSqlParser.SubqueryRelationPrimaryContext subqueryRelation) {
+            TableAlias alias = tableAlias(subqueryRelation.tableAlias());
+            return TableReference.subquery(select(subqueryRelation.select()), alias.name(), alias.columnAliases());
         }
         throw new ParsingException("Unsupported relation primary");
     }
 
     private JoinClause joinClause(TrentDbSqlParser.JoinClauseContext context) {
-        return new JoinClause(JoinType.INNER, relationPrimary(context.relationPrimary()), expression(context.expression()));
+        JoinType joinType = context.joinType() == null ? JoinType.INNER : joinType(context.joinType());
+        return new JoinClause(joinType, relationPrimary(context.relationPrimary()), expression(context.expression()));
+    }
+
+    private JoinType joinType(TrentDbSqlParser.JoinTypeContext context) {
+        if (context.LEFT() != null) {
+            return JoinType.LEFT;
+        }
+        return JoinType.INNER;
+    }
+
+    private TableAlias tableAlias(TrentDbSqlParser.TableAliasContext context) {
+        if (context == null) {
+            return new TableAlias(null, List.of());
+        }
+        String name = unquote(context.identifier().getText());
+        List<String> columnAliases = context.identifierList() == null
+                ? List.of()
+                : context.identifierList().identifier().stream().map(identifier -> unquote(identifier.getText())).toList();
+        return new TableAlias(name, columnAliases);
     }
 
     private List<OrderByItem> orderByItems(TrentDbSqlParser.OrderByClauseContext context) {
@@ -478,5 +501,8 @@ final class AstBuilder {
 
     private String unquoteString(String text) {
         return text.substring(1, text.length() - 1).replace("''", "'");
+    }
+
+    private record TableAlias(String name, List<String> columnAliases) {
     }
 }

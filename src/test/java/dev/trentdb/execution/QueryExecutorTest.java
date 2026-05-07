@@ -439,6 +439,56 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesLeftJoinWithOnResidualPredicate() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT p.name, count(o.total) AS matching_orders
+                FROM people p
+                LEFT JOIN orders o ON p.id = o.person_id AND o.total > 20
+                GROUP BY p.name
+                ORDER BY p.name
+                """
+        );
+
+        assertEquals(List.of("name", "matching_orders"), result.columns());
+        assertEquals(List.of(
+                List.of("Alice", 0L),
+                List.of("Bob", 1L),
+                List.of("Charlie", 0L)
+        ), result.rows());
+    }
+
+    @Test
+    void executesDerivedTableWithColumnAliases() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT c_count, count(*) AS custdist
+                FROM (
+                    SELECT p.id, count(o.total) AS order_count
+                    FROM people p
+                    LEFT JOIN orders o ON p.id = o.person_id
+                    GROUP BY p.id
+                ) AS c_orders (c_custkey, c_count)
+                GROUP BY c_count
+                ORDER BY c_count
+                """
+        );
+
+        assertEquals(List.of("c_count", "custdist"), result.columns());
+        assertEquals(List.of(
+                List.of(0L, 1L),
+                List.of(1L, 1L),
+                List.of(2L, 1L)
+        ), result.rows());
+    }
+
+    @Test
     void ordersNullsLastAscending() {
         Fixture fixture = peopleWithNullFixture();
 
@@ -846,6 +896,39 @@ class QueryExecutorTest {
         storage.appendRow(List.of(2L, 30L));
         storage.appendRow(List.of(3L, 40L));
         return fixture;
+    }
+
+    private Fixture peopleOrdersWithUnmatchedFixture() {
+        Catalog catalog = new Catalog();
+        Transaction transaction = transactionManager.startTransaction();
+        TableCatalogEntry people = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("people")),
+                List.of(
+                        new ColumnDefinition("id", TypeName.BIGINT),
+                        new ColumnDefinition("name", TypeName.TEXT)
+                )
+        );
+        TableCatalogEntry orders = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("person_id", TypeName.BIGINT),
+                        new ColumnDefinition("total", TypeName.BIGINT)
+                )
+        );
+
+        StorageManager storageManager = new StorageManager();
+        InMemoryTableStorage peopleStorage = storageManager.createTable(people);
+        peopleStorage.appendRow(List.of(1L, "Alice"));
+        peopleStorage.appendRow(List.of(2L, "Bob"));
+        peopleStorage.appendRow(List.of(3L, "Charlie"));
+
+        InMemoryTableStorage orderStorage = storageManager.createTable(orders);
+        orderStorage.appendRow(List.of(1L, 20L));
+        orderStorage.appendRow(List.of(1L, 10L));
+        orderStorage.appendRow(List.of(2L, 30L));
+        return new Fixture(catalog, transaction, storageManager);
     }
 
     private Fixture customersOrdersLineitemsFixture() {

@@ -1,5 +1,6 @@
 package dev.trentdb.execution.physical;
 
+import dev.trentdb.ast.JoinType;
 import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.SelectionVector;
@@ -20,6 +21,7 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
     private final List<String> leftNames;
     private final List<LogicalType> leftTypes;
     private final BoundTableRef right;
+    private final JoinType joinType;
     private final BoundExpression condition;
     private final BoundExpression rightFilter;
     private final ExpressionExecutor expressionExecutor;
@@ -29,6 +31,7 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
             List<String> leftNames,
             List<LogicalType> leftTypes,
             BoundTableRef right,
+            JoinType joinType,
             BoundExpression condition,
             BoundExpression rightFilter,
             ExpressionExecutor expressionExecutor
@@ -37,6 +40,7 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
         this.leftNames = List.copyOf(leftNames);
         this.leftTypes = List.copyOf(leftTypes);
         this.right = right;
+        this.joinType = joinType;
         this.condition = condition;
         this.rightFilter = rightFilter;
         this.expressionExecutor = expressionExecutor;
@@ -48,6 +52,10 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
 
     public BoundExpression condition() {
         return condition;
+    }
+
+    public JoinType joinType() {
+        return joinType;
     }
 
     public BoundExpression rightFilter() {
@@ -79,12 +87,14 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
         List<Vector> outputVectors = createVectors(state.outputTypes, InMemoryTableStorage.STANDARD_VECTOR_SIZE);
         int bufferedCount = 0;
 
-        for (DataChunk rightChunk : state.rightChunks) {
-            for (int leftIndex = 0; leftIndex < input.cardinality(); leftIndex++) {
+        for (int leftIndex = 0; leftIndex < input.cardinality(); leftIndex++) {
+            boolean matched = false;
+            for (DataChunk rightChunk : state.rightChunks) {
                 for (int rightIndex = 0; rightIndex < rightChunk.cardinality(); rightIndex++) {
                     writeJoinedValues(state.conditionRow.vectors(), 0, input, leftIndex, rightChunk, rightIndex);
                     if (matches(state.conditionRow)) {
                         writeJoinedValues(outputVectors, bufferedCount, input, leftIndex, rightChunk, rightIndex);
+                        matched = true;
                         bufferedCount++;
                         if (bufferedCount >= InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
                             downstream.accept(new DataChunk(state.outputNames, outputVectors));
@@ -92,6 +102,15 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
                             bufferedCount = 0;
                         }
                     }
+                }
+            }
+            if (!matched && joinType == JoinType.LEFT) {
+                writeLeftWithNullRight(outputVectors, bufferedCount, input, leftIndex);
+                bufferedCount++;
+                if (bufferedCount >= InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
+                    downstream.accept(new DataChunk(state.outputNames, outputVectors));
+                    outputVectors = createVectors(state.outputTypes, InMemoryTableStorage.STANDARD_VECTOR_SIZE);
+                    bufferedCount = 0;
                 }
             }
         }
@@ -194,6 +213,15 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
         int rightOffset = leftChunk.vectors().size();
         for (int columnIndex = 0; columnIndex < rightChunk.vectors().size(); columnIndex++) {
             target.get(rightOffset + columnIndex).copyFrom(targetIndex, rightChunk.column(columnIndex), rightIndex);
+        }
+    }
+
+    private void writeLeftWithNullRight(List<Vector> target, int targetIndex, DataChunk leftChunk, int leftIndex) {
+        for (int columnIndex = 0; columnIndex < leftChunk.vectors().size(); columnIndex++) {
+            target.get(columnIndex).copyFrom(targetIndex, leftChunk.column(columnIndex), leftIndex);
+        }
+        for (int columnIndex = leftChunk.vectors().size(); columnIndex < target.size(); columnIndex++) {
+            target.get(columnIndex).setNull(targetIndex);
         }
     }
 

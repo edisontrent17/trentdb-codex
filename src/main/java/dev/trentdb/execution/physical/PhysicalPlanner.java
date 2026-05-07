@@ -1,6 +1,7 @@
 package dev.trentdb.execution.physical;
 
 import dev.trentdb.ast.BinaryOperator;
+import dev.trentdb.ast.JoinType;
 import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.execution.ExecutionException;
 import dev.trentdb.execution.ExpressionExecutor;
@@ -37,6 +38,8 @@ import java.util.List;
 
 public final class PhysicalPlanner {
     private record HashJoinKeys(int leftKeyOrdinal, int rightKeyOrdinal) {
+    }
+    private record HashJoinPlan(HashJoinKeys keys, BoundExpression residualPredicate) {
     }
     private record JoinFilterSplit(
             BoundExpression leftPredicate,
@@ -87,6 +90,11 @@ public final class PhysicalPlanner {
         }
         if (logical instanceof LogicalFilter filter) {
             if (filter.child() instanceof LogicalJoin join) {
+                if (join.joinType() != JoinType.INNER) {
+                    PhysicalSource source = buildPipeline(filter.child(), operators);
+                    operators.add(new PhysicalFilter(filter.predicate(), expressionExecutor));
+                    return source;
+                }
                 JoinFilterSplit split = splitJoinFilter(join, filter.predicate());
                 LogicalOperator left = join.left();
                 if (split.leftPredicate() != null) {
@@ -131,17 +139,19 @@ public final class PhysicalPlanner {
         List<ColumnCatalogEntry> leftColumns = columns(join.left());
         List<String> leftNames = names(leftColumns);
         List<LogicalType> leftTypes = types(leftColumns);
-        HashJoinKeys hashJoinKeys = hashJoinKeys(join.left(), right, join.condition());
-        if (hashJoinKeys != null) {
+        HashJoinPlan hashJoinPlan = hashJoinPlan(join.left(), right, join.condition());
+        if (hashJoinPlan != null) {
+            BoundExpression residual = combineNullable(hashJoinPlan.residualPredicate(), residualPredicate);
             operators.add(new PhysicalHashJoin(
                     storageManager,
                     leftNames,
                     leftTypes,
                     right,
-                    hashJoinKeys.leftKeyOrdinal(),
-                    hashJoinKeys.rightKeyOrdinal(),
+                    join.joinType(),
+                    hashJoinPlan.keys().leftKeyOrdinal(),
+                    hashJoinPlan.keys().rightKeyOrdinal(),
                     rightPredicate,
-                    residualPredicate,
+                    residual,
                     expressionExecutor
             ));
             return;
@@ -154,10 +164,26 @@ public final class PhysicalPlanner {
                 leftNames,
                 leftTypes,
                 right,
+                join.joinType(),
                 condition,
                 rightPredicate,
                 expressionExecutor
         ));
+    }
+
+    private HashJoinPlan hashJoinPlan(LogicalOperator left, BoundTableRef right, BoundExpression condition) {
+        ArrayList<BoundExpression> conjuncts = new ArrayList<>();
+        flattenConjuncts(condition, conjuncts);
+        for (int index = 0; index < conjuncts.size(); index++) {
+            HashJoinKeys keys = hashJoinKeys(left, right, conjuncts.get(index));
+            if (keys == null) {
+                continue;
+            }
+            ArrayList<BoundExpression> residuals = new ArrayList<>(conjuncts);
+            residuals.remove(index);
+            return new HashJoinPlan(keys, combineConjuncts(residuals));
+        }
+        return null;
     }
 
     private HashJoinKeys hashJoinKeys(LogicalOperator left, BoundTableRef right, BoundExpression condition) {
@@ -303,6 +329,16 @@ public final class PhysicalPlanner {
             result = new BoundBinaryExpression(result, BinaryOperator.AND, conjuncts.get(index), LogicalType.BOOLEAN);
         }
         return result;
+    }
+
+    private BoundExpression combineNullable(BoundExpression left, BoundExpression right) {
+        if (left == null) {
+            return right;
+        }
+        if (right == null) {
+            return left;
+        }
+        return new BoundBinaryExpression(left, BinaryOperator.AND, right, LogicalType.BOOLEAN);
     }
 
     private BoundExpression combineDisjuncts(List<BoundExpression> disjuncts) {

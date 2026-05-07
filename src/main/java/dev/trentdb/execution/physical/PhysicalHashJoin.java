@@ -1,5 +1,6 @@
 package dev.trentdb.execution.physical;
 
+import dev.trentdb.ast.JoinType;
 import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.SelectionVector;
@@ -21,6 +22,7 @@ public final class PhysicalHashJoin implements PhysicalOperator {
     private final List<String> leftNames;
     private final List<LogicalType> leftTypes;
     private final BoundTableRef right;
+    private final JoinType joinType;
     private final int leftKeyOrdinal;
     private final int rightKeyOrdinal;
     private final BoundExpression rightFilter;
@@ -32,6 +34,7 @@ public final class PhysicalHashJoin implements PhysicalOperator {
             List<String> leftNames,
             List<LogicalType> leftTypes,
             BoundTableRef right,
+            JoinType joinType,
             int leftKeyOrdinal,
             int rightKeyOrdinal,
             BoundExpression rightFilter,
@@ -42,6 +45,7 @@ public final class PhysicalHashJoin implements PhysicalOperator {
         this.leftNames = List.copyOf(leftNames);
         this.leftTypes = List.copyOf(leftTypes);
         this.right = right;
+        this.joinType = joinType;
         this.leftKeyOrdinal = leftKeyOrdinal;
         this.rightKeyOrdinal = rightKeyOrdinal;
         this.rightFilter = rightFilter;
@@ -51,6 +55,10 @@ public final class PhysicalHashJoin implements PhysicalOperator {
 
     public BoundTableRef right() {
         return right;
+    }
+
+    public JoinType joinType() {
+        return joinType;
     }
 
     public int leftKeyOrdinal() {
@@ -108,26 +116,33 @@ public final class PhysicalHashJoin implements PhysicalOperator {
         int bufferedCount = 0;
 
         for (int leftRowIndex = 0; leftRowIndex < input.cardinality(); leftRowIndex++) {
-            if (leftKeyVector.isNull(leftRowIndex)) {
-                continue;
-            }
-            long probeKey = keyAsLong(leftKeyVector, leftRowIndex, state.keyType);
-            int match = state.buildIndex.firstEntry(probeKey);
-            if (match < 0) {
-                continue;
-            }
-            for (int entry = match; entry >= 0; entry = state.buildIndex.nextEntry(entry, probeKey)) {
-                DataChunk rightChunk = state.rightChunks.get(state.buildIndex.chunkIndex(entry));
-                int rightRowIndex = state.buildIndex.rowIndex(entry);
-                if (state.residualRow != null) {
-                    writeJoinedValues(state.residualRow.vectors(), 0, input, leftRowIndex, rightChunk, rightRowIndex);
-                    if (!matchesResidual(state.residualRow)) {
-                        continue;
+            boolean matched = false;
+            if (!leftKeyVector.isNull(leftRowIndex)) {
+                long probeKey = keyAsLong(leftKeyVector, leftRowIndex, state.keyType);
+                int match = state.buildIndex.firstEntry(probeKey);
+                for (int entry = match; entry >= 0; entry = state.buildIndex.nextEntry(entry, probeKey)) {
+                    DataChunk rightChunk = state.rightChunks.get(state.buildIndex.chunkIndex(entry));
+                    int rightRowIndex = state.buildIndex.rowIndex(entry);
+                    if (state.residualRow != null) {
+                        writeJoinedValues(state.residualRow.vectors(), 0, input, leftRowIndex, rightChunk, rightRowIndex);
+                        if (!matchesResidual(state.residualRow)) {
+                            continue;
+                        }
+                        copyResidualRow(outputVectors, bufferedCount, state.residualRow);
+                    } else {
+                        writeJoinedValues(outputVectors, bufferedCount, input, leftRowIndex, rightChunk, rightRowIndex);
                     }
-                    copyResidualRow(outputVectors, bufferedCount, state.residualRow);
-                } else {
-                    writeJoinedValues(outputVectors, bufferedCount, input, leftRowIndex, rightChunk, rightRowIndex);
+                    matched = true;
+                    bufferedCount++;
+                    if (bufferedCount >= InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
+                        downstream.accept(new DataChunk(state.outputNames, outputVectors));
+                        outputVectors = createVectors(state.outputTypes, InMemoryTableStorage.STANDARD_VECTOR_SIZE);
+                        bufferedCount = 0;
+                    }
                 }
+            }
+            if (!matched && joinType == JoinType.LEFT) {
+                writeLeftWithNullRight(outputVectors, bufferedCount, input, leftRowIndex);
                 bufferedCount++;
                 if (bufferedCount >= InMemoryTableStorage.STANDARD_VECTOR_SIZE) {
                     downstream.accept(new DataChunk(state.outputNames, outputVectors));
@@ -139,6 +154,15 @@ public final class PhysicalHashJoin implements PhysicalOperator {
 
         if (bufferedCount > 0) {
             downstream.accept(compactChunk(state.outputNames, state.outputTypes, outputVectors, bufferedCount));
+        }
+    }
+
+    private void writeLeftWithNullRight(List<Vector> target, int targetIndex, DataChunk leftChunk, int leftIndex) {
+        for (int columnIndex = 0; columnIndex < leftChunk.vectors().size(); columnIndex++) {
+            target.get(columnIndex).copyFrom(targetIndex, leftChunk.column(columnIndex), leftIndex);
+        }
+        for (int columnIndex = leftChunk.vectors().size(); columnIndex < target.size(); columnIndex++) {
+            target.get(columnIndex).setNull(targetIndex);
         }
     }
 

@@ -141,6 +141,48 @@ class TpchCompatibilityTest {
     }
 
     @Test
+    void executesTpchQ13FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String customerCsv = resourcePath("tpch/customer_q10_sf001.csv");
+        String ordersCsv = resourcePath("tpch/orders_q13_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    c_count,
+                    count(*) AS custdist
+                FROM
+                    (
+                        SELECT
+                            c_custkey,
+                            count(o_orderkey)
+                        FROM
+                            '%s' c
+                        LEFT OUTER JOIN
+                            '%s' o
+                        ON
+                            c.c_custkey = o.o_custkey
+                            AND o.o_comment NOT LIKE '%%special%%requests%%'
+                        GROUP BY
+                            c_custkey
+                    ) AS c_orders (c_custkey, c_count)
+                GROUP BY
+                    c_count
+                ORDER BY
+                    custdist DESC,
+                    c_count DESC;
+                """.formatted(sqlString(customerCsv), sqlString(ordersCsv)));
+
+        assertEquals(List.of("c_count", "custdist"), result.columns());
+        assertEquals(32, result.rows().size());
+        assertQ13Row(result.rows().get(0), 0L, 500L);
+        assertQ13Row(result.rows().get(1), 10L, 69L);
+        assertQ13Row(result.rows().get(2), 9L, 66L);
+        assertQ13Row(result.rows().get(29), 32L, 2L);
+        assertQ13Row(result.rows().get(30), 30L, 2L);
+        assertQ13Row(result.rows().get(31), 2L, 2L);
+    }
+
+    @Test
     void executesTpchQ14FromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String lineitemCsv = resourcePath("tpch/lineitem_q12_q14_sf001.csv");
@@ -924,6 +966,11 @@ class TpchCompatibilityTest {
     private void assertQ11Row(List<Object> row, long partKey, double value) {
         assertEquals(partKey, row.get(0));
         assertDoubleEquals(value, (Double) row.get(1));
+    }
+
+    private void assertQ13Row(List<Object> row, long customerCount, long customerDistribution) {
+        assertEquals(customerCount, row.get(0));
+        assertEquals(customerDistribution, row.get(1));
     }
 
     private void assertQ16Row(

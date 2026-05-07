@@ -13,12 +13,15 @@ import dev.trentdb.ast.InExpression;
 import dev.trentdb.ast.InSubqueryExpression;
 import dev.trentdb.ast.InsertStatement;
 import dev.trentdb.ast.IntervalLiteralExpression;
+import dev.trentdb.ast.JoinType;
 import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.SelectStatement;
 import dev.trentdb.ast.Statement;
 import dev.trentdb.ast.SubqueryExpression;
 import dev.trentdb.ast.TypeName;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -76,6 +79,35 @@ class SqlParserTest {
         assertInstanceOf(BinaryExpression.class, select.having());
         assertEquals(1, select.orderBy().size());
         assertEquals(10L, select.limit());
+    }
+
+    @Test
+    void parsesLeftOuterJoin() {
+        Statement statement = parser.parse("""
+                SELECT p.id
+                FROM people p
+                LEFT OUTER JOIN orders o ON p.id = o.person_id
+                """);
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        assertEquals(JoinType.LEFT, select.from().joins().getFirst().type());
+    }
+
+    @Test
+    void parsesDerivedTableWithColumnAliases() {
+        Statement statement = parser.parse("""
+                SELECT c_count
+                FROM (
+                    SELECT c_custkey, count(*) AS c_count
+                    FROM customer
+                    GROUP BY c_custkey
+                ) AS c_orders (c_custkey, c_count)
+                """);
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        assertEquals(true, select.from().base().isSubquery());
+        assertEquals("c_orders", select.from().base().alias());
+        assertEquals(List.of("c_custkey", "c_count"), select.from().base().columnAliases());
     }
 
     @Test

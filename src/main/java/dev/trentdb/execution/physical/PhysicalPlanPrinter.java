@@ -60,6 +60,7 @@ public final class PhysicalPlanPrinter {
         }
         if (operator instanceof PhysicalHashJoin join) {
             appendLine(builder, depth, "PhysicalHashJoin right=" + tableName(join.right())
+                    + " type=" + join.joinType().name()
                     + " leftKeyOrdinal=" + join.leftKeyOrdinal()
                     + " rightKeyOrdinal=" + join.rightKeyOrdinal());
             appendOptionalExpression(builder, depth + 1, "rightFilter", join.rightFilter());
@@ -67,7 +68,8 @@ public final class PhysicalPlanPrinter {
             return;
         }
         if (operator instanceof PhysicalNestedLoopJoin join) {
-            appendLine(builder, depth, "PhysicalNestedLoopJoin right=" + tableName(join.right()));
+            appendLine(builder, depth, "PhysicalNestedLoopJoin right=" + tableName(join.right())
+                    + " type=" + join.joinType().name());
             appendOptionalExpression(builder, depth + 1, "condition", join.condition());
             appendOptionalExpression(builder, depth + 1, "rightFilter", join.rightFilter());
             return;
