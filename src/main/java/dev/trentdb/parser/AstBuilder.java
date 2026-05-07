@@ -314,6 +314,9 @@ final class AstBuilder {
         if (context instanceof TrentDbSqlParser.FunctionCallPrimaryContext functionCall) {
             return functionCall(functionCall.functionCall());
         }
+        if (context instanceof TrentDbSqlParser.ExtractPrimaryContext extractPrimary) {
+            return extractExpression(extractPrimary.extractExpression());
+        }
         if (context instanceof TrentDbSqlParser.CastPrimaryContext castPrimary) {
             return castExpression(castPrimary.castExpression());
         }
@@ -334,6 +337,26 @@ final class AstBuilder {
         boolean distinct = context.DISTINCT() != null;
         List<Expression> arguments = context.expressionList() == null ? List.of() : expressionList(context.expressionList());
         return new FunctionCallExpression(unquote(context.identifier().getText()), arguments, starArgument, distinct);
+    }
+
+    private FunctionCallExpression extractExpression(TrentDbSqlParser.ExtractExpressionContext context) {
+        String field = extractArgument(context.extractArgument());
+        return new FunctionCallExpression(
+                "date_part",
+                List.of(new LiteralExpression(LiteralKind.STRING, field), expression(context.expression())),
+                false,
+                false
+        );
+    }
+
+    private String extractArgument(TrentDbSqlParser.ExtractArgumentContext context) {
+        if (context.stringLiteral() != null) {
+            return unquoteString(context.stringLiteral().getText()).toLowerCase(Locale.ROOT);
+        }
+        if (context.identifier() != null) {
+            return unquote(context.identifier().getText());
+        }
+        return context.getText().toLowerCase(Locale.ROOT);
     }
 
     private CastExpression castExpression(TrentDbSqlParser.CastExpressionContext context) {

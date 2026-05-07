@@ -158,6 +158,22 @@ class SqlParserTest {
     }
 
     @Test
+    void parsesExtractAsDatePartFunction() {
+        Statement statement = parser.parse("SELECT EXTRACT(YEAR FROM birthdate) AS order_year FROM people");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        FunctionCallExpression function = assertInstanceOf(
+                FunctionCallExpression.class,
+                select.selectItems().getFirst().expression()
+        );
+        assertEquals("date_part", function.name());
+        assertEquals(2, function.arguments().size());
+        LiteralExpression field = assertInstanceOf(LiteralExpression.class, function.arguments().getFirst());
+        assertEquals("year", field.value());
+        assertInstanceOf(ColumnReferenceExpression.class, function.arguments().get(1));
+    }
+
+    @Test
     void parsesCastExpression() {
         Statement statement = parser.parse("SELECT CAST('1994-01-01' AS date) FROM people");
 

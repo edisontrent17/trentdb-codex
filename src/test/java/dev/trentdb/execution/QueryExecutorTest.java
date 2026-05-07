@@ -615,6 +615,34 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesExtractFromDate() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, """
+                SELECT EXTRACT(YEAR FROM DATE '1994-01-01') AS y,
+                       EXTRACT(MONTH FROM DATE '1994-01-01') AS m,
+                       EXTRACT(DAY FROM DATE '1994-01-01') AS d
+                FROM people
+                LIMIT 1
+                """);
+
+        assertEquals(List.of("y", "m", "d"), result.columns());
+        assertEquals(List.of(List.of(1994L, 1L, 1L)), result.rows());
+    }
+
+    @Test
+    void extractRejectsUnsupportedDatePart() {
+        Fixture fixture = peopleFixture();
+
+        ExecutionException error = assertThrows(
+                ExecutionException.class,
+                () -> execute(fixture, "SELECT EXTRACT(QUARTER FROM DATE '1994-01-01') FROM people LIMIT 1")
+        );
+
+        assertEquals("Unsupported date_part field: quarter", error.getMessage());
+    }
+
+    @Test
     void lowerPreservesNulls() {
         Fixture fixture = peopleWithNullFixture();
 
