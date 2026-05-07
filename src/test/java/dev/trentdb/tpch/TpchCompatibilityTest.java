@@ -281,6 +281,210 @@ class TpchCompatibilityTest {
     }
 
     @Test
+    void executesTpchQ7FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String supplierCsv = resourcePath("tpch/supplier_q5_sf001.csv");
+        String lineitemCsv = resourcePath("tpch/lineitem_q7_q8_q9_sf001.csv");
+        String ordersCsv = resourcePath("tpch/orders_q10_sf001.csv");
+        String customerCsv = resourcePath("tpch/customer_q10_sf001.csv");
+        String nationCsv = resourcePath("tpch/nation_q5_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    n1.n_name AS supp_nation,
+                    n2.n_name AS cust_nation,
+                    EXTRACT(YEAR FROM l_shipdate) AS l_year,
+                    sum(l_extendedprice * (1 - l_discount)) AS revenue
+                FROM
+                    '%s' s
+                JOIN
+                    '%s' l
+                ON
+                    s.s_suppkey = l.l_suppkey
+                JOIN
+                    '%s' o
+                ON
+                    o.o_orderkey = l.l_orderkey
+                JOIN
+                    '%s' c
+                ON
+                    c.c_custkey = o.o_custkey
+                JOIN
+                    '%s' n1
+                ON
+                    s.s_nationkey = n1.n_nationkey
+                JOIN
+                    '%s' n2
+                ON
+                    c.c_nationkey = n2.n_nationkey
+                WHERE
+                    (
+                        (n1.n_name = 'FRANCE' AND n2.n_name = 'GERMANY')
+                        OR (n1.n_name = 'GERMANY' AND n2.n_name = 'FRANCE')
+                    )
+                    AND l_shipdate BETWEEN DATE '1995-01-01' AND DATE '1996-12-31'
+                GROUP BY
+                    n1.n_name,
+                    n2.n_name,
+                    EXTRACT(YEAR FROM l_shipdate)
+                ORDER BY
+                    supp_nation,
+                    cust_nation,
+                    l_year;
+                """.formatted(
+                        sqlString(supplierCsv),
+                        sqlString(lineitemCsv),
+                        sqlString(ordersCsv),
+                        sqlString(customerCsv),
+                        sqlString(nationCsv),
+                        sqlString(nationCsv)
+                ));
+
+        assertEquals(List.of("supp_nation", "cust_nation", "l_year", "revenue"), result.columns());
+        assertEquals(4, result.rows().size());
+        assertQ7Row(result.rows().get(0), "FRANCE", "GERMANY", 1995L, 268068.5774d);
+        assertQ7Row(result.rows().get(1), "FRANCE", "GERMANY", 1996L, 303862.298d);
+        assertQ7Row(result.rows().get(2), "GERMANY", "FRANCE", 1995L, 621159.4882d);
+        assertQ7Row(result.rows().get(3), "GERMANY", "FRANCE", 1996L, 379095.8854d);
+    }
+
+    @Test
+    void executesTpchQ8FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String partCsv = resourcePath("tpch/part_q8_q9_sf001.csv");
+        String lineitemCsv = resourcePath("tpch/lineitem_q7_q8_q9_sf001.csv");
+        String supplierCsv = resourcePath("tpch/supplier_q5_sf001.csv");
+        String ordersCsv = resourcePath("tpch/orders_q10_sf001.csv");
+        String customerCsv = resourcePath("tpch/customer_q10_sf001.csv");
+        String nationCsv = resourcePath("tpch/nation_q5_sf001.csv");
+        String regionCsv = resourcePath("tpch/region_q5_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    EXTRACT(YEAR FROM o_orderdate) AS o_year,
+                    sum(CASE WHEN n2.n_name = 'BRAZIL' THEN l_extendedprice * (1 - l_discount) ELSE 0 END)
+                    / sum(l_extendedprice * (1 - l_discount)) AS mkt_share
+                FROM
+                    '%s' p
+                JOIN
+                    '%s' l
+                ON
+                    p.p_partkey = l.l_partkey
+                JOIN
+                    '%s' s
+                ON
+                    s.s_suppkey = l.l_suppkey
+                JOIN
+                    '%s' o
+                ON
+                    o.o_orderkey = l.l_orderkey
+                JOIN
+                    '%s' c
+                ON
+                    c.c_custkey = o.o_custkey
+                JOIN
+                    '%s' n1
+                ON
+                    c.c_nationkey = n1.n_nationkey
+                JOIN
+                    '%s' r
+                ON
+                    n1.n_regionkey = r.r_regionkey
+                JOIN
+                    '%s' n2
+                ON
+                    s.s_nationkey = n2.n_nationkey
+                WHERE
+                    r.r_name = 'AMERICA'
+                    AND o_orderdate BETWEEN DATE '1995-01-01' AND DATE '1996-12-31'
+                    AND p.p_type = 'ECONOMY ANODIZED STEEL'
+                GROUP BY
+                    EXTRACT(YEAR FROM o_orderdate)
+                ORDER BY
+                    o_year;
+                """.formatted(
+                        sqlString(partCsv),
+                        sqlString(lineitemCsv),
+                        sqlString(supplierCsv),
+                        sqlString(ordersCsv),
+                        sqlString(customerCsv),
+                        sqlString(nationCsv),
+                        sqlString(regionCsv),
+                        sqlString(nationCsv)
+                ));
+
+        assertEquals(List.of("o_year", "mkt_share"), result.columns());
+        assertEquals(2, result.rows().size());
+        assertQ8Row(result.rows().get(0), 1995L, 0.0d);
+        assertQ8Row(result.rows().get(1), 1996L, 0.0d);
+    }
+
+    @Test
+    void executesTpchQ9FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String partCsv = resourcePath("tpch/part_q8_q9_sf001.csv");
+        String lineitemCsv = resourcePath("tpch/lineitem_q7_q8_q9_sf001.csv");
+        String partsuppCsv = resourcePath("tpch/partsupp_q11_sf001.csv");
+        String supplierCsv = resourcePath("tpch/supplier_q11_sf001.csv");
+        String ordersCsv = resourcePath("tpch/orders_q10_sf001.csv");
+        String nationCsv = resourcePath("tpch/nation_q11_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    n_name AS nation,
+                    EXTRACT(YEAR FROM o_orderdate) AS o_year,
+                    sum(l_extendedprice * (1 - l_discount) - ps_supplycost * l_quantity) AS sum_profit
+                FROM
+                    '%s' p
+                JOIN
+                    '%s' l
+                ON
+                    p.p_partkey = l.l_partkey
+                JOIN
+                    '%s' ps
+                ON
+                    ps.ps_partkey = l.l_partkey
+                JOIN
+                    '%s' s
+                ON
+                    s.s_suppkey = l.l_suppkey
+                JOIN
+                    '%s' o
+                ON
+                    o.o_orderkey = l.l_orderkey
+                JOIN
+                    '%s' n
+                ON
+                    s.s_nationkey = n.n_nationkey
+                WHERE
+                    ps.ps_suppkey = l.l_suppkey
+                    AND p.p_name LIKE '%%green%%'
+                GROUP BY
+                    n_name,
+                    EXTRACT(YEAR FROM o_orderdate)
+                ORDER BY
+                    nation,
+                    o_year DESC;
+                """.formatted(
+                        sqlString(partCsv),
+                        sqlString(lineitemCsv),
+                        sqlString(partsuppCsv),
+                        sqlString(supplierCsv),
+                        sqlString(ordersCsv),
+                        sqlString(nationCsv)
+                ));
+
+        assertEquals(List.of("nation", "o_year", "sum_profit"), result.columns());
+        assertEquals(173, result.rows().size());
+        assertQ9Row(result.rows().get(0), "ALGERIA", 1998L, 97864.56820000001d);
+        assertQ9Row(result.rows().get(1), "ALGERIA", 1997L, 368231.66949999996d);
+        assertQ9Row(result.rows().get(2), "ALGERIA", 1996L, 196525.80460000003d);
+        assertQ9Row(result.rows().get(170), "VIETNAM", 1994L, 422644.8167999999d);
+        assertQ9Row(result.rows().get(171), "VIETNAM", 1993L, 309063.402d);
+        assertQ9Row(result.rows().get(172), "VIETNAM", 1992L, 716126.5378000002d);
+    }
+
+    @Test
     void executesTpchQ10FromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String customerCsv = resourcePath("tpch/customer_q10_sf001.csv");
@@ -686,6 +890,30 @@ class TpchCompatibilityTest {
     private void assertQ5Row(List<Object> row, String nation, double revenue) {
         assertEquals(nation, row.get(0));
         assertDoubleEquals(revenue, (Double) row.get(1));
+    }
+
+    private void assertQ7Row(
+            List<Object> row,
+            String supplierNation,
+            String customerNation,
+            long year,
+            double revenue
+    ) {
+        assertEquals(supplierNation, row.get(0));
+        assertEquals(customerNation, row.get(1));
+        assertEquals(year, row.get(2));
+        assertDoubleEquals(revenue, (Double) row.get(3));
+    }
+
+    private void assertQ8Row(List<Object> row, long year, double marketShare) {
+        assertEquals(year, row.get(0));
+        assertDoubleEquals(marketShare, (Double) row.get(1));
+    }
+
+    private void assertQ9Row(List<Object> row, String nation, long year, double profit) {
+        assertEquals(nation, row.get(0));
+        assertEquals(year, row.get(1));
+        assertDoubleEquals(profit, (Double) row.get(2));
     }
 
     private void assertQ10Summary(List<Object> row, long customerKey, double revenue) {

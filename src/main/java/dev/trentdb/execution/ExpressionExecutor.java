@@ -24,7 +24,6 @@ import dev.trentdb.types.LogicalType;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.List;
-import java.util.Locale;
 import java.util.Objects;
 
 public final class ExpressionExecutor {
@@ -33,9 +32,11 @@ public final class ExpressionExecutor {
     private static final byte SQL_TRUE = 1;
 
     private final SubqueryExpressionEvaluator subqueryEvaluator;
+    private final ScalarFunctionExecutor scalarFunctionExecutor;
 
     public ExpressionExecutor(StorageManager storageManager) {
         this.subqueryEvaluator = new SubqueryExpressionEvaluator(Objects.requireNonNull(storageManager, "storageManager"));
+        this.scalarFunctionExecutor = new ScalarFunctionExecutor(this);
     }
 
     public Vector execute(BoundExpression expression, DataChunk input) {
@@ -45,7 +46,7 @@ public final class ExpressionExecutor {
             case BoundColumnRefExpression column -> input.column(column.ordinal());
             case BoundOutputColumnExpression output -> input.column(output.ordinal());
             case BoundLiteralExpression literal -> constant(literal, input.cardinality());
-            case BoundFunctionExpression function -> function(function, input);
+            case BoundFunctionExpression function -> scalarFunctionExecutor.execute(function, input);
             case BoundBetweenExpression between -> between(between, input);
             case BoundInExpression in -> in(in, input);
             case BoundInSubqueryExpression in -> subqueryEvaluator.in(in, input, execute(in.input(), input));
@@ -86,25 +87,6 @@ public final class ExpressionExecutor {
             return Vector.constantDate((LocalDate) value, cardinality);
         }
         throw new ExecutionException("Unsupported literal type: " + logicalType.id());
-    }
-
-    private Vector function(BoundFunctionExpression function, DataChunk input) {
-        if (!function.name().equalsIgnoreCase("lower")) {
-            throw new ExecutionException("Unsupported scalar function: " + function.name());
-        }
-        Vector argument = execute(function.arguments().getFirst(), input);
-        if (!argument.logicalType().equals(LogicalType.TEXT)) {
-            throw new ExecutionException("lower expects TEXT input");
-        }
-        Vector result = new Vector(function.logicalType(), input.cardinality());
-        for (int index = 0; index < input.cardinality(); index++) {
-            if (argument.isNull(index)) {
-                result.setNull(index);
-                continue;
-            }
-            result.setText(index, argument.getText(index).toLowerCase(Locale.ROOT));
-        }
-        return result;
     }
 
     private Vector between(BoundBetweenExpression between, DataChunk input) {

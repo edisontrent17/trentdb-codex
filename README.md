@@ -38,7 +38,7 @@ Supported execution coverage currently includes:
 - projection and aliases
 - `WHERE` filters
 - SQL three-valued boolean logic for `AND`, `OR`, and comparisons with `NULL`
-- scalar `lower(text)`
+- scalar `lower(text)` and DuckDB-style `EXTRACT(... FROM date)` lowered through `date_part`
 - arithmetic expressions in `SELECT` and `WHERE`
 - `IN`, `NOT IN`, `LIKE`, `NOT LIKE`, `CASE`, date literals, interval literals, and casts
 - grouped and ungrouped aggregates: `count`, `sum`, `min`, `max`, `avg`, including distinct aggregate arguments
@@ -55,6 +55,9 @@ Current TPC-H coverage from generated scale 0.01 CSV fixtures:
 - Q3
 - Q5
 - Q6
+- Q7
+- Q8
+- Q9
 - Q10
 - Q11
 - Q12

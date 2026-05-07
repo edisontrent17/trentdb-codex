@@ -151,6 +151,7 @@ primaryExpression
     | intervalLiteral                                       #intervalPrimary
     | qualifiedName                                         #columnReferencePrimary
     | functionCall                                          #functionCallPrimary
+    | extractExpression                                     #extractPrimary
     | castExpression                                        #castPrimary
     | caseExpression                                        #casePrimary
     | LPAREN select RPAREN                                  #subqueryPrimary
@@ -159,6 +160,18 @@ primaryExpression
 
 functionCall
     : identifier LPAREN (DISTINCT expressionList | STAR | expressionList)? RPAREN
+    ;
+
+extractExpression
+    : EXTRACT LPAREN extractArgument FROM expression RPAREN
+    ;
+
+extractArgument
+    : YEAR
+    | MONTH
+    | DAY
+    | identifier
+    | stringLiteral
     ;
 
 castExpression
@@ -242,6 +255,7 @@ ORDER: 'ORDER';
 LIMIT: 'LIMIT';
 EXPLAIN: 'EXPLAIN';
 CAST: 'CAST';
+EXTRACT: 'EXTRACT';
 CASE: 'CASE';
 WHEN: 'WHEN';
 THEN: 'THEN';

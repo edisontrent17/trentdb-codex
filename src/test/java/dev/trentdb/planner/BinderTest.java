@@ -127,6 +127,19 @@ class BinderTest {
     }
 
     @Test
+    void bindsExtractAsDatePartFunction() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT EXTRACT(YEAR FROM DATE '1994-01-01') FROM people");
+
+        BoundFunctionExpression function = assertInstanceOf(BoundFunctionExpression.class, bound.selectList().getFirst());
+        assertEquals("date_part", function.name());
+        assertEquals(LogicalType.BIGINT, function.logicalType());
+        BoundLiteralExpression field = assertInstanceOf(BoundLiteralExpression.class, function.arguments().getFirst());
+        assertEquals("year", field.value());
+    }
+
+    @Test
     void rejectsMissingScalarFunction() {
         Fixture fixture = peopleFixture();
 
