@@ -118,6 +118,7 @@ Status:
 - grouped and ungrouped aggregate binding is implemented
 - explicit `INNER JOIN` and `LEFT OUTER JOIN` binding is implemented for left-deep multi-join trees with ambiguity handling
 - derived table binding is implemented for non-correlated subqueries in `FROM`, including explicit output column aliases
+- non-recursive common table expression binding is implemented for read queries
 - non-correlated scalar subqueries and `IN`/`NOT IN` subqueries are implemented
 
 ## Milestone 7: Logical Planning
@@ -134,7 +135,7 @@ Deliverables:
 
 Status:
 
-- implemented for scan, filter, projection, aggregate, `HAVING` as a post-aggregate filter, inner and left joins, derived tables, order, limit, and explain
+- implemented for scan, filter, projection, aggregate, `HAVING` as a post-aggregate filter, inner and left joins, derived tables, non-recursive common table expressions, order, limit, and explain
 - optimizer-facing rewrites are pending
 
 ## Milestone 8: Execution Substrate
@@ -226,6 +227,6 @@ Deliverables:
 Status:
 
 - parser, binder, planner, and read execution tests are in place for the implemented subset
-- generated CSV compatibility coverage exists for TPC-H Q1, Q3, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13, Q14, Q16, Q18, and Q19
+- generated CSV compatibility coverage exists for TPC-H Q1, Q3, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13, Q14, Q15, Q16, Q18, and Q19
 - broader DuckDB-style behavior tests, plan-shape tests, and execution edge cases remain near-term priorities
 - recovery, corruption, and concurrency tests depend on the WAL, persistence, and MVCC milestones

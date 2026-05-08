@@ -489,6 +489,36 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesCommonTableExpressionReferencedTwice() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                WITH order_totals AS (
+                    SELECT person_id AS customer_id, sum(total) AS total_spend
+                    FROM orders
+                    GROUP BY customer_id
+                )
+                SELECT name, total_spend
+                FROM order_totals
+                JOIN people p ON p.id = customer_id
+                WHERE total_spend = (
+                    SELECT max(total_spend)
+                    FROM order_totals
+                )
+                ORDER BY name
+                """
+        );
+
+        assertEquals(List.of("name", "total_spend"), result.columns());
+        assertEquals(List.of(
+                List.of("Alice", 30L),
+                List.of("Bob", 30L)
+        ), result.rows());
+    }
+
+    @Test
     void ordersNullsLastAscending() {
         Fixture fixture = peopleWithNullFixture();
 

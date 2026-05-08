@@ -3,6 +3,7 @@ package dev.trentdb.ast;
 import java.util.List;
 
 public record SelectStatement(
+        List<CommonTableExpression> commonTableExpressions,
         List<SelectItem> selectItems,
         FromItem from,
         Expression where,
@@ -11,4 +12,9 @@ public record SelectStatement(
         List<OrderByItem> orderBy,
         Long limit
 ) implements Statement {
+    public SelectStatement {
+        commonTableExpressions = List.copyOf(commonTableExpressions);
+        groupBy = List.copyOf(groupBy);
+        orderBy = List.copyOf(orderBy);
+    }
 }

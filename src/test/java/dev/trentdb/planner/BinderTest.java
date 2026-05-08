@@ -215,6 +215,28 @@ class BinderTest {
     }
 
     @Test
+    void bindsGroupBySelectAliasWhenNoInputColumnMatches() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT id AS person_id, count(*) FROM people GROUP BY person_id");
+
+        assertEquals(1, bound.groupBy().size());
+        assertEquals(bound.groupBy().getFirst(), bound.selectList().getFirst());
+    }
+
+    @Test
+    void groupByPrefersInputColumnOverSelectAlias() {
+        Fixture fixture = peopleFixture();
+
+        BinderException error = assertThrows(
+                BinderException.class,
+                () -> bindSelect(fixture, "SELECT id AS name, count(*) FROM people GROUP BY name")
+        );
+
+        assertEquals("Column must appear in GROUP BY or be used in an aggregate function", error.getMessage());
+    }
+
+    @Test
     void rejectsUngroupedColumnWithAggregate() {
         Fixture fixture = peopleFixture();
 

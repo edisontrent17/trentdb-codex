@@ -31,6 +31,7 @@ Supported parser coverage currently includes:
 - `INNER JOIN`
 - `LEFT OUTER JOIN`
 - derived tables in `FROM`
+- non-recursive `WITH` common table expressions
 - `EXPLAIN`
 
 Supported execution coverage currently includes:
@@ -47,6 +48,7 @@ Supported execution coverage currently includes:
 - `HAVING` filters over grouped and ungrouped aggregate queries
 - single and multiple explicit `INNER JOIN` queries plus `LEFT OUTER JOIN` through physical join operators
 - derived tables in `FROM` with explicit output column aliases
+- non-recursive common table expressions in read queries
 - non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
 - `ORDER BY` with DuckDB default null ordering
 - streaming `LIMIT`
@@ -66,6 +68,7 @@ Current TPC-H coverage from generated scale 0.01 CSV fixtures:
 - Q12
 - Q13
 - Q14
+- Q15
 - Q16
 - Q18
 - Q19
