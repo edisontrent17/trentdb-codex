@@ -898,7 +898,7 @@ class BinderTest {
         assertEquals("""
                 LogicalExplain
                   LogicalProjection [1]
-                    LogicalComparisonJoin
+                    LogicalComparisonJoin type=INNER
                       LogicalGet people
                       LogicalGet orders
                 """, new LogicalPlanPrinter().print(logical));

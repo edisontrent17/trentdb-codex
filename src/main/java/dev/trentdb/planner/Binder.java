@@ -99,18 +99,20 @@ public final class Binder {
         BoundExpression having = statement.having() == null
                 ? null
                 : bindHavingExpression(context, statement.having(), havingAliases);
-        validateAggregates(selectList, groupBy, having);
-        boolean aggregateQuery = containsAggregate(selectList) || containsAggregate(having) || !groupBy.isEmpty();
+        AggregateBindingValidator.validate(selectList, groupBy, having);
+        boolean aggregateQuery = BoundExpressionInspector.containsAggregate(selectList)
+                || BoundExpressionInspector.containsAggregate(having)
+                || !groupBy.isEmpty();
         List<BoundOrderByItem> orderBy = bindOrderBy(context, statement.orderBy(), selectList, selectNames, aggregateQuery);
         return new BoundSelectStatement(boundFrom, selectList, selectNames, where, groupBy, having, orderBy, statement.limit());
     }
 
     private BoundFrom bindFrom(Transaction transaction, SelectStatement statement) {
-        BoundFrom left = bindTableRef(transaction, statement.from().base());
+        BoundFrom left = bindRelationRef(transaction, statement.from().base());
         List<JoinClause> joins = statement.from().joins();
         for (JoinClause join : joins) {
-            if (join.type() != JoinType.INNER) {
-                throw new BinderException("Only INNER JOIN is supported");
+            if (join.type() != JoinType.INNER && join.type() != JoinType.LEFT) {
+                throw new BinderException("Only INNER and LEFT JOIN are supported");
             }
             BoundTableRef right = bindTableRef(transaction, join.right());
             BindingContext joinContext = bindingContext(transaction, left, right);
@@ -118,12 +120,25 @@ public final class Binder {
             if (!logicalType(condition).equals(LogicalType.BOOLEAN)) {
                 throw new BinderException("JOIN condition must evaluate to BOOLEAN but got " + typeName(logicalType(condition)));
             }
-            left = new BoundJoinRef(left, right, condition);
+            left = new BoundJoinRef(left, right, condition, join.type());
         }
         return left;
     }
 
+    private BoundFrom bindRelationRef(Transaction transaction, TableReference tableReference) {
+        if (tableReference.isSubquery()) {
+            return bindSubqueryRef(transaction, tableReference);
+        }
+        return bindTableRef(transaction, tableReference);
+    }
+
     private BoundTableRef bindTableRef(Transaction transaction, TableReference tableReference) {
+        if (tableReference.isSubquery()) {
+            throw new BinderException("Derived tables are not supported on the right side of JOIN yet");
+        }
+        if (!tableReference.columnAliases().isEmpty()) {
+            throw new BinderException("Column aliases for base table references are not supported yet");
+        }
         if (tableReference.isPath()) {
             return BoundTableRef.replacement(replacementScanRegistry.replace(tableReference.path()), tableReference.alias());
         }
@@ -134,9 +149,27 @@ public final class Binder {
         }
     }
 
+    private BoundSubqueryRef bindSubqueryRef(Transaction transaction, TableReference tableReference) {
+        BoundSelectStatement subquery = bindSelect(transaction, tableReference.subquery());
+        List<String> outputNames = tableReference.columnAliases().isEmpty()
+                ? subquery.selectNames()
+                : tableReference.columnAliases();
+        if (outputNames.size() != subquery.selectList().size()) {
+            throw new BinderException("Derived table column alias count does not match output column count");
+        }
+        ArrayList<ColumnCatalogEntry> columns = new ArrayList<>(outputNames.size());
+        for (int index = 0; index < outputNames.size(); index++) {
+            columns.add(new ColumnCatalogEntry(outputNames.get(index), logicalType(subquery.selectList().get(index)), index));
+        }
+        return new BoundSubqueryRef(subquery, tableReference.alias(), columns);
+    }
+
     private BindingContext bindingContext(Transaction transaction, BoundFrom from) {
         if (from instanceof BoundTableRef tableRef) {
             return bindingContext(transaction, tableRef);
+        }
+        if (from instanceof BoundSubqueryRef subqueryRef) {
+            return bindingContext(transaction, subqueryRef);
         }
         if (from instanceof BoundJoinRef joinRef) {
             return bindingContext(transaction, joinRef.left(), joinRef.right());
@@ -149,6 +182,14 @@ public final class Binder {
         List<ColumnCatalogEntry> tableColumns = columns(tableRef);
         for (int index = 0; index < tableColumns.size(); index++) {
             bindings.add(new BoundColumnBinding(relationName(tableRef), tableColumns.get(index), index));
+        }
+        return new BindingContext(transaction, bindings);
+    }
+
+    private BindingContext bindingContext(Transaction transaction, BoundSubqueryRef subqueryRef) {
+        ArrayList<BoundColumnBinding> bindings = new ArrayList<>();
+        for (ColumnCatalogEntry column : subqueryRef.columns()) {
+            bindings.add(new BoundColumnBinding(relationName(subqueryRef), column, column.ordinal()));
         }
         return new BindingContext(transaction, bindings);
     }
@@ -493,148 +534,6 @@ public final class Binder {
         return "?column?";
     }
 
-    private void validateAggregates(
-            List<BoundExpression> selectList,
-            List<BoundExpression> groupBy,
-            BoundExpression having
-    ) {
-        boolean aggregateQuery = containsAggregate(selectList)
-                || containsAggregate(having)
-                || !groupBy.isEmpty()
-                || having != null;
-        if (!aggregateQuery) {
-            return;
-        }
-        for (BoundExpression expression : selectList) {
-            validateAggregateSelectExpression(expression, groupBy);
-        }
-        if (having != null) {
-            validateAggregateSelectExpression(having, groupBy);
-        }
-    }
-
-    private void validateAggregateSelectExpression(BoundExpression expression, List<BoundExpression> groupBy) {
-        if (expression instanceof BoundAggregateExpression) {
-            return;
-        }
-        for (BoundExpression group : groupBy) {
-            if (group.equals(expression)) {
-                return;
-            }
-        }
-        switch (expression) {
-            case BoundBinaryExpression binary -> {
-                validateAggregateSelectExpression(binary.left(), groupBy);
-                validateAggregateSelectExpression(binary.right(), groupBy);
-            }
-            case BoundBetweenExpression between -> {
-                validateAggregateSelectExpression(between.input(), groupBy);
-                validateAggregateSelectExpression(between.lower(), groupBy);
-                validateAggregateSelectExpression(between.upper(), groupBy);
-            }
-            case BoundCastExpression cast -> validateAggregateSelectExpression(cast.child(), groupBy);
-            case BoundCaseExpression caseExpression -> {
-                for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
-                    validateAggregateSelectExpression(branch.condition(), groupBy);
-                    validateAggregateSelectExpression(branch.result(), groupBy);
-                }
-                validateAggregateSelectExpression(caseExpression.elseExpression(), groupBy);
-            }
-            case BoundFunctionExpression function -> {
-                for (BoundExpression argument : function.arguments()) {
-                    validateAggregateSelectExpression(argument, groupBy);
-                }
-            }
-            case BoundInExpression in -> {
-                validateAggregateSelectExpression(in.input(), groupBy);
-                for (BoundExpression candidate : in.candidates()) {
-                    validateAggregateSelectExpression(candidate, groupBy);
-                }
-            }
-            case BoundInSubqueryExpression in -> validateAggregateSelectExpression(in.input(), groupBy);
-            case BoundSubqueryExpression ignored -> {
-                return;
-            }
-            case BoundIntervalExpression ignored -> {
-                return;
-            }
-            case BoundLiteralExpression ignored -> {
-                return;
-            }
-            case BoundColumnRefExpression ignored -> throw new BinderException(
-                    "Column must appear in GROUP BY or be used in an aggregate function");
-            case BoundOutputColumnExpression ignored -> throw new BinderException(
-                    "Column must appear in GROUP BY or be used in an aggregate function");
-            case BoundAggregateExpression ignored -> {
-                return;
-            }
-        }
-    }
-
-    private boolean containsAggregate(List<BoundExpression> expressions) {
-        for (BoundExpression expression : expressions) {
-            if (containsAggregate(expression)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean containsAggregate(BoundExpression expression) {
-        if (expression == null) {
-            return false;
-        }
-        return containsAggregateExpression(expression);
-    }
-
-    private boolean containsAggregateExpression(BoundExpression expression) {
-        return switch (expression) {
-            case BoundAggregateExpression ignored -> true;
-            case BoundBinaryExpression binary -> containsAggregateExpression(binary.left())
-                    || containsAggregateExpression(binary.right());
-            case BoundBetweenExpression between -> containsAggregateExpression(between.input())
-                    || containsAggregateExpression(between.lower())
-                    || containsAggregateExpression(between.upper());
-            case BoundCastExpression cast -> containsAggregateExpression(cast.child());
-            case BoundCaseExpression caseExpression -> {
-                boolean result = containsAggregateExpression(caseExpression.elseExpression());
-                for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
-                    if (containsAggregateExpression(branch.condition()) || containsAggregateExpression(branch.result())) {
-                        result = true;
-                        break;
-                    }
-                }
-                yield result;
-            }
-            case BoundColumnRefExpression ignored -> false;
-            case BoundInExpression in -> {
-                boolean result = containsAggregateExpression(in.input());
-                for (BoundExpression candidate : in.candidates()) {
-                    if (containsAggregateExpression(candidate)) {
-                        result = true;
-                        break;
-                    }
-                }
-                yield result;
-            }
-            case BoundInSubqueryExpression in -> containsAggregate(in.input());
-            case BoundSubqueryExpression ignored -> false;
-            case BoundOutputColumnExpression ignored -> false;
-            case BoundFunctionExpression function -> {
-                boolean result = false;
-                for (BoundExpression argument : function.arguments()) {
-                    if (containsAggregateExpression(argument)) {
-                        result = true;
-                        break;
-                    }
-                }
-                yield result;
-            }
-            case BoundLiteralExpression ignored -> false;
-            case BoundIntervalExpression ignored -> false;
-        };
-    }
-
     private BoundColumnRefExpression bindColumn(BindingContext context, QualifiedName name) {
         if (name.parts().size() == 1) {
             String columnName = name.last();
@@ -680,5 +579,9 @@ public final class Binder {
             return table.replacementScan().path();
         }
         return table.table().name();
+    }
+
+    private String relationName(BoundSubqueryRef subquery) {
+        return subquery.alias() == null ? "subquery" : subquery.alias();
     }
 }

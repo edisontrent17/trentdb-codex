@@ -26,7 +26,7 @@ public final class LogicalPlanPrinter {
                 append(projection.child(), builder, depth + 1);
             }
             case LogicalJoin join -> {
-                builder.append("LogicalComparisonJoin\n");
+                builder.append("LogicalComparisonJoin type=").append(join.joinType().name()).append("\n");
                 append(join.left(), builder, depth + 1);
                 append(join.right(), builder, depth + 1);
             }

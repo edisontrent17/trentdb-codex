@@ -49,12 +49,22 @@ fromItem
     ;
 
 relationPrimary
-    : qualifiedName (AS? identifier)?      #namedRelationPrimary
-    | stringLiteral (AS? identifier)?      #pathRelationPrimary
+    : qualifiedName tableAlias?            #namedRelationPrimary
+    | stringLiteral tableAlias?            #pathRelationPrimary
+    | LPAREN select RPAREN tableAlias?     #subqueryRelationPrimary
     ;
 
 joinClause
-    : INNER? JOIN relationPrimary ON expression
+    : joinType? JOIN relationPrimary ON expression
+    ;
+
+joinType
+    : INNER
+    | LEFT OUTER?
+    ;
+
+tableAlias
+    : AS? identifier (LPAREN identifierList RPAREN)?
     ;
 
 whereClause
@@ -263,6 +273,8 @@ ELSE: 'ELSE';
 END: 'END';
 JOIN: 'JOIN';
 INNER: 'INNER';
+LEFT: 'LEFT';
+OUTER: 'OUTER';
 ON: 'ON';
 AS: 'AS';
 IS: 'IS';

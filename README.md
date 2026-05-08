@@ -29,6 +29,8 @@ Supported parser coverage currently includes:
 - `ORDER BY`
 - `LIMIT`
 - `INNER JOIN`
+- `LEFT OUTER JOIN`
+- derived tables in `FROM`
 - `EXPLAIN`
 
 Supported execution coverage currently includes:
@@ -43,7 +45,8 @@ Supported execution coverage currently includes:
 - `IN`, `NOT IN`, `LIKE`, `NOT LIKE`, `CASE`, date literals, interval literals, and casts
 - grouped and ungrouped aggregates: `count`, `sum`, `min`, `max`, `avg`, including distinct aggregate arguments
 - `HAVING` filters over grouped and ungrouped aggregate queries
-- single and multiple explicit `INNER JOIN` queries through physical join operators
+- single and multiple explicit `INNER JOIN` queries plus `LEFT OUTER JOIN` through physical join operators
+- derived tables in `FROM` with explicit output column aliases
 - non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
 - `ORDER BY` with DuckDB default null ordering
 - streaming `LIMIT`
@@ -61,6 +64,7 @@ Current TPC-H coverage from generated scale 0.01 CSV fixtures:
 - Q10
 - Q11
 - Q12
+- Q13
 - Q14
 - Q16
 - Q18

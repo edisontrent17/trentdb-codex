@@ -19,6 +19,7 @@ import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSelectStatement;
 import dev.trentdb.planner.BoundStatement;
+import dev.trentdb.planner.BoundSubqueryRef;
 import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.planner.BoundTableRef;
 import dev.trentdb.planner.BinderException;
@@ -89,8 +90,11 @@ public final class LogicalPlanner {
         if (from instanceof BoundTableRef tableRef) {
             return new LogicalGet(tableRef);
         }
+        if (from instanceof BoundSubqueryRef subqueryRef) {
+            return planSelect(subqueryRef.subquery());
+        }
         if (from instanceof BoundJoinRef joinRef) {
-            return new LogicalJoin(planFrom(joinRef.left()), new LogicalGet(joinRef.right()), joinRef.condition());
+            return new LogicalJoin(planFrom(joinRef.left()), new LogicalGet(joinRef.right()), joinRef.condition(), joinRef.type());
         }
         throw new BinderException("Unsupported bound FROM source: " + from.getClass().getSimpleName());
     }

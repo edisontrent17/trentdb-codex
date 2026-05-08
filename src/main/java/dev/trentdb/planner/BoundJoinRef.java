@@ -1,4 +1,11 @@
 package dev.trentdb.planner;
 
-public record BoundJoinRef(BoundFrom left, BoundTableRef right, BoundExpression condition) implements BoundFrom {
+import dev.trentdb.ast.JoinType;
+
+public record BoundJoinRef(
+        BoundFrom left,
+        BoundTableRef right,
+        BoundExpression condition,
+        JoinType type
+) implements BoundFrom {
 }
