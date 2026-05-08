@@ -209,6 +209,60 @@ class TpchCompatibilityTest {
     }
 
     @Test
+    void executesTpchQ15FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String lineitemCsv = resourcePath("tpch/lineitem_q15_sf001.csv");
+        String supplierCsv = resourcePath("tpch/supplier_q15_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                WITH revenue AS (
+                    SELECT
+                        l_suppkey AS supplier_no,
+                        sum(l_extendedprice * (1 - l_discount)) AS total_revenue
+                    FROM
+                        '%s'
+                    WHERE
+                        l_shipdate >= CAST('1996-01-01' AS date)
+                        AND l_shipdate < CAST('1996-04-01' AS date)
+                    GROUP BY
+                        supplier_no
+                )
+                SELECT
+                    s_suppkey,
+                    s_name,
+                    s_address,
+                    s_phone,
+                    total_revenue
+                FROM
+                    revenue
+                JOIN
+                    '%s' s
+                ON
+                    s_suppkey = supplier_no
+                WHERE
+                    total_revenue = (
+                        SELECT
+                            max(total_revenue)
+                        FROM
+                            revenue
+                    )
+                ORDER BY
+                    s_suppkey;
+                """.formatted(sqlString(lineitemCsv), sqlString(supplierCsv)));
+
+        assertEquals(List.of("s_suppkey", "s_name", "s_address", "s_phone", "total_revenue"), result.columns());
+        assertEquals(1, result.rows().size());
+        assertQ15Row(
+                result.rows().getFirst(),
+                21L,
+                "Supplier#000000021",
+                "TZoQwNFFO i,baXpbpin02,hvuhE,GRVIKm ",
+                "12-253-590-5816",
+                1161099.4636d
+        );
+    }
+
+    @Test
     void executesTpchQ3FromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String customerCsv = resourcePath("tpch/customer_q3_sf001.csv");
@@ -971,6 +1025,21 @@ class TpchCompatibilityTest {
     private void assertQ13Row(List<Object> row, long customerCount, long customerDistribution) {
         assertEquals(customerCount, row.get(0));
         assertEquals(customerDistribution, row.get(1));
+    }
+
+    private void assertQ15Row(
+            List<Object> row,
+            long supplierKey,
+            String supplierName,
+            String supplierAddress,
+            String supplierPhone,
+            double totalRevenue
+    ) {
+        assertEquals(supplierKey, row.get(0));
+        assertEquals(supplierName, row.get(1));
+        assertEquals(supplierAddress, row.get(2));
+        assertEquals(supplierPhone, row.get(3));
+        assertDoubleEquals(totalRevenue, (Double) row.get(4));
     }
 
     private void assertQ16Row(

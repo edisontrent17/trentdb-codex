@@ -111,6 +111,23 @@ class SqlParserTest {
     }
 
     @Test
+    void parsesCommonTableExpression() {
+        Statement statement = parser.parse("""
+                WITH revenue AS (
+                    SELECT id AS supplier_no
+                    FROM people
+                )
+                SELECT supplier_no
+                FROM revenue
+                """);
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        assertEquals(1, select.commonTableExpressions().size());
+        assertEquals("revenue", select.commonTableExpressions().getFirst().name());
+        assertEquals("revenue", select.from().base().name().last());
+    }
+
+    @Test
     void parsesExplain() {
         Statement statement = parser.parse("EXPLAIN SELECT * FROM people");
 

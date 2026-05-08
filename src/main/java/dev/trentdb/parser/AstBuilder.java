@@ -7,6 +7,7 @@ import dev.trentdb.ast.CaseExpression;
 import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnDefinition;
 import dev.trentdb.ast.ColumnReferenceExpression;
+import dev.trentdb.ast.CommonTableExpression;
 import dev.trentdb.ast.CreateTableStatement;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.Expression;
@@ -92,6 +93,9 @@ final class AstBuilder {
     }
 
     private SelectStatement select(TrentDbSqlParser.SelectContext context) {
+        List<CommonTableExpression> commonTableExpressions = context.withClause() == null
+                ? List.of()
+                : commonTableExpressions(context.withClause());
         ArrayList<SelectItem> selectItems = new ArrayList<>(context.selectItemList().selectItem().size());
         for (TrentDbSqlParser.SelectItemContext itemContext : context.selectItemList().selectItem()) {
             selectItems.add(selectItem(itemContext));
@@ -104,7 +108,26 @@ final class AstBuilder {
         Expression having = context.havingClause() == null ? null : expression(context.havingClause().expression());
         List<OrderByItem> orderBy = context.orderByClause() == null ? List.of() : orderByItems(context.orderByClause());
         Long limit = context.limitClause() == null ? null : Long.parseLong(context.limitClause().integerLiteral().getText());
-        return new SelectStatement(selectItems, fromItem(context.fromItem()), where, groupBy, having, orderBy, limit);
+        return new SelectStatement(commonTableExpressions, selectItems, fromItem(context.fromItem()), where, groupBy, having, orderBy, limit);
+    }
+
+    private List<CommonTableExpression> commonTableExpressions(TrentDbSqlParser.WithClauseContext context) {
+        ArrayList<CommonTableExpression> expressions = new ArrayList<>(context.commonTableExpression().size());
+        for (TrentDbSqlParser.CommonTableExpressionContext expressionContext : context.commonTableExpression()) {
+            expressions.add(commonTableExpression(expressionContext));
+        }
+        return expressions;
+    }
+
+    private CommonTableExpression commonTableExpression(TrentDbSqlParser.CommonTableExpressionContext context) {
+        List<String> columnAliases = context.identifierList() == null
+                ? List.of()
+                : context.identifierList().identifier().stream().map(identifier -> unquote(identifier.getText())).toList();
+        return new CommonTableExpression(
+                unquote(context.identifier().getText()),
+                columnAliases,
+                select(context.select())
+        );
     }
 
     private SelectItem selectItem(TrentDbSqlParser.SelectItemContext context) {

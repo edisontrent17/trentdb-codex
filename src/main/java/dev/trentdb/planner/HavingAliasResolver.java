@@ -25,9 +25,15 @@ final class HavingAliasResolver {
     }
 
     private final List<SelectAlias> aliases;
+    private final String clauseName;
 
     HavingAliasResolver(List<SelectAlias> aliases) {
+        this(aliases, "HAVING");
+    }
+
+    HavingAliasResolver(List<SelectAlias> aliases, String clauseName) {
         this.aliases = List.copyOf(aliases);
+        this.clauseName = clauseName;
     }
 
     Expression resolve(Expression expression) {
@@ -97,7 +103,7 @@ final class HavingAliasResolver {
         for (SelectAlias alias : aliases) {
             if (alias.name().equals(aliasName)) {
                 if (match != null) {
-                    throw new BinderException("HAVING reference is ambiguous: " + aliasName);
+                    throw new BinderException(clauseName + " reference is ambiguous: " + aliasName);
                 }
                 match = alias.expression();
             }

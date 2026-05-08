@@ -32,7 +32,15 @@ insert
     ;
 
 select
-    : SELECT selectItemList FROM fromItem (whereClause)? (groupByClause)? (havingClause)? (orderByClause)? (limitClause)?
+    : withClause? SELECT selectItemList FROM fromItem (whereClause)? (groupByClause)? (havingClause)? (orderByClause)? (limitClause)?
+    ;
+
+withClause
+    : WITH commonTableExpression (COMMA commonTableExpression)*
+    ;
+
+commonTableExpression
+    : identifier (LPAREN identifierList RPAREN)? AS LPAREN select RPAREN
     ;
 
 selectItemList
@@ -256,6 +264,7 @@ INSERT: 'INSERT';
 INTO: 'INTO';
 VALUES: 'VALUES';
 SELECT: 'SELECT';
+WITH: 'WITH';
 FROM: 'FROM';
 WHERE: 'WHERE';
 GROUP: 'GROUP';

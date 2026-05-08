@@ -26,7 +26,8 @@
 - implement DuckDB-shaped `HAVING` binding and planning as a filter above `LogicalAggregate`
 - implement distinct aggregate arguments for the supported aggregate functions
 - implement DuckDB-shaped `LEFT OUTER JOIN` and non-correlated derived tables in `FROM`
-- run generated CSV TPC-H compatibility tests for Q1, Q3, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13, Q14, Q16, Q18, and Q19
+- implement non-recursive common table expressions for read queries
+- run generated CSV TPC-H compatibility tests for Q1, Q3, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13, Q14, Q15, Q16, Q18, and Q19
 - add ambiguity handling for unqualified column references in join binding
 - add non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
 
