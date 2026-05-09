@@ -2,6 +2,7 @@ package dev.trentdb.execution;
 
 import dev.trentdb.execution.physical.PhysicalPlanner;
 import dev.trentdb.execution.physical.PipelineExecutor;
+import dev.trentdb.optimizer.Optimizer;
 import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.storage.StorageManager;
 
@@ -14,13 +15,22 @@ public final class QueryExecutor {
 
     public QueryResult execute(LogicalOperator operator) {
         long totalStart = ExecutionProfiler.start();
+        long optimizeStart = ExecutionProfiler.start();
+        LogicalOperator optimized = new Optimizer().optimize(operator);
+        ExecutionProfiler.log(
+                "QueryExecutor",
+                "optimize",
+                optimizeStart,
+                "input=" + operator.getClass().getSimpleName() + " output=" + optimized.getClass().getSimpleName()
+        );
+
         long planStart = ExecutionProfiler.start();
-        dev.trentdb.execution.physical.Pipeline pipeline = new PhysicalPlanner(storageManager).plan(operator);
+        dev.trentdb.execution.physical.Pipeline pipeline = new PhysicalPlanner(storageManager).plan(optimized);
         ExecutionProfiler.log(
                 "QueryExecutor",
                 "plan",
                 planStart,
-                "logical=" + operator.getClass().getSimpleName()
+                "logical=" + optimized.getClass().getSimpleName()
         );
 
         long pipelineStart = ExecutionProfiler.start();
