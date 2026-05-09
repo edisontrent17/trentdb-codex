@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class OptimizerRewriteTest {
     @Test
@@ -33,6 +34,16 @@ class OptimizerRewriteTest {
         BoundExpression rewritten = new BoundExpressionRewriter().rewrite(expression);
 
         assertSame(expression, rewritten);
+    }
+
+    @Test
+    void expressionRewriterRejectsNullExpression() {
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> new BoundExpressionRewriter().rewrite(null)
+        );
+
+        assertEquals("Expression must not be null", error.getMessage());
     }
 
     @Test

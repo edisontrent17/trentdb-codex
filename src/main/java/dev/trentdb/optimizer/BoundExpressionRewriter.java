@@ -28,7 +28,7 @@ import java.util.List;
 class BoundExpressionRewriter {
     BoundExpression rewrite(BoundExpression expression) {
         if (expression == null) {
-            return null;
+            throw new IllegalArgumentException("Expression must not be null");
         }
         return switch (expression) {
             case BoundAggregateExpression aggregate -> visitAggregate(aggregate);
@@ -52,9 +52,10 @@ class BoundExpressionRewriter {
         BoundFrom from = rewriteFrom(statement.from());
         ExpressionList selectList = rewriteList(statement.selectList());
         ExpressionList groupBy = rewriteList(statement.groupBy());
-        BoundExpression where = rewrite(statement.where());
-        BoundExpression having = rewrite(statement.having());
+        BoundExpression where = rewriteOptional(statement.where());
+        BoundExpression having = rewriteOptional(statement.having());
         OrderList orderBy = rewriteOrderBy(statement.orderBy());
+        // Child rewriters return the original object when a subtree is unchanged, so reference equality is intentional.
         if (from == statement.from() && !selectList.changed() && !groupBy.changed() && where == statement.where()
                 && having == statement.having() && !orderBy.changed()) {
             return statement;
@@ -76,24 +77,25 @@ class BoundExpressionRewriter {
     }
 
     protected BoundFrom rewriteFrom(BoundFrom from) {
-        return switch (from) {
-            case BoundJoinRef join -> {
-                BoundFrom left = rewriteFrom(join.left());
-                BoundExpression condition = rewrite(join.condition());
-                if (left == join.left() && condition == join.condition()) {
-                    yield join;
-                }
-                yield new BoundJoinRef(left, join.right(), condition, join.type());
+        if (from instanceof BoundJoinRef join) {
+            BoundFrom left = rewriteFrom(join.left());
+            BoundExpression condition = rewrite(join.condition());
+            if (left == join.left() && condition == join.condition()) {
+                return join;
             }
-            case BoundSubqueryRef subquery -> {
-                BoundSelectStatement statement = rewriteSelect(subquery.subquery());
-                if (statement == subquery.subquery()) {
-                    yield subquery;
-                }
-                yield new BoundSubqueryRef(statement, subquery.relationName(), subquery.columns());
+            return new BoundJoinRef(left, join.right(), condition, join.type());
+        }
+        if (from instanceof BoundSubqueryRef subquery) {
+            BoundSelectStatement statement = rewriteSelect(subquery.subquery());
+            if (statement == subquery.subquery()) {
+                return subquery;
             }
-            case BoundTableRef table -> table;
-        };
+            return new BoundSubqueryRef(statement, subquery.relationName(), subquery.columns());
+        }
+        if (from instanceof BoundTableRef) {
+            return from;
+        }
+        throw new IllegalArgumentException("Unsupported bound FROM source: " + from.getClass().getSimpleName());
     }
 
     protected BoundExpression visitAggregate(BoundAggregateExpression aggregate) {
@@ -134,7 +136,9 @@ class BoundExpressionRewriter {
         for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
             BoundExpression condition = rewrite(branch.condition());
             BoundExpression result = rewrite(branch.result());
-            changed |= condition != branch.condition() || result != branch.result();
+            if (condition != branch.condition() || result != branch.result()) {
+                changed = true;
+            }
             branches.add(new BoundCaseExpression.WhenClause(condition, result));
         }
         BoundExpression elseExpression = rewrite(caseExpression.elseExpression());
@@ -214,7 +218,9 @@ class BoundExpressionRewriter {
         boolean changed = false;
         for (BoundExpression expression : expressions) {
             BoundExpression rewrittenExpression = rewrite(expression);
-            changed |= rewrittenExpression != expression;
+            if (rewrittenExpression != expression) {
+                changed = true;
+            }
             rewritten.add(rewrittenExpression);
         }
         return changed ? new ExpressionList(rewritten, true) : new ExpressionList(expressions, false);
@@ -225,10 +231,18 @@ class BoundExpressionRewriter {
         boolean changed = false;
         for (BoundOrderByItem item : items) {
             BoundExpression expression = rewrite(item.expression());
-            changed |= expression != item.expression();
-            rewritten.add(expression == item.expression() ? item : new BoundOrderByItem(expression, item.direction()));
+            if (expression == item.expression()) {
+                rewritten.add(item);
+            } else {
+                changed = true;
+                rewritten.add(new BoundOrderByItem(expression, item.direction()));
+            }
         }
         return changed ? new OrderList(rewritten, true) : new OrderList(items, false);
+    }
+
+    private BoundExpression rewriteOptional(BoundExpression expression) {
+        return expression == null ? null : rewrite(expression);
     }
 
     private record ExpressionList(List<BoundExpression> expressions, boolean changed) {
