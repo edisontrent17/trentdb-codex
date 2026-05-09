@@ -26,11 +26,21 @@ import java.util.ArrayList;
 import java.util.List;
 
 class BoundExpressionRewriter {
+    private int expressionsVisited;
+    private int expressionsRebuilt;
+    private int selectStatementsVisited;
+    private int selectStatementsRebuilt;
+    private int fromSourcesVisited;
+    private int fromSourcesRebuilt;
+    private int expressionListsRebuilt;
+    private int orderListsRebuilt;
+
     BoundExpression rewrite(BoundExpression expression) {
         if (expression == null) {
             throw new IllegalArgumentException("Expression must not be null");
         }
-        return switch (expression) {
+        expressionsVisited++;
+        BoundExpression rewritten = switch (expression) {
             case BoundAggregateExpression aggregate -> visitAggregate(aggregate);
             case BoundBetweenExpression between -> visitBetween(between);
             case BoundBinaryExpression binary -> visitBinary(binary);
@@ -46,9 +56,14 @@ class BoundExpressionRewriter {
             case BoundOutputColumnExpression output -> visitOutputColumn(output);
             case BoundSubqueryExpression subquery -> visitScalarSubquery(subquery);
         };
+        if (rewritten != expression) {
+            expressionsRebuilt++;
+        }
+        return rewritten;
     }
 
     BoundSelectStatement rewriteSelect(BoundSelectStatement statement) {
+        selectStatementsVisited++;
         BoundFrom from = rewriteFrom(statement.from());
         ExpressionList selectList = rewriteList(statement.selectList());
         ExpressionList groupBy = rewriteList(statement.groupBy());
@@ -60,6 +75,7 @@ class BoundExpressionRewriter {
                 && having == statement.having() && !orderBy.changed()) {
             return statement;
         }
+        selectStatementsRebuilt++;
         return new BoundSelectStatement(
                 from,
                 selectList.expressions(),
@@ -77,12 +93,14 @@ class BoundExpressionRewriter {
     }
 
     protected BoundFrom rewriteFrom(BoundFrom from) {
+        fromSourcesVisited++;
         if (from instanceof BoundJoinRef join) {
             BoundFrom left = rewriteFrom(join.left());
             BoundExpression condition = rewrite(join.condition());
             if (left == join.left() && condition == join.condition()) {
                 return join;
             }
+            fromSourcesRebuilt++;
             return new BoundJoinRef(left, join.right(), condition, join.type());
         }
         if (from instanceof BoundSubqueryRef subquery) {
@@ -90,6 +108,7 @@ class BoundExpressionRewriter {
             if (statement == subquery.subquery()) {
                 return subquery;
             }
+            fromSourcesRebuilt++;
             return new BoundSubqueryRef(statement, subquery.relationName(), subquery.columns());
         }
         if (from instanceof BoundTableRef) {
@@ -223,7 +242,11 @@ class BoundExpressionRewriter {
             }
             rewritten.add(rewrittenExpression);
         }
-        return changed ? new ExpressionList(rewritten, true) : new ExpressionList(expressions, false);
+        if (changed) {
+            expressionListsRebuilt++;
+            return new ExpressionList(rewritten, true);
+        }
+        return new ExpressionList(expressions, false);
     }
 
     private OrderList rewriteOrderBy(List<BoundOrderByItem> items) {
@@ -238,11 +261,47 @@ class BoundExpressionRewriter {
                 rewritten.add(new BoundOrderByItem(expression, item.direction()));
             }
         }
-        return changed ? new OrderList(rewritten, true) : new OrderList(items, false);
+        if (changed) {
+            orderListsRebuilt++;
+            return new OrderList(rewritten, true);
+        }
+        return new OrderList(items, false);
     }
 
     private BoundExpression rewriteOptional(BoundExpression expression) {
         return expression == null ? null : rewrite(expression);
+    }
+
+    int expressionsVisited() {
+        return expressionsVisited;
+    }
+
+    int expressionsRebuilt() {
+        return expressionsRebuilt;
+    }
+
+    int selectStatementsVisited() {
+        return selectStatementsVisited;
+    }
+
+    int selectStatementsRebuilt() {
+        return selectStatementsRebuilt;
+    }
+
+    int fromSourcesVisited() {
+        return fromSourcesVisited;
+    }
+
+    int fromSourcesRebuilt() {
+        return fromSourcesRebuilt;
+    }
+
+    int expressionListsRebuilt() {
+        return expressionListsRebuilt;
+    }
+
+    int orderListsRebuilt() {
+        return orderListsRebuilt;
     }
 
     private record ExpressionList(List<BoundExpression> expressions, boolean changed) {

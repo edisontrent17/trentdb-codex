@@ -16,12 +16,18 @@ public final class QueryExecutor {
     public QueryResult execute(LogicalOperator operator) {
         long totalStart = ExecutionProfiler.start();
         long optimizeStart = ExecutionProfiler.start();
-        LogicalOperator optimized = new Optimizer().optimize(operator);
+        Optimizer optimizer = new Optimizer(ExecutionProfiler.enabled());
+        LogicalOperator optimized = optimizer.optimize(operator);
+        String optimizerDetails = "input=" + operator.getClass().getSimpleName()
+                + " output=" + optimized.getClass().getSimpleName();
+        if (ExecutionProfiler.enabled()) {
+            optimizerDetails = optimizerDetails + " " + optimizer.metrics().profileDetails();
+        }
         ExecutionProfiler.log(
                 "QueryExecutor",
                 "optimize",
                 optimizeStart,
-                "input=" + operator.getClass().getSimpleName() + " output=" + optimized.getClass().getSimpleName()
+                optimizerDetails
         );
 
         long planStart = ExecutionProfiler.start();

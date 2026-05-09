@@ -82,6 +82,27 @@ class OptimizerRewriteTest {
         assertEquals(2L, left.value());
     }
 
+    @Test
+    void optimizerCollectsImmutableRewriteMetricsWhenEnabled() {
+        LogicalGet get = new LogicalGet(new BoundTableRef(table(), null));
+        LogicalProjection projection = new LogicalProjection(
+                List.of(binaryLiteralExpression(1L, 3L)),
+                List.of("value"),
+                get
+        );
+        Optimizer optimizer = new Optimizer(true);
+
+        LogicalOperator optimized = optimizer.optimize(projection);
+
+        Optimizer.Metrics metrics = optimizer.metrics();
+        assertSame(projection, optimized);
+        assertEquals(2, metrics.logicalOperatorsVisited());
+        assertEquals(0, metrics.logicalOperatorsRebuilt());
+        assertEquals(3, metrics.boundExpressionsVisited());
+        assertEquals(0, metrics.boundExpressionsRebuilt());
+        assertEquals(0, metrics.expressionListsRebuilt());
+    }
+
     private BoundExpression binaryLiteralExpression(long left, long right) {
         return new BoundBinaryExpression(
                 new BoundLiteralExpression(LogicalType.BIGINT, left),

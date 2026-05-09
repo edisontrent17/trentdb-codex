@@ -18,13 +18,17 @@ import java.util.List;
 
 class LogicalOperatorRewriter {
     private final BoundExpressionRewriter expressionRewriter;
+    private int operatorsVisited;
+    private int operatorsRebuilt;
+    private int expressionListsRebuilt;
 
     LogicalOperatorRewriter(BoundExpressionRewriter expressionRewriter) {
         this.expressionRewriter = expressionRewriter;
     }
 
     LogicalOperator rewrite(LogicalOperator operator) {
-        return switch (operator) {
+        operatorsVisited++;
+        LogicalOperator rewritten = switch (operator) {
             case LogicalAggregate aggregate -> rewriteAggregate(aggregate);
             case LogicalDependentJoin join -> rewriteDependentJoin(join);
             case LogicalExplain explain -> rewriteExplain(explain);
@@ -35,6 +39,10 @@ class LogicalOperatorRewriter {
             case LogicalOrder order -> rewriteOrder(order);
             case LogicalProjection projection -> rewriteProjection(projection);
         };
+        if (rewritten != operator) {
+            operatorsRebuilt++;
+        }
+        return rewritten;
     }
 
     private LogicalOperator rewriteAggregate(LogicalAggregate aggregate) {
@@ -103,6 +111,7 @@ class LogicalOperatorRewriter {
         for (int index = 0; index < expressions.size(); index++) {
             BoundExpression rewritten = expressionRewriter.rewrite(expressions.get(index));
             if (rewritten != expressions.get(index)) {
+                expressionListsRebuilt++;
                 return rewriteChangedExpressions(expressions, index, rewritten);
             }
         }
@@ -120,5 +129,17 @@ class LogicalOperatorRewriter {
             rewritten.set(index, expressionRewriter.rewrite(rewritten.get(index)));
         }
         return rewritten;
+    }
+
+    int operatorsVisited() {
+        return operatorsVisited;
+    }
+
+    int operatorsRebuilt() {
+        return operatorsRebuilt;
+    }
+
+    int expressionListsRebuilt() {
+        return expressionListsRebuilt;
     }
 }
