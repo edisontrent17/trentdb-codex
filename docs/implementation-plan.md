@@ -526,11 +526,10 @@ Keep the package layout close to the engine pipeline:
 
 The next implementation sequence should be:
 
-1. Introduce optimizer scaffolding now that all 22 TPC-H queries have unoptimized regression coverage.
-2. Add eligible subquery decorrelation first, with canonical Q20 as the initial performance target.
-3. Add optimizer passes for constant folding, filter pushdown, projection pruning, and top-N.
-4. Harden CSV replacement scans behind the generic replacement scan abstraction with quote-aware parsing and DuckDB-shaped sniffing.
-5. Connect `CREATE TABLE` and `INSERT ... VALUES` through WAL-capable catalog/storage/transaction write boundaries before advertising durable persistence.
+1. Add eligible subquery decorrelation first, with canonical Q20 as the initial performance target.
+2. Add optimizer passes for constant folding, filter pushdown, projection pruning, and top-N.
+3. Harden CSV replacement scans behind the generic replacement scan abstraction with quote-aware parsing and DuckDB-shaped sniffing.
+4. Connect `CREATE TABLE` and `INSERT ... VALUES` through WAL-capable catalog/storage/transaction write boundaries before advertising durable persistence.
 
 ## Explicit Non-Goals For Now
 
