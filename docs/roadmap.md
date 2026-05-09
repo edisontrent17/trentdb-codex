@@ -119,7 +119,7 @@ Status:
 - explicit `INNER JOIN` and `LEFT OUTER JOIN` binding is implemented for left-deep multi-join trees with ambiguity handling
 - derived table binding is implemented for non-correlated subqueries in `FROM`, including explicit output column aliases
 - non-recursive common table expression binding is implemented for read queries
-- non-correlated scalar subqueries, `IN`/`NOT IN` subqueries, and the correlated `EXISTS` equality shape used by TPC-H Q4 are implemented
+- non-correlated scalar subqueries, `IN`/`NOT IN` subqueries, and the correlated `EXISTS`/`NOT EXISTS` equality and inequality shapes used by TPC-H Q4 and Q21 are implemented
 
 ## Milestone 7: Logical Planning
 
@@ -136,7 +136,7 @@ Deliverables:
 Status:
 
 - implemented for scan, filter, projection, aggregate, `HAVING` as a post-aggregate filter, inner and left joins, correlated `EXISTS` as a DuckDB-shaped mark dependent join, derived tables, non-recursive common table expressions, order, limit, and explain
-- optimizer-facing rewrites are pending
+- optimizer-facing rewrites are pending; a small non-optimizer conjunct split now keeps ordinary filters below dependent `EXISTS` mark joins
 
 ## Milestone 8: Execution Substrate
 
@@ -227,6 +227,6 @@ Deliverables:
 Status:
 
 - parser, binder, planner, and read execution tests are in place for the implemented subset
-- generated CSV compatibility coverage exists for TPC-H Q1, Q3, Q4, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13, Q14, Q15, Q16, Q18, and Q19
+- generated CSV compatibility coverage exists for TPC-H Q1 through Q22
 - broader DuckDB-style behavior tests, plan-shape tests, and execution edge cases remain near-term priorities
 - recovery, corruption, and concurrency tests depend on the WAL, persistence, and MVCC milestones

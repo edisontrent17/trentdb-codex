@@ -1,5 +1,6 @@
 package dev.trentdb.planner.logical;
 
+import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.planner.BoundAggregateExpression;
 import dev.trentdb.planner.BoundBetweenExpression;
@@ -66,13 +67,7 @@ public final class LogicalPlanner {
     private LogicalOperator planSelect(BoundSelectStatement statement) {
         LogicalOperator root = planFrom(statement.from());
         if (statement.where() != null) {
-            BoundExpression where = statement.where();
-            if (containsCorrelatedExists(where)) {
-                DependentRewrite rewrite = rewriteDependentExists(root, where);
-                root = rewrite.root();
-                where = rewrite.expression();
-            }
-            root = new LogicalFilter(where, root);
+            root = planWhere(root, statement.where());
         }
         if (statement.isAggregateQuery()) {
             AggregatePlan aggregatePlan = aggregatePlan(statement);
@@ -102,6 +97,52 @@ public final class LogicalPlanner {
             root = new LogicalLimit(statement.limit(), root);
         }
         return root;
+    }
+
+    private LogicalOperator planWhere(LogicalOperator root, BoundExpression where) {
+        if (!containsCorrelatedExists(where)) {
+            return new LogicalFilter(where, root);
+        }
+        ArrayList<BoundExpression> pushdown = new ArrayList<>();
+        ArrayList<BoundExpression> dependent = new ArrayList<>();
+        splitDependentConjuncts(where, pushdown, dependent);
+        if (!pushdown.isEmpty()) {
+            root = new LogicalFilter(combineConjuncts(pushdown), root);
+        }
+        BoundExpression dependentPredicate = combineConjuncts(dependent);
+        if (dependentPredicate == null) {
+            return root;
+        }
+        DependentRewrite rewrite = rewriteDependentExists(root, dependentPredicate);
+        return new LogicalFilter(rewrite.expression(), rewrite.root());
+    }
+
+    private void splitDependentConjuncts(
+            BoundExpression expression,
+            List<BoundExpression> pushdown,
+            List<BoundExpression> dependent
+    ) {
+        if (expression instanceof BoundBinaryExpression binary && binary.operator() == BinaryOperator.AND) {
+            splitDependentConjuncts(binary.left(), pushdown, dependent);
+            splitDependentConjuncts(binary.right(), pushdown, dependent);
+            return;
+        }
+        if (containsCorrelatedExists(expression)) {
+            dependent.add(expression);
+            return;
+        }
+        pushdown.add(expression);
+    }
+
+    private BoundExpression combineConjuncts(List<BoundExpression> conjuncts) {
+        if (conjuncts.isEmpty()) {
+            return null;
+        }
+        BoundExpression result = conjuncts.getFirst();
+        for (int index = 1; index < conjuncts.size(); index++) {
+            result = new BoundBinaryExpression(result, BinaryOperator.AND, conjuncts.get(index), LogicalType.BOOLEAN);
+        }
+        return result;
     }
 
     private LogicalOperator planFrom(BoundFrom from) {

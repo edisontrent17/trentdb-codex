@@ -26,6 +26,7 @@ import dev.trentdb.ast.StarExpression;
 import dev.trentdb.ast.Statement;
 import dev.trentdb.ast.SubqueryExpression;
 import dev.trentdb.ast.TableReference;
+import dev.trentdb.ast.UnaryExpression;
 import dev.trentdb.catalog.Catalog;
 import dev.trentdb.catalog.CatalogException;
 import dev.trentdb.catalog.ColumnCatalogEntry;
@@ -401,10 +402,6 @@ public final class Binder {
         return new BoundOutputColumnExpression(selectNames.get(index), index, logicalType(selectList.get(index)));
     }
 
-    private BoundExpression bindExpression(BindingContext context, Expression expression) {
-        return bindExpression(context, expression, false);
-    }
-
     private BoundExpression bindExpression(BindingContext context, Expression expression, boolean allowAggregates) {
         if (expression instanceof ColumnReferenceExpression columnReference) {
             return bindColumn(context, columnReference.name());
@@ -420,6 +417,9 @@ public final class Binder {
         }
         if (expression instanceof BinaryExpression binary) {
             return bindBinaryExpression(context, binary, allowAggregates);
+        }
+        if (expression instanceof UnaryExpression unary) {
+            return UnaryExpressionBinder.bind(unary.operator(), bindExpression(context, unary.expression(), allowAggregates));
         }
         if (expression instanceof BetweenExpression between) {
             return bindBetweenExpression(context, between, allowAggregates);

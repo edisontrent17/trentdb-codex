@@ -21,6 +21,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 class TpchCompatibilityTest {
     private final SqlParser parser = new SqlParser();
@@ -102,6 +103,152 @@ class TpchCompatibilityTest {
         assertQ1Row(result.rows().get(3), "R", "F", 381449.0d, 534594445.35d, 507996454.4067d,
                 528524219.358903d, 25.597168165346933d, 35874.00653268018d,
                 0.049827539927526504d, 14902L);
+    }
+
+    @Test
+    void executesTpchQ2FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String partCsv = resourcePath("tpch/part_q2_sf001.csv");
+        String supplierCsv = resourcePath("tpch/supplier_q2_sf001.csv");
+        String partsuppCsv = resourcePath("tpch/partsupp_q2_sf001.csv");
+        String nationCsv = resourcePath("tpch/nation_q2_sf001.csv");
+        String regionCsv = resourcePath("tpch/region_q2_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    s_acctbal,
+                    s_name,
+                    n_name,
+                    p_partkey,
+                    p_mfgr,
+                    s_address,
+                    s_phone,
+                    s_comment
+                FROM
+                    (
+                        SELECT
+                            ps_partkey AS min_partkey,
+                            min(ps_supplycost) AS min_supplycost
+                        FROM
+                            '%3$s' ps
+                        JOIN
+                            '%2$s' s
+                        ON
+                            s_suppkey = ps_suppkey
+                        JOIN
+                            '%4$s' n
+                        ON
+                            s_nationkey = n_nationkey
+                        JOIN
+                            '%5$s' r
+                        ON
+                            n_regionkey = r_regionkey
+                        WHERE
+                            r_name = 'EUROPE'
+                        GROUP BY
+                            ps_partkey
+                    ) minps
+                JOIN
+                    '%1$s' p
+                ON
+                    p_partkey = min_partkey
+                JOIN
+                    '%3$s' ps
+                ON
+                    p_partkey = ps_partkey
+                    AND ps_supplycost = min_supplycost
+                JOIN
+                    '%2$s' s
+                ON
+                    s_suppkey = ps_suppkey
+                JOIN
+                    '%4$s' n
+                ON
+                    s_nationkey = n_nationkey
+                JOIN
+                    '%5$s' r
+                ON
+                    n_regionkey = r_regionkey
+                WHERE
+                    p_size = 15
+                    AND p_type LIKE '%%BRASS'
+                    AND r_name = 'EUROPE'
+                ORDER BY
+                    s_acctbal DESC,
+                    n_name,
+                    s_name,
+                    p_partkey
+                LIMIT
+                    100;
+                """.formatted(
+                sqlString(partCsv),
+                sqlString(supplierCsv),
+                sqlString(partsuppCsv),
+                sqlString(nationCsv),
+                sqlString(regionCsv)
+        ));
+
+        assertEquals(List.of(
+                "s_acctbal",
+                "s_name",
+                "n_name",
+                "p_partkey",
+                "p_mfgr",
+                "s_address",
+                "s_phone",
+                "s_comment"
+        ), result.columns());
+        assertEquals(4, result.rows().size());
+        assertQ2Row(result.rows().get(0), 4186.95d, "Supplier#000000077", "GERMANY", 249L,
+                "Manufacturer#4", "w5yO 0yjXou 8I4ffzADq,R8tD06x1vbeMpLJF2", "17-281-345-4863",
+                "ainst the blithely ironic packages poach at the regul");
+        assertQ2Row(result.rows().get(1), 1883.37d, "Supplier#000000086", "ROMANIA", 1015L,
+                "Manufacturer#4", "iZLKKWaQADe", "29-903-665-7065",
+                " foxes boost after the carefully silent asymptotes. slyl");
+        assertQ2Row(result.rows().get(2), 1687.81d, "Supplier#000000017", "ROMANIA", 1634L,
+                "Manufacturer#2", "PYN0m9j98GhX42DvBKvURcAd,B", "29-601-884-9219",
+                "se slyly furiously even notornis. furiously regular packa");
+        assertQ2Row(result.rows().get(3), 287.16d, "Supplier#000000052", "ROMANIA", 323L,
+                "Manufacturer#4", "5oGr3pj2sprZNwho8CFW2haaObd0", "29-974-934-4713",
+                "arefully silent pinto beans use furiously furiously even deposits. regular packages are furious");
+    }
+
+    @Test
+    void executesTpchQ17FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String lineitemCsv = resourcePath("tpch/lineitem_q17_sf001.csv");
+        String partCsv = resourcePath("tpch/part_q17_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    sum(l_extendedprice) / 7.0 AS avg_yearly
+                FROM
+                    (
+                        SELECT
+                            l_partkey AS avg_partkey,
+                            0.2 * avg(l_quantity) AS quantity_threshold
+                        FROM
+                            '%s'
+                        GROUP BY
+                            l_partkey
+                    ) avg_l
+                JOIN
+                    '%s' p
+                ON
+                    p_partkey = avg_partkey
+                JOIN
+                    '%s' l
+                ON
+                    p_partkey = l_partkey
+                WHERE
+                    p_brand = 'Brand#23'
+                    AND p_container = 'MED BOX'
+                    AND l_quantity < quantity_threshold;
+                """.formatted(sqlString(lineitemCsv), sqlString(partCsv), sqlString(lineitemCsv)));
+
+        assertEquals(List.of("avg_yearly"), result.columns());
+        assertEquals(1, result.rows().size());
+        assertNull(result.rows().getFirst().getFirst());
     }
 
     @Test
@@ -977,6 +1124,199 @@ class TpchCompatibilityTest {
         assertDoubleEquals(22923.028d, (Double) result.rows().getFirst().getFirst());
     }
 
+    @Test
+    void executesTpchQ20FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String supplierCsv = resourcePath("tpch/supplier_q20_sf001.csv");
+        String nationCsv = resourcePath("tpch/nation_q20_sf001.csv");
+        String partsuppCsv = resourcePath("tpch/partsupp_q20_sf001.csv");
+        String partCsv = resourcePath("tpch/part_q20_sf001.csv");
+        String lineitemCsv = resourcePath("tpch/lineitem_q20_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    s_name,
+                    s_address
+                FROM
+                    (
+                        SELECT
+                            ps_suppkey AS eligible_suppkey
+                        FROM
+                            (
+                                SELECT
+                                    l_partkey AS sum_partkey,
+                                    l_suppkey AS sum_suppkey,
+                                    0.5 * sum(l_quantity) AS quantity_threshold
+                                FROM
+                                    '%5$s'
+                                WHERE
+                                    l_shipdate >= DATE '1994-01-01'
+                                    AND l_shipdate < DATE '1995-01-01'
+                                GROUP BY
+                                    l_partkey,
+                                    l_suppkey
+                            ) qty
+                        JOIN
+                            '%4$s' p
+                        ON
+                            p_partkey = sum_partkey
+                        JOIN
+                            '%3$s' ps
+                        ON
+                            ps_partkey = sum_partkey
+                            AND ps_suppkey = sum_suppkey
+                        WHERE
+                            p_name LIKE 'forest%%'
+                            AND ps_availqty > quantity_threshold
+                        GROUP BY
+                            ps_suppkey
+                    ) eligible
+                JOIN
+                    '%1$s' s
+                ON
+                    s_suppkey = eligible_suppkey
+                JOIN
+                    '%2$s' n
+                ON
+                    s_nationkey = n_nationkey
+                WHERE
+                    n_name = 'CANADA'
+                ORDER BY
+                    s_name;
+                """.formatted(
+                sqlString(supplierCsv),
+                sqlString(nationCsv),
+                sqlString(partsuppCsv),
+                sqlString(partCsv),
+                sqlString(lineitemCsv)
+        ));
+
+        assertEquals(List.of("s_name", "s_address"), result.columns());
+        assertEquals(1, result.rows().size());
+        assertEquals("Supplier#000000013", result.rows().getFirst().get(0));
+        assertEquals("kgTZjbt4CAa4c3SlirlBLqIL41YbCj", result.rows().getFirst().get(1));
+    }
+
+    @Test
+    void executesCanonicalTpchQ21SqlShapeFromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String supplierCsv = resourcePath("tpch/supplier_q21_sf001.csv");
+        String lineitemCsv = resourcePath("tpch/lineitem_q21_sf001.csv");
+        String ordersCsv = resourcePath("tpch/orders_q21_sf001.csv");
+        String nationCsv = resourcePath("tpch/nation_q21_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    s_name,
+                    count(*) AS numwait
+                FROM
+                    '%s' s,
+                    '%s' l1,
+                    '%s' o,
+                    '%s' n
+                WHERE
+                    s_suppkey = l1.l_suppkey
+                    AND o_orderkey = l1.l_orderkey
+                    AND o_orderstatus = 'F'
+                    AND l1.l_receiptdate > l1.l_commitdate
+                    AND EXISTS (
+                        SELECT
+                            *
+                        FROM
+                            '%s' l2
+                        WHERE
+                            l2.l_orderkey = l1.l_orderkey
+                            AND l2.l_suppkey <> l1.l_suppkey
+                    )
+                    AND NOT EXISTS (
+                        SELECT
+                            *
+                        FROM
+                            '%s' l3
+                        WHERE
+                            l3.l_orderkey = l1.l_orderkey
+                            AND l3.l_suppkey <> l1.l_suppkey
+                            AND l3.l_receiptdate > l3.l_commitdate
+                    )
+                    AND s_nationkey = n_nationkey
+                    AND n_name = 'SAUDI ARABIA'
+                GROUP BY
+                    s_name
+                ORDER BY
+                    numwait DESC,
+                    s_name
+                LIMIT
+                    100;
+                """.formatted(
+                sqlString(supplierCsv),
+                sqlString(lineitemCsv),
+                sqlString(ordersCsv),
+                sqlString(nationCsv),
+                sqlString(lineitemCsv),
+                sqlString(lineitemCsv)
+        ));
+
+        assertEquals(List.of("s_name", "numwait"), result.columns());
+        assertEquals(1, result.rows().size());
+        assertEquals("Supplier#000000074", result.rows().getFirst().get(0));
+        assertEquals(9L, result.rows().getFirst().get(1));
+    }
+
+    @Test
+    void executesCanonicalTpchQ22SqlShapeFromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String customerCsv = resourcePath("tpch/customer_q22_sf001.csv");
+        String ordersCsv = resourcePath("tpch/orders_q22_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    cntrycode,
+                    count(*) AS numcust,
+                    sum(c_acctbal) AS totacctbal
+                FROM
+                    (
+                        SELECT
+                            substring(c_phone FROM 1 FOR 2) AS cntrycode,
+                            c_acctbal
+                        FROM
+                            '%s'
+                        WHERE
+                            substring(c_phone FROM 1 FOR 2) IN ('13', '31', '23', '29', '30', '18', '17')
+                            AND c_acctbal > (
+                                SELECT
+                                    avg(c_acctbal)
+                                FROM
+                                    '%s'
+                                WHERE
+                                    c_acctbal > 0.00
+                                    AND substring(c_phone FROM 1 FOR 2) IN ('13', '31', '23', '29', '30', '18', '17')
+                            )
+                            AND NOT EXISTS (
+                                SELECT
+                                    *
+                                FROM
+                                    '%s'
+                                WHERE
+                                    o_custkey = c_custkey
+                            )
+                    ) custsale
+                GROUP BY
+                    cntrycode
+                ORDER BY
+                    cntrycode;
+                """.formatted(sqlString(customerCsv), sqlString(customerCsv), sqlString(ordersCsv)));
+
+        assertEquals(List.of("cntrycode", "numcust", "totacctbal"), result.columns());
+        assertEquals(7, result.rows().size());
+        assertQ22Row(result.rows().get(0), "13", 10L, 75359.29d);
+        assertQ22Row(result.rows().get(1), "17", 8L, 62288.98d);
+        assertQ22Row(result.rows().get(2), "18", 14L, 111072.45d);
+        assertQ22Row(result.rows().get(3), "23", 5L, 40458.86d);
+        assertQ22Row(result.rows().get(4), "29", 11L, 88722.85d);
+        assertQ22Row(result.rows().get(5), "30", 17L, 122189.33d);
+        assertQ22Row(result.rows().get(6), "31", 8L, 66313.16d);
+    }
+
     private QueryResult execute(Fixture fixture, String sql) {
         Statement statement = parser.parse(sql);
         BoundStatement bound = new Binder(fixture.catalog()).bind(fixture.transaction(), statement);
@@ -1007,6 +1347,27 @@ class TpchCompatibilityTest {
         assertDoubleEquals(averagePrice, (Double) row.get(7));
         assertDoubleEquals(averageDiscount, (Double) row.get(8));
         assertEquals(countOrder, row.get(9));
+    }
+
+    private void assertQ2Row(
+            List<Object> row,
+            double accountBalance,
+            String supplierName,
+            String nationName,
+            long partKey,
+            String manufacturer,
+            String address,
+            String phone,
+            String comment
+    ) {
+        assertDoubleEquals(accountBalance, (Double) row.get(0));
+        assertEquals(supplierName, row.get(1));
+        assertEquals(nationName, row.get(2));
+        assertEquals(partKey, row.get(3));
+        assertEquals(manufacturer, row.get(4));
+        assertEquals(address, row.get(5));
+        assertEquals(phone, row.get(6));
+        assertEquals(comment, row.get(7));
     }
 
     private void assertQ3Row(
@@ -1109,6 +1470,12 @@ class TpchCompatibilityTest {
         assertEquals(orderDate, row.get(3));
         assertDoubleEquals(totalPrice, (Double) row.get(4));
         assertDoubleEquals(sumQuantity, (Double) row.get(5));
+    }
+
+    private void assertQ22Row(List<Object> row, String countryCode, long customerCount, double totalAccountBalance) {
+        assertEquals(countryCode, row.get(0));
+        assertEquals(customerCount, row.get(1));
+        assertDoubleEquals(totalAccountBalance, (Double) row.get(2));
     }
 
     private void assertQ10Row(

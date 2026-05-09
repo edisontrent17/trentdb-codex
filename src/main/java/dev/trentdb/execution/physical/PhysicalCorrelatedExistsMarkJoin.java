@@ -105,14 +105,14 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
         }
         CorrelatedExistsPlan plan = correlatedExistsPlan(subquery.where());
         List<DataChunk> chunks = scanChunks(tableRef);
-        LongHashSet keys = buildKeySet(chunks, plan);
-        return new CorrelatedExistsLookup(plan.keyType(), plan.outerOrdinal(), keys);
+        return buildLookup(chunks, plan);
     }
 
     private CorrelatedExistsPlan correlatedExistsPlan(BoundExpression predicate) {
         ArrayList<BoundExpression> conjuncts = new ArrayList<>();
         flattenConjuncts(predicate, conjuncts);
         CorrelatedEquality equality = null;
+        CorrelatedInequality inequality = null;
         ArrayList<BoundExpression> residuals = new ArrayList<>();
         for (BoundExpression conjunct : conjuncts) {
             CorrelatedEquality candidate = correlatedEquality(conjunct);
@@ -120,8 +120,13 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
                 equality = candidate;
                 continue;
             }
+            CorrelatedInequality inequalityCandidate = correlatedInequality(conjunct);
+            if (inequalityCandidate != null && inequality == null) {
+                inequality = inequalityCandidate;
+                continue;
+            }
             if (containsOuterReference(conjunct)) {
-                throw new ExecutionException("Correlated EXISTS currently supports one correlated equality predicate");
+                throw new ExecutionException("Correlated EXISTS currently supports one equality and one inequality predicate");
             }
             residuals.add(conjunct);
         }
@@ -132,6 +137,7 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
                 equality.innerOrdinal(),
                 equality.outerOrdinal(),
                 equality.keyType(),
+                inequality,
                 combineConjuncts(residuals)
         );
     }
@@ -169,6 +175,48 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
         return new CorrelatedEquality(inner.ordinal(), outerOrdinal, innerType);
     }
 
+    private CorrelatedInequality correlatedInequality(BoundExpression expression) {
+        if (!(expression instanceof BoundBinaryExpression binary) || binary.operator() != BinaryOperator.NOT_EQUAL) {
+            return null;
+        }
+        if (!(binary.left() instanceof BoundColumnRefExpression left)
+                || !(binary.right() instanceof BoundColumnRefExpression right)) {
+            return null;
+        }
+        CorrelatedInequality leftInner = correlatedInequality(left, right);
+        if (leftInner != null) {
+            return leftInner;
+        }
+        return correlatedInequality(right, left);
+    }
+
+    private CorrelatedInequality correlatedInequality(BoundColumnRefExpression inner, BoundColumnRefExpression outer) {
+        if (inner.ordinal() >= exists.localColumnCount() || outer.ordinal() < exists.localColumnCount()) {
+            return null;
+        }
+        LogicalType innerType = inner.logicalType();
+        LogicalType outerType = outer.logicalType();
+        if (!innerType.equals(outerType) || !supportsKeyType(innerType)) {
+            throw new ExecutionException("Correlated EXISTS inequality key type is not supported: "
+                    + innerType.id().name() + " <> " + outerType.id().name());
+        }
+        int correlatedIndex = outer.ordinal() - exists.localColumnCount();
+        if (correlatedIndex < 0 || correlatedIndex >= exists.correlatedColumns().size()) {
+            throw new ExecutionException("Correlated EXISTS outer reference is outside the bound correlation list");
+        }
+        int outerOrdinal = exists.correlatedColumns().get(correlatedIndex).outerOrdinal();
+        return new CorrelatedInequality(inner.ordinal(), outerOrdinal, innerType);
+    }
+
+    private CorrelatedExistsLookup buildLookup(List<DataChunk> chunks, CorrelatedExistsPlan plan) {
+        if (plan.inequality() == null) {
+            LongHashSet keys = buildKeySet(chunks, plan);
+            return CorrelatedExistsLookup.forEquality(plan.keyType(), plan.outerOrdinal(), keys);
+        }
+        LongMultiValueSet values = buildKeyValueSet(chunks, plan);
+        return CorrelatedExistsLookup.forInequality(plan.keyType(), plan.outerOrdinal(), plan.inequality(), values);
+    }
+
     private LongHashSet buildKeySet(List<DataChunk> chunks, CorrelatedExistsPlan plan) {
         LongHashSet keys = new LongHashSet(countRows(chunks));
         for (DataChunk chunk : chunks) {
@@ -182,6 +230,25 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
             }
         }
         return keys;
+    }
+
+    private LongMultiValueSet buildKeyValueSet(List<DataChunk> chunks, CorrelatedExistsPlan plan) {
+        LongMultiValueSet values = new LongMultiValueSet(countRows(chunks));
+        CorrelatedInequality inequality = plan.inequality();
+        for (DataChunk chunk : chunks) {
+            Vector residual = plan.residual() == null ? null : expressionExecutor.execute(plan.residual(), chunk);
+            Vector keyVector = chunk.column(plan.innerOrdinal());
+            Vector valueVector = chunk.column(inequality.innerOrdinal());
+            for (int rowIndex = 0; rowIndex < chunk.cardinality(); rowIndex++) {
+                if (keyVector.isNull(rowIndex) || valueVector.isNull(rowIndex) || !matchesResidual(residual, rowIndex)) {
+                    continue;
+                }
+                long key = keyAsLong(keyVector, rowIndex, plan.keyType());
+                long value = keyAsLong(valueVector, rowIndex, inequality.keyType());
+                values.add(key, value);
+            }
+        }
+        return values;
     }
 
     private boolean matchesResidual(Vector residual, int rowIndex) {
@@ -314,25 +381,57 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
     private record CorrelatedEquality(int innerOrdinal, int outerOrdinal, LogicalType keyType) {
     }
 
+    private record CorrelatedInequality(int innerOrdinal, int outerOrdinal, LogicalType keyType) {
+    }
+
     private record CorrelatedExistsPlan(
             int innerOrdinal,
             int outerOrdinal,
             LogicalType keyType,
+            CorrelatedInequality inequality,
             BoundExpression residual
     ) {
     }
 
-    private record CorrelatedExistsLookup(LogicalType keyType, int outerOrdinal, LongHashSet keys) {
+    private record CorrelatedExistsLookup(
+            LogicalType keyType,
+            int outerOrdinal,
+            LongHashSet keys,
+            CorrelatedInequality inequality,
+            LongMultiValueSet values
+    ) {
+        static CorrelatedExistsLookup forEquality(LogicalType keyType, int outerOrdinal, LongHashSet keys) {
+            return new CorrelatedExistsLookup(keyType, outerOrdinal, keys, null, null);
+        }
+
+        static CorrelatedExistsLookup forInequality(
+                LogicalType keyType,
+                int outerOrdinal,
+                CorrelatedInequality inequality,
+                LongMultiValueSet values
+        ) {
+            return new CorrelatedExistsLookup(keyType, outerOrdinal, null, inequality, values);
+        }
+
         boolean matches(DataChunk input, int rowIndex) {
             Vector keyVector = input.column(outerOrdinal);
             if (keyVector.isNull(rowIndex)) {
                 return false;
             }
-            return keys.contains(keyAsLong(keyVector, rowIndex, keyType));
+            long key = keyAsLong(keyVector, rowIndex, keyType);
+            if (inequality == null) {
+                return keys.contains(key);
+            }
+            Vector valueVector = input.column(inequality.outerOrdinal());
+            if (valueVector.isNull(rowIndex)) {
+                return false;
+            }
+            long value = keyAsLong(valueVector, rowIndex, inequality.keyType());
+            return values.containsDifferent(key, value);
         }
 
         int keyCount() {
-            return keys.size();
+            return inequality == null ? keys.size() : values.keyCount();
         }
 
         private long keyAsLong(Vector keyVector, int rowIndex, LogicalType keyType) {
@@ -402,6 +501,15 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
             return false;
         }
 
+        private boolean containsDifferent(long excludedKey) {
+            for (int bucket = 0; bucket < occupied.length; bucket++) {
+                if (occupied[bucket] && keys[bucket] != excludedKey) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private int size() {
             return size;
         }
@@ -410,7 +518,7 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
             return mix64(key) & mask;
         }
 
-        private int mix64(long key) {
+        private static int mix64(long key) {
             long z = key + 0x9E3779B97F4A7C15L;
             z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
             z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
@@ -424,6 +532,58 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
                 result <<= 1;
             }
             return result;
+        }
+    }
+
+    private static final class LongMultiValueSet {
+        private final long[] keys;
+        private final boolean[] occupied;
+        private final LongHashSet[] values;
+        private final int mask;
+        private int size;
+
+        private LongMultiValueSet(int rowCapacity) {
+            int bucketCount = LongHashSet.nextPowerOfTwo(Math.max(16, Math.max(1, rowCapacity) * 2));
+            this.keys = new long[bucketCount];
+            this.occupied = new boolean[bucketCount];
+            this.values = new LongHashSet[bucketCount];
+            this.mask = bucketCount - 1;
+            this.size = 0;
+        }
+
+        private void add(long key, long value) {
+            int bucket = bucket(key);
+            while (occupied[bucket]) {
+                if (keys[bucket] == key) {
+                    values[bucket].add(value);
+                    return;
+                }
+                bucket = (bucket + 1) & mask;
+            }
+            occupied[bucket] = true;
+            keys[bucket] = key;
+            values[bucket] = new LongHashSet(4);
+            values[bucket].add(value);
+            size++;
+        }
+
+        private boolean containsDifferent(long key, long excludedValue) {
+            int bucket = bucket(key);
+            while (occupied[bucket]) {
+                if (keys[bucket] == key) {
+                    return values[bucket].containsDifferent(excludedValue);
+                }
+                bucket = (bucket + 1) & mask;
+            }
+            return false;
+        }
+
+        private int keyCount() {
+            return size;
+        }
+
+        private int bucket(long key) {
+            return LongHashSet.mix64(key) & mask;
         }
     }
 }

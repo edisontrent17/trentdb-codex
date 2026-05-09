@@ -29,9 +29,11 @@ Supported parser coverage currently includes:
 - `ORDER BY`
 - `LIMIT`
 - `INNER JOIN`
+- comma-separated inner joins in `FROM`
 - `LEFT OUTER JOIN`
 - derived tables in `FROM`
 - non-recursive `WITH` common table expressions
+- SQL-standard `substring(value FROM start FOR count)` syntax
 - `EXPLAIN`
 
 Supported execution coverage currently includes:
@@ -41,10 +43,10 @@ Supported execution coverage currently includes:
 - projection and aliases
 - `WHERE` filters
 - SQL three-valued boolean logic for `AND`, `OR`, and comparisons with `NULL`
-- scalar `lower(text)` and DuckDB-style `EXTRACT(... FROM date)` lowered through `date_part`
+- scalar `lower(text)`, `substring(text, start, count)`, and DuckDB-style `EXTRACT(... FROM date)` lowered through `date_part`
 - arithmetic expressions in `SELECT` and `WHERE`
 - `IN`, `NOT IN`, `LIKE`, `NOT LIKE`, `CASE`, date literals, interval literals, and casts
-- `EXISTS` predicates, including the correlated single-table equality shape used by TPC-H Q4
+- `EXISTS` and `NOT EXISTS` predicates for the correlated single-table equality and inequality shapes used by TPC-H Q4 and Q21
 - grouped and ungrouped aggregates: `count`, `sum`, `min`, `max`, `avg`, including distinct aggregate arguments
 - `HAVING` filters over grouped and ungrouped aggregate queries
 - single and multiple explicit `INNER JOIN` queries plus `LEFT OUTER JOIN` through physical join operators
@@ -58,6 +60,7 @@ Supported execution coverage currently includes:
 Current TPC-H coverage from generated scale 0.01 CSV fixtures:
 
 - Q1
+- Q2
 - Q3
 - Q4
 - Q5
@@ -72,8 +75,12 @@ Current TPC-H coverage from generated scale 0.01 CSV fixtures:
 - Q14
 - Q15
 - Q16
+- Q17
 - Q18
 - Q19
+- Q20
+- Q21
+- Q22
 
 Writes are intentionally not advertised as durable yet. DDL and DML must move through write-aware catalog, storage, transaction, WAL, and recovery boundaries before this project claims persistent write safety.
 

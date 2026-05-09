@@ -15,6 +15,11 @@ public final class FunctionRegistry {
         FunctionRegistry registry = new FunctionRegistry();
         registry.registerScalar(new ScalarFunction("lower", List.of(LogicalType.TEXT), LogicalType.TEXT));
         registry.registerScalar(new ScalarFunction("date_part", List.of(LogicalType.TEXT, LogicalType.DATE), LogicalType.BIGINT));
+        registry.registerScalar(new ScalarFunction(
+                "substring",
+                List.of(LogicalType.TEXT, LogicalType.BIGINT, LogicalType.BIGINT),
+                LogicalType.TEXT
+        ));
         registry.registerAggregate("count");
         registry.registerAggregate("sum");
         registry.registerAggregate("min");

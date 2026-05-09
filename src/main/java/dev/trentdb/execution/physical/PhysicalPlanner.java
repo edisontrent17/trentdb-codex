@@ -154,9 +154,9 @@ public final class PhysicalPlanner {
         List<ColumnCatalogEntry> leftColumns = columns(join.left());
         List<String> leftNames = names(leftColumns);
         List<LogicalType> leftTypes = types(leftColumns);
-        HashJoinPlan hashJoinPlan = hashJoinPlan(join.left(), right, join.condition());
+        BoundExpression joinPredicate = combineNullable(join.condition(), residualPredicate);
+        HashJoinPlan hashJoinPlan = hashJoinPlan(join.left(), right, joinPredicate);
         if (hashJoinPlan != null) {
-            BoundExpression residual = combineNullable(hashJoinPlan.residualPredicate(), residualPredicate);
             operators.add(new PhysicalHashJoin(
                     storageManager,
                     leftNames,
@@ -166,21 +166,18 @@ public final class PhysicalPlanner {
                     hashJoinPlan.keys().leftKeyOrdinal(),
                     hashJoinPlan.keys().rightKeyOrdinal(),
                     rightPredicate,
-                    residual,
+                    hashJoinPlan.residualPredicate(),
                     expressionExecutor
             ));
             return;
         }
-        BoundExpression condition = residualPredicate == null
-                ? join.condition()
-                : new BoundBinaryExpression(join.condition(), BinaryOperator.AND, residualPredicate, LogicalType.BOOLEAN);
         operators.add(new PhysicalNestedLoopJoin(
                 storageManager,
                 leftNames,
                 leftTypes,
                 right,
                 join.joinType(),
-                condition,
+                joinPredicate,
                 rightPredicate,
                 expressionExecutor
         ));
