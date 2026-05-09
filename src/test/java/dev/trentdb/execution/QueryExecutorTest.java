@@ -736,6 +736,24 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesSubstringFunctionWithDuckDbPositions() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    substring('abcdef' FROM 1 FOR 2) AS a,
+                    substring('abcdef' FROM 0 FOR 2) AS b,
+                    substring('abcdef' FROM -2 FOR 2) AS c,
+                    substring('abcdef' FROM 4 FOR -2) AS d
+                FROM people
+                LIMIT 1
+                """);
+
+        assertEquals(List.of("a", "b", "c", "d"), result.columns());
+        assertEquals(List.of(List.of("ab", "a", "ef", "bc")), result.rows());
+    }
+
+    @Test
     void executesExtractFromDate() {
         Fixture fixture = peopleFixture();
 

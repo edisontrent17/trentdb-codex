@@ -223,6 +223,22 @@ class SqlParserTest {
     }
 
     @Test
+    void parsesSubstringFromForAsFunction() {
+        Statement statement = parser.parse("SELECT substring(phone FROM 1 FOR 2) AS code FROM people");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        FunctionCallExpression function = assertInstanceOf(
+                FunctionCallExpression.class,
+                select.selectItems().getFirst().expression()
+        );
+        assertEquals("substring", function.name());
+        assertEquals(3, function.arguments().size());
+        assertInstanceOf(ColumnReferenceExpression.class, function.arguments().get(0));
+        assertInstanceOf(LiteralExpression.class, function.arguments().get(1));
+        assertInstanceOf(LiteralExpression.class, function.arguments().get(2));
+    }
+
+    @Test
     void parsesCastExpression() {
         Statement statement = parser.parse("SELECT CAST('1994-01-01' AS date) FROM people");
 

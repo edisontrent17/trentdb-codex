@@ -19,13 +19,13 @@ import dev.trentdb.ast.JoinType;
 import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.LiteralKind;
 import dev.trentdb.ast.OrderByItem;
-import dev.trentdb.ast.QualifiedName;
 import dev.trentdb.ast.SelectItem;
 import dev.trentdb.ast.SelectStatement;
 import dev.trentdb.ast.StarExpression;
 import dev.trentdb.ast.Statement;
 import dev.trentdb.ast.SubqueryExpression;
 import dev.trentdb.ast.TableReference;
+import dev.trentdb.ast.UnaryExpression;
 import dev.trentdb.catalog.Catalog;
 import dev.trentdb.catalog.CatalogException;
 import dev.trentdb.catalog.ColumnCatalogEntry;
@@ -401,13 +401,9 @@ public final class Binder {
         return new BoundOutputColumnExpression(selectNames.get(index), index, logicalType(selectList.get(index)));
     }
 
-    private BoundExpression bindExpression(BindingContext context, Expression expression) {
-        return bindExpression(context, expression, false);
-    }
-
     private BoundExpression bindExpression(BindingContext context, Expression expression, boolean allowAggregates) {
         if (expression instanceof ColumnReferenceExpression columnReference) {
-            return bindColumn(context, columnReference.name());
+            return ColumnBinder.bind(context, columnReference.name());
         }
         if (expression instanceof LiteralExpression literal) {
             return new BoundLiteralExpression(literalType(literal.kind()), literal.value());
@@ -420,6 +416,9 @@ public final class Binder {
         }
         if (expression instanceof BinaryExpression binary) {
             return bindBinaryExpression(context, binary, allowAggregates);
+        }
+        if (expression instanceof UnaryExpression unary) {
+            return UnaryExpressionBinder.bind(unary.operator(), bindExpression(context, unary.expression(), allowAggregates));
         }
         if (expression instanceof BetweenExpression between) {
             return bindBetweenExpression(context, between, allowAggregates);
@@ -511,8 +510,12 @@ public final class Binder {
     }
 
     private BoundSubqueryExpression bindSubqueryExpression(BindingContext context, SubqueryExpression subquery) {
-        BoundSelectStatement boundSubquery = bindSelect(context.scope(), subquery.select());
-        return new BoundSubqueryExpression(boundSubquery, singleColumnType(boundSubquery, "Scalar subquery"));
+        BoundSelectStatement boundSubquery = bindSelect(context.scope(), subquery.select(), context.columns());
+        int localColumnCount = bindingContext(context.scope(), boundSubquery.from()).columns().size();
+        List<BoundExistsSubqueryExpression.CorrelatedColumn> correlatedColumns = BoundExpressionInspector
+                .containsColumnOrdinalAtLeast(boundSubquery, localColumnCount) ? correlatedColumns(context.columns()) : List.of();
+        return new BoundSubqueryExpression(
+                boundSubquery, singleColumnType(boundSubquery, "Scalar subquery"), localColumnCount, correlatedColumns);
     }
 
     private BoundExistsSubqueryExpression bindExistsExpression(BindingContext context, ExistsExpression exists) {
@@ -640,36 +643,6 @@ public final class Binder {
             return aggregate.name();
         }
         return "?column?";
-    }
-
-    private BoundColumnRefExpression bindColumn(BindingContext context, QualifiedName name) {
-        if (name.parts().size() == 1) {
-            String columnName = name.last();
-            BoundColumnBinding match = null;
-            for (BoundColumnBinding binding : context.columns()) {
-                if (binding.column().name().equals(columnName)) {
-                    if (match != null) {
-                        throw new BinderException("Column reference is ambiguous: " + columnName);
-                    }
-                    match = binding;
-                }
-            }
-            if (match == null) {
-                throw new CatalogException("Column not found: " + columnName);
-            }
-            return new BoundColumnRefExpression(match.column(), match.ordinal());
-        }
-        if (name.parts().size() == 2) {
-            String relationName = name.parts().getFirst();
-            String columnName = name.parts().get(1);
-            for (BoundColumnBinding binding : context.columns()) {
-                if (binding.relationName().equals(relationName) && binding.column().name().equals(columnName)) {
-                    return new BoundColumnRefExpression(binding.column(), binding.ordinal());
-                }
-            }
-            throw new CatalogException("Column not found: " + String.join(".", name.parts()));
-        }
-        throw new BinderException("Unsupported qualified column reference: " + String.join(".", name.parts()));
     }
 
     private List<ColumnCatalogEntry> columns(BoundTableRef table) {

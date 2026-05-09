@@ -140,11 +140,19 @@ final class AstBuilder {
     }
 
     private FromItem fromItem(TrentDbSqlParser.FromItemContext context) {
-        ArrayList<JoinClause> joins = new ArrayList<>(context.joinClause().size());
+        List<TrentDbSqlParser.RelationPrimaryContext> relations = context.relationPrimary();
+        ArrayList<JoinClause> joins = new ArrayList<>(relations.size() - 1 + context.joinClause().size());
+        for (int index = 1; index < relations.size(); index++) {
+            joins.add(new JoinClause(
+                    JoinType.INNER,
+                    relationPrimary(relations.get(index)),
+                    new LiteralExpression(LiteralKind.BOOLEAN, true)
+            ));
+        }
         for (TrentDbSqlParser.JoinClauseContext joinContext : context.joinClause()) {
             joins.add(joinClause(joinContext));
         }
-        return new FromItem(relationPrimary(context.relationPrimary()), joins);
+        return new FromItem(relationPrimary(relations.getFirst()), joins);
     }
 
     private TableReference relationPrimary(TrentDbSqlParser.RelationPrimaryContext context) {
@@ -367,6 +375,9 @@ final class AstBuilder {
         if (context instanceof TrentDbSqlParser.ExtractPrimaryContext extractPrimary) {
             return extractExpression(extractPrimary.extractExpression());
         }
+        if (context instanceof TrentDbSqlParser.SubstringPrimaryContext substringPrimary) {
+            return substringExpression(substringPrimary.substringExpression());
+        }
         if (context instanceof TrentDbSqlParser.CastPrimaryContext castPrimary) {
             return castExpression(castPrimary.castExpression());
         }
@@ -394,6 +405,19 @@ final class AstBuilder {
         return new FunctionCallExpression(
                 "date_part",
                 List.of(new LiteralExpression(LiteralKind.STRING, field), expression(context.expression())),
+                false,
+                false
+        );
+    }
+
+    private FunctionCallExpression substringExpression(TrentDbSqlParser.SubstringExpressionContext context) {
+        return new FunctionCallExpression(
+                "substring",
+                List.of(
+                        expression(context.expression(0)),
+                        expression(context.expression(1)),
+                        expression(context.expression(2))
+                ),
                 false,
                 false
         );

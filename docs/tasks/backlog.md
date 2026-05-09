@@ -6,12 +6,14 @@
 - Mirror DuckDB's parser -> binder -> logical operator -> physical operator -> vectorized execution shape.
 - Use `/home/manoj/Projects/duckdb` as the local architecture reference.
 - Keep write paths behind WAL-capable catalog, storage, and transaction boundaries before claiming durable DDL or DML.
+- Preserve DuckDB-compatible correctness for all 22 TPC-H query shapes before optimizer work.
 
 ## Next
 
-- extend TPC-H coverage to the remaining query shapes
-- broaden correlated subquery execution beyond the TPC-H Q4 `EXISTS` equality shape, including `NOT EXISTS`
-- introduce optimizer scaffolding once the unoptimized behavior is covered by compatibility tests
+- introduce optimizer scaffolding now that all 22 TPC-H queries have unoptimized regression coverage
+- decorrelate scalar aggregate subqueries into join-shaped plans, starting with canonical Q20 performance
+- broaden generic correlated scalar subquery execution beyond the current TPC-H scalar aggregate shapes
+- add semi/anti/mark join rewrite infrastructure for `IN`, `EXISTS`, and scalar subqueries
 - design the durable write path for `CREATE TABLE` and `INSERT` around WAL and recovery boundaries
 
 ## Done
@@ -27,10 +29,12 @@
 - implement distinct aggregate arguments for the supported aggregate functions
 - implement DuckDB-shaped `LEFT OUTER JOIN` and non-correlated derived tables in `FROM`
 - implement non-recursive common table expressions for read queries
-- run generated CSV TPC-H compatibility tests for Q1, Q3, Q4, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13, Q14, Q15, Q16, Q18, and Q19
+- run generated CSV TPC-H compatibility tests for Q1 through Q22
+- execute canonical TPC-H Q2, Q17, and Q20 scalar aggregate subquery shapes
 - add ambiguity handling for unqualified column references in join binding
 - add non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
 - add correlated `EXISTS` planning and execution for the single-table equality shape used by TPC-H Q4
+- add comma join parsing, SQL-standard `substring(... FROM ... FOR ...)`, unary `NOT` binding, and correlated `EXISTS`/`NOT EXISTS` inequality support for the remaining TPC-H query shapes
 
 ## DuckDB Reference Areas
 

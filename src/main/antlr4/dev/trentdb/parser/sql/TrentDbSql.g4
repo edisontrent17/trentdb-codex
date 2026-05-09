@@ -53,7 +53,7 @@ selectItem
     ;
 
 fromItem
-    : relationPrimary (joinClause)*
+    : relationPrimary (COMMA relationPrimary)* (joinClause)*
     ;
 
 relationPrimary
@@ -171,6 +171,7 @@ primaryExpression
     | qualifiedName                                         #columnReferencePrimary
     | functionCall                                          #functionCallPrimary
     | extractExpression                                     #extractPrimary
+    | substringExpression                                   #substringPrimary
     | castExpression                                        #castPrimary
     | caseExpression                                        #casePrimary
     | LPAREN select RPAREN                                  #subqueryPrimary
@@ -183,6 +184,10 @@ functionCall
 
 extractExpression
     : EXTRACT LPAREN extractArgument FROM expression RPAREN
+    ;
+
+substringExpression
+    : SUBSTRING LPAREN expression FROM expression FOR expression RPAREN
     ;
 
 extractArgument
@@ -276,6 +281,7 @@ LIMIT: 'LIMIT';
 EXPLAIN: 'EXPLAIN';
 CAST: 'CAST';
 EXTRACT: 'EXTRACT';
+SUBSTRING: 'SUBSTRING';
 EXISTS: 'EXISTS';
 CASE: 'CASE';
 WHEN: 'WHEN';
@@ -293,6 +299,7 @@ NOT: 'NOT';
 IN: 'IN';
 LIKE: 'LIKE';
 BETWEEN: 'BETWEEN';
+FOR: 'FOR';
 INTERVAL: 'INTERVAL';
 DAY: 'DAY';
 MONTH: 'MONTH';
