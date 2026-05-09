@@ -31,6 +31,7 @@
 - run generated CSV TPC-H compatibility tests for Q1 through Q22
 - execute canonical TPC-H Q2, Q17, and Q20 scalar aggregate subquery shapes
 - introduce the optimizer package and route logical plans through it before physical planning
+- add reusable optimizer rewrite helpers for bound expressions and logical operators
 - add ambiguity handling for unqualified column references in join binding
 - add non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
 - add correlated `EXISTS` planning and execution for the single-table equality shape used by TPC-H Q4
