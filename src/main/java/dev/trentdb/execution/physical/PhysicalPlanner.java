@@ -11,6 +11,7 @@ import dev.trentdb.planner.BoundBinaryExpression;
 import dev.trentdb.planner.BoundCaseExpression;
 import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
+import dev.trentdb.planner.BoundExistsSubqueryExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
@@ -21,6 +22,7 @@ import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundExpressionTypes;
 import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.planner.logical.LogicalAggregate;
+import dev.trentdb.planner.logical.LogicalDependentJoin;
 import dev.trentdb.planner.logical.LogicalExplain;
 import dev.trentdb.planner.logical.LogicalFilter;
 import dev.trentdb.planner.logical.LogicalGet;
@@ -106,6 +108,19 @@ public final class PhysicalPlanner {
             }
             PhysicalSource source = buildPipeline(filter.child(), operators);
             operators.add(new PhysicalFilter(filter.predicate(), expressionExecutor));
+            return source;
+        }
+        if (logical instanceof LogicalDependentJoin join) {
+            PhysicalSource source = buildPipeline(join.child(), operators);
+            List<ColumnCatalogEntry> leftColumns = columns(join.child());
+            operators.add(new PhysicalCorrelatedExistsMarkJoin(
+                    storageManager,
+                    names(leftColumns),
+                    types(leftColumns),
+                    join.subquery(),
+                    join.marker(),
+                    expressionExecutor
+            ));
             return source;
         }
         if (logical instanceof LogicalLimit limit) {
@@ -382,6 +397,7 @@ public final class PhysicalPlanner {
                 yield scope;
             }
             case BoundColumnRefExpression column -> columnScope(column.ordinal(), leftColumnCount, rightColumnCount);
+            case BoundExistsSubqueryExpression ignored -> PredicateScope.NONE;
             case BoundFunctionExpression function -> {
                 PredicateScope scope = PredicateScope.NONE;
                 for (BoundExpression argument : function.arguments()) {
@@ -472,6 +488,7 @@ public final class PhysicalPlanner {
                 );
             }
             case BoundColumnRefExpression column -> rewriteColumn(column, leftColumnCount, side);
+            case BoundExistsSubqueryExpression exists -> exists;
             case BoundFunctionExpression function -> {
                 ArrayList<BoundExpression> arguments = new ArrayList<>(function.arguments().size());
                 for (BoundExpression argument : function.arguments()) {
@@ -542,6 +559,11 @@ public final class PhysicalPlanner {
         }
         if (logical instanceof LogicalFilter filter) {
             return columns(filter.child());
+        }
+        if (logical instanceof LogicalDependentJoin join) {
+            ArrayList<ColumnCatalogEntry> result = new ArrayList<>(columns(join.child()));
+            result.add(join.marker().column());
+            return result;
         }
         if (logical instanceof LogicalLimit limit) {
             return columns(limit.child());

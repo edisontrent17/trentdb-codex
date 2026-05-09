@@ -52,6 +52,8 @@ final class AggregateBindingValidator {
                 validateExpression(in.input(), groupBy);
                 validateExpressions(in.candidates(), groupBy);
             }
+            case BoundExistsSubqueryExpression ignored -> {
+            }
             case BoundInSubqueryExpression in -> validateExpression(in.input(), groupBy);
             case BoundSubqueryExpression ignored -> {
             }

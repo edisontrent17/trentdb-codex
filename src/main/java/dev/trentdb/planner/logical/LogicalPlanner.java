@@ -1,11 +1,13 @@
 package dev.trentdb.planner.logical;
 
+import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.planner.BoundAggregateExpression;
 import dev.trentdb.planner.BoundBetweenExpression;
 import dev.trentdb.planner.BoundBinaryExpression;
 import dev.trentdb.planner.BoundCaseExpression;
 import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
+import dev.trentdb.planner.BoundExistsSubqueryExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundExpressionTypes;
 import dev.trentdb.planner.BoundExplainStatement;
@@ -23,6 +25,7 @@ import dev.trentdb.planner.BoundSubqueryRef;
 import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.planner.BoundTableRef;
 import dev.trentdb.planner.BinderException;
+import dev.trentdb.types.LogicalType;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +44,15 @@ public final class LogicalPlanner {
         }
     }
 
+    private record DependentRewrite(LogicalOperator root, BoundExpression expression) {
+    }
+
+    private record ExpressionListRewrite(LogicalOperator root, List<BoundExpression> expressions) {
+        private ExpressionListRewrite {
+            expressions = List.copyOf(expressions);
+        }
+    }
+
     public LogicalOperator plan(BoundStatement statement) {
         if (statement instanceof BoundExplainStatement explain) {
             return new LogicalExplain(plan(explain.statement()));
@@ -54,7 +66,13 @@ public final class LogicalPlanner {
     private LogicalOperator planSelect(BoundSelectStatement statement) {
         LogicalOperator root = planFrom(statement.from());
         if (statement.where() != null) {
-            root = new LogicalFilter(statement.where(), root);
+            BoundExpression where = statement.where();
+            if (containsCorrelatedExists(where)) {
+                DependentRewrite rewrite = rewriteDependentExists(root, where);
+                root = rewrite.root();
+                where = rewrite.expression();
+            }
+            root = new LogicalFilter(where, root);
         }
         if (statement.isAggregateQuery()) {
             AggregatePlan aggregatePlan = aggregatePlan(statement);
@@ -155,6 +173,7 @@ public final class LogicalPlanner {
                     in.subquery(),
                     in.negated()
             );
+            case BoundExistsSubqueryExpression exists -> exists;
             case BoundIntervalExpression interval -> interval;
             case BoundLiteralExpression literal -> literal;
             case BoundSubqueryExpression subquery -> subquery;
@@ -249,4 +268,197 @@ public final class LogicalPlanner {
                 BoundExpressionTypes.logicalType(outputs.get(ordinal))
         );
     }
+
+    private DependentRewrite rewriteDependentExists(LogicalOperator root, BoundExpression expression) {
+        return switch (expression) {
+            case BoundAggregateExpression aggregate -> rewriteAggregate(root, aggregate);
+            case BoundBetweenExpression between -> rewriteBetween(root, between);
+            case BoundBinaryExpression binary -> rewriteBinary(root, binary);
+            case BoundCaseExpression caseExpression -> rewriteCase(root, caseExpression);
+            case BoundCastExpression cast -> {
+                DependentRewrite child = rewriteDependentExists(root, cast.child());
+                yield new DependentRewrite(child.root(), new BoundCastExpression(child.expression(), cast.logicalType()));
+            }
+            case BoundExistsSubqueryExpression exists -> rewriteExists(root, exists);
+            case BoundFunctionExpression function -> rewriteFunction(root, function);
+            case BoundInExpression in -> rewriteIn(root, in);
+            case BoundInSubqueryExpression in -> {
+                DependentRewrite input = rewriteDependentExists(root, in.input());
+                yield new DependentRewrite(input.root(), new BoundInSubqueryExpression(input.expression(), in.subquery(), in.negated()));
+            }
+            case BoundColumnRefExpression column -> new DependentRewrite(root, column);
+            case BoundIntervalExpression interval -> new DependentRewrite(root, interval);
+            case BoundLiteralExpression literal -> new DependentRewrite(root, literal);
+            case BoundOutputColumnExpression output -> new DependentRewrite(root, output);
+            case BoundSubqueryExpression subquery -> new DependentRewrite(root, subquery);
+        };
+    }
+
+    private boolean containsCorrelatedExists(BoundExpression expression) {
+        if (expression == null) {
+            return false;
+        }
+        return switch (expression) {
+            case BoundAggregateExpression aggregate -> containsCorrelatedExists(aggregate.arguments());
+            case BoundBetweenExpression between -> containsCorrelatedExists(between.input())
+                    || containsCorrelatedExists(between.lower())
+                    || containsCorrelatedExists(between.upper());
+            case BoundBinaryExpression binary -> containsCorrelatedExists(binary.left())
+                    || containsCorrelatedExists(binary.right());
+            case BoundCaseExpression caseExpression -> containsCorrelatedExists(caseExpression);
+            case BoundCastExpression cast -> containsCorrelatedExists(cast.child());
+            case BoundExistsSubqueryExpression exists -> exists.isCorrelated();
+            case BoundFunctionExpression function -> containsCorrelatedExists(function.arguments());
+            case BoundInExpression in -> containsCorrelatedExists(in.input()) || containsCorrelatedExists(in.candidates());
+            case BoundInSubqueryExpression in -> containsCorrelatedExists(in.input());
+            case BoundColumnRefExpression ignored -> false;
+            case BoundIntervalExpression ignored -> false;
+            case BoundLiteralExpression ignored -> false;
+            case BoundOutputColumnExpression ignored -> false;
+            case BoundSubqueryExpression ignored -> false;
+        };
+    }
+
+    private boolean containsCorrelatedExists(List<BoundExpression> expressions) {
+        for (BoundExpression expression : expressions) {
+            if (containsCorrelatedExists(expression)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsCorrelatedExists(BoundCaseExpression caseExpression) {
+        if (containsCorrelatedExists(caseExpression.elseExpression())) {
+            return true;
+        }
+        for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
+            if (containsCorrelatedExists(branch.condition()) || containsCorrelatedExists(branch.result())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private DependentRewrite rewriteExists(LogicalOperator root, BoundExistsSubqueryExpression exists) {
+        if (!exists.isCorrelated()) {
+            return new DependentRewrite(root, exists);
+        }
+        int markerOrdinal = outputColumnCount(root);
+        ColumnCatalogEntry markerColumn = new ColumnCatalogEntry("#exists" + markerOrdinal, LogicalType.BOOLEAN, markerOrdinal);
+        BoundColumnRefExpression marker = new BoundColumnRefExpression(markerColumn, markerOrdinal);
+        return new DependentRewrite(new LogicalDependentJoin(root, exists, marker), marker);
+    }
+
+    private DependentRewrite rewriteBinary(LogicalOperator root, BoundBinaryExpression binary) {
+        DependentRewrite left = rewriteDependentExists(root, binary.left());
+        DependentRewrite right = rewriteDependentExists(left.root(), binary.right());
+        return new DependentRewrite(
+                right.root(),
+                new BoundBinaryExpression(left.expression(), binary.operator(), right.expression(), binary.logicalType())
+        );
+    }
+
+    private DependentRewrite rewriteBetween(LogicalOperator root, BoundBetweenExpression between) {
+        DependentRewrite input = rewriteDependentExists(root, between.input());
+        DependentRewrite lower = rewriteDependentExists(input.root(), between.lower());
+        DependentRewrite upper = rewriteDependentExists(lower.root(), between.upper());
+        return new DependentRewrite(
+                upper.root(),
+                new BoundBetweenExpression(input.expression(), lower.expression(), upper.expression())
+        );
+    }
+
+    private DependentRewrite rewriteCase(LogicalOperator root, BoundCaseExpression caseExpression) {
+        DependentRewrite current = new DependentRewrite(root, null);
+        ArrayList<BoundCaseExpression.WhenClause> branches = new ArrayList<>(caseExpression.branches().size());
+        for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
+            DependentRewrite condition = rewriteDependentExists(current.root(), branch.condition());
+            DependentRewrite result = rewriteDependentExists(condition.root(), branch.result());
+            branches.add(new BoundCaseExpression.WhenClause(condition.expression(), result.expression()));
+            current = result;
+        }
+        DependentRewrite elseExpression = rewriteDependentExists(current.root(), caseExpression.elseExpression());
+        return new DependentRewrite(
+                elseExpression.root(),
+                new BoundCaseExpression(branches, elseExpression.expression(), caseExpression.logicalType())
+        );
+    }
+
+    private DependentRewrite rewriteAggregate(LogicalOperator root, BoundAggregateExpression aggregate) {
+        ExpressionListRewrite arguments = rewriteExpressions(root, aggregate.arguments());
+        return new DependentRewrite(
+                arguments.root(),
+                new BoundAggregateExpression(
+                        aggregate.function(),
+                        arguments.expressions(),
+                        aggregate.starArgument(),
+                        aggregate.distinct()
+                )
+        );
+    }
+
+    private DependentRewrite rewriteFunction(LogicalOperator root, BoundFunctionExpression function) {
+        ExpressionListRewrite arguments = rewriteExpressions(root, function.arguments());
+        return new DependentRewrite(
+                arguments.root(),
+                new BoundFunctionExpression(function.function(), arguments.expressions())
+        );
+    }
+
+    private DependentRewrite rewriteIn(LogicalOperator root, BoundInExpression in) {
+        DependentRewrite input = rewriteDependentExists(root, in.input());
+        ExpressionListRewrite candidates = rewriteExpressions(input.root(), in.candidates());
+        return new DependentRewrite(
+                candidates.root(),
+                new BoundInExpression(input.expression(), candidates.expressions(), in.negated())
+        );
+    }
+
+    private ExpressionListRewrite rewriteExpressions(LogicalOperator root, List<BoundExpression> expressions) {
+        LogicalOperator currentRoot = root;
+        ArrayList<BoundExpression> rewritten = new ArrayList<>(expressions.size());
+        for (BoundExpression expression : expressions) {
+            DependentRewrite rewrite = rewriteDependentExists(currentRoot, expression);
+            currentRoot = rewrite.root();
+            rewritten.add(rewrite.expression());
+        }
+        return new ExpressionListRewrite(currentRoot, rewritten);
+    }
+
+    private int outputColumnCount(LogicalOperator operator) {
+        if (operator instanceof LogicalAggregate aggregate) {
+            return aggregate.selectList().size();
+        }
+        if (operator instanceof LogicalDependentJoin join) {
+            return outputColumnCount(join.child()) + 1;
+        }
+        if (operator instanceof LogicalFilter filter) {
+            return outputColumnCount(filter.child());
+        }
+        if (operator instanceof LogicalGet get) {
+            return columns(get.tableRef()).size();
+        }
+        if (operator instanceof LogicalJoin join) {
+            return outputColumnCount(join.left()) + outputColumnCount(join.right());
+        }
+        if (operator instanceof LogicalLimit limit) {
+            return outputColumnCount(limit.child());
+        }
+        if (operator instanceof LogicalOrder order) {
+            return outputColumnCount(order.child());
+        }
+        if (operator instanceof LogicalProjection projection) {
+            return projection.expressions().size();
+        }
+        throw new BinderException("Cannot derive output columns for " + operator.getClass().getSimpleName());
+    }
+
+    private List<ColumnCatalogEntry> columns(BoundTableRef tableRef) {
+        if (tableRef.isReplacementScan()) {
+            return tableRef.replacementScan().columns();
+        }
+        return tableRef.table().columns();
+    }
+
 }

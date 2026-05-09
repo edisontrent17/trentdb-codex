@@ -2,6 +2,7 @@ package dev.trentdb.execution;
 
 import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.Vector;
+import dev.trentdb.planner.BoundExistsSubqueryExpression;
 import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundSelectStatement;
 import dev.trentdb.planner.BoundSubqueryExpression;
@@ -55,6 +56,14 @@ final class SubqueryExpressionEvaluator {
             writeSqlTruth(output, rowIndex, value);
         }
         return output;
+    }
+
+    Vector exists(BoundExistsSubqueryExpression exists, DataChunk input) {
+        if (exists.isCorrelated()) {
+            throw new ExecutionException("Correlated EXISTS must be planned as a dependent MARK join");
+        }
+        boolean hasRows = !executeSubquery(exists.subquery()).rows().isEmpty();
+        return Vector.constantBoolean(hasRows, input.cardinality());
     }
 
     private QueryResult executeSubquery(BoundSelectStatement subquery) {

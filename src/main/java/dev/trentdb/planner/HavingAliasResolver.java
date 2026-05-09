@@ -6,6 +6,7 @@ import dev.trentdb.ast.CaseExpression;
 import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.Expression;
+import dev.trentdb.ast.ExistsExpression;
 import dev.trentdb.ast.FunctionCallExpression;
 import dev.trentdb.ast.InExpression;
 import dev.trentdb.ast.InSubqueryExpression;
@@ -51,6 +52,7 @@ final class HavingAliasResolver {
             case CaseExpression caseExpression -> resolveCaseExpression(caseExpression);
             case CastExpression cast -> new CastExpression(resolve(cast.child()), cast.targetType());
             case ColumnReferenceExpression column -> resolveColumn(column);
+            case ExistsExpression exists -> exists;
             case FunctionCallExpression function -> resolveFunction(function);
             case InExpression in -> resolveInExpression(in);
             case InSubqueryExpression in -> new InSubqueryExpression(resolve(in.input()), in.subquery(), in.negated());

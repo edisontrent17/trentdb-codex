@@ -61,6 +61,7 @@ public record BoundSelectStatement(
                 }
                 yield result;
             }
+            case BoundExistsSubqueryExpression ignored -> false;
             case BoundInSubqueryExpression in -> containsAggregate(in.input());
             case BoundSubqueryExpression ignored -> false;
             case BoundOutputColumnExpression ignored -> false;
