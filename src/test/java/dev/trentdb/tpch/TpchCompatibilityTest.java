@@ -377,6 +377,45 @@ class TpchCompatibilityTest {
     }
 
     @Test
+    void executesTpchQ4FromGeneratedCsv() throws Exception {
+        Fixture fixture = emptyFixture();
+        String ordersCsv = resourcePath("tpch/orders_q4_sf001.csv");
+        String lineitemCsv = resourcePath("tpch/lineitem_q4_sf001.csv");
+
+        QueryResult result = execute(fixture, """
+                SELECT
+                    o_orderpriority,
+                    count(*) AS order_count
+                FROM
+                    '%s' o
+                WHERE
+                    o_orderdate >= CAST('1993-07-01' AS date)
+                    AND o_orderdate < CAST('1993-10-01' AS date)
+                    AND EXISTS (
+                        SELECT
+                            *
+                        FROM
+                            '%s' l
+                        WHERE
+                            l.l_orderkey = o.o_orderkey
+                            AND l_commitdate < l_receiptdate)
+                GROUP BY
+                    o_orderpriority
+                ORDER BY
+                    o_orderpriority;
+                """.formatted(sqlString(ordersCsv), sqlString(lineitemCsv)));
+
+        assertEquals(List.of("o_orderpriority", "order_count"), result.columns());
+        assertEquals(List.of(
+                List.of("1-URGENT", 93L),
+                List.of("2-HIGH", 103L),
+                List.of("3-MEDIUM", 109L),
+                List.of("4-NOT SPECIFIED", 102L),
+                List.of("5-LOW", 128L)
+        ), result.rows());
+    }
+
+    @Test
     void executesTpchQ7FromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String supplierCsv = resourcePath("tpch/supplier_q5_sf001.csv");

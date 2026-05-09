@@ -6,6 +6,7 @@ import dev.trentdb.planner.BoundBinaryExpression;
 import dev.trentdb.planner.BoundCaseExpression;
 import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
+import dev.trentdb.planner.BoundExistsSubqueryExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
@@ -67,6 +68,11 @@ public final class PhysicalPlanPrinter {
             appendOptionalExpression(builder, depth + 1, "residualFilter", join.residualFilter());
             return;
         }
+        if (operator instanceof PhysicalCorrelatedExistsMarkJoin join) {
+            appendLine(builder, depth, "PhysicalMarkJoin subquery=EXISTS marker="
+                    + join.marker().name() + "#" + join.marker().ordinal());
+            return;
+        }
         if (operator instanceof PhysicalNestedLoopJoin join) {
             appendLine(builder, depth, "PhysicalNestedLoopJoin right=" + tableName(join.right())
                     + " type=" + join.joinType().name());
@@ -115,6 +121,7 @@ public final class PhysicalPlanPrinter {
                     + "(" + expressions(in.candidates()) + ")";
             case BoundInSubqueryExpression in -> expression(in.input())
                     + (in.negated() ? " NOT IN " : " IN ") + "(SUBQUERY)";
+            case BoundExistsSubqueryExpression ignored -> "EXISTS (SUBQUERY)";
             case BoundIntervalExpression interval -> "INTERVAL '" + interval.amount() + "' " + interval.unit().name();
             case BoundLiteralExpression literal -> literal.value() == null ? "NULL" : literal.value().toString();
             case BoundOutputColumnExpression output -> output.name() + "#" + output.ordinal();

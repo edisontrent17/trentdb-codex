@@ -11,6 +11,7 @@ import dev.trentdb.ast.CommonTableExpression;
 import dev.trentdb.ast.CreateTableStatement;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.Expression;
+import dev.trentdb.ast.ExistsExpression;
 import dev.trentdb.ast.FromItem;
 import dev.trentdb.ast.FunctionCallExpression;
 import dev.trentdb.ast.InExpression;
@@ -271,6 +272,9 @@ final class AstBuilder {
                     select(inSubqueryPredicate.select()),
                     inSubqueryPredicate.NOT() != null
             );
+        }
+        if (context instanceof TrentDbSqlParser.ExistsPredicateContext existsPredicate) {
+            return new ExistsExpression(select(existsPredicate.select()));
         }
         if (context instanceof TrentDbSqlParser.LikePredicateContext likePredicate) {
             return new BinaryExpression(

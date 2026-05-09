@@ -129,6 +129,7 @@ booleanFactor
 predicate
     : valueExpression IS NOT NULL_T                         #isNotNullPredicate
     | valueExpression IS NULL_T                             #isNullPredicate
+    | EXISTS LPAREN select RPAREN                           #existsPredicate
     | valueExpression NOT? LIKE valueExpression             #likePredicate
     | valueExpression NOT? IN LPAREN expressionList RPAREN  #inListPredicate
     | valueExpression NOT? IN LPAREN select RPAREN          #inSubqueryPredicate
@@ -275,6 +276,7 @@ LIMIT: 'LIMIT';
 EXPLAIN: 'EXPLAIN';
 CAST: 'CAST';
 EXTRACT: 'EXTRACT';
+EXISTS: 'EXISTS';
 CASE: 'CASE';
 WHEN: 'WHEN';
 THEN: 'THEN';

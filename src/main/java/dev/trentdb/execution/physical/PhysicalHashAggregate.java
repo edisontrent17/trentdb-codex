@@ -10,6 +10,7 @@ import dev.trentdb.planner.BoundBinaryExpression;
 import dev.trentdb.planner.BoundCaseExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundCastExpression;
+import dev.trentdb.planner.BoundExistsSubqueryExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
@@ -173,6 +174,7 @@ public final class PhysicalHashAggregate implements PhysicalOperator {
             case BoundCastExpression cast -> cast.logicalType();
             case BoundColumnRefExpression column -> column.logicalType();
             case BoundFunctionExpression function -> function.logicalType();
+            case BoundExistsSubqueryExpression exists -> exists.logicalType();
             case BoundInExpression in -> in.logicalType();
             case BoundInSubqueryExpression in -> in.logicalType();
             case BoundIntervalExpression ignored -> LogicalType.INTERVAL;

@@ -8,5 +8,6 @@ public enum LogicalOperatorType {
     LOGICAL_LIMIT,
     LOGICAL_ORDER_BY,
     LOGICAL_AGGREGATE_AND_GROUP_BY,
+    LOGICAL_DELIM_JOIN,
     LOGICAL_EXPLAIN
 }

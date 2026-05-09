@@ -9,8 +9,8 @@
 
 ## Next
 
-- extend TPC-H coverage to the next query shapes while deferring correlated subquery execution until later
-- add correlated subqueries and `EXISTS`/`NOT EXISTS` support
+- extend TPC-H coverage to the remaining query shapes
+- broaden correlated subquery execution beyond the TPC-H Q4 `EXISTS` equality shape, including `NOT EXISTS`
 - introduce optimizer scaffolding once the unoptimized behavior is covered by compatibility tests
 - design the durable write path for `CREATE TABLE` and `INSERT` around WAL and recovery boundaries
 
@@ -27,9 +27,10 @@
 - implement distinct aggregate arguments for the supported aggregate functions
 - implement DuckDB-shaped `LEFT OUTER JOIN` and non-correlated derived tables in `FROM`
 - implement non-recursive common table expressions for read queries
-- run generated CSV TPC-H compatibility tests for Q1, Q3, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13, Q14, Q15, Q16, Q18, and Q19
+- run generated CSV TPC-H compatibility tests for Q1, Q3, Q4, Q5, Q6, Q7, Q8, Q9, Q10, Q11, Q12, Q13, Q14, Q15, Q16, Q18, and Q19
 - add ambiguity handling for unqualified column references in join binding
 - add non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
+- add correlated `EXISTS` planning and execution for the single-table equality shape used by TPC-H Q4
 
 ## DuckDB Reference Areas
 
@@ -60,6 +61,7 @@
 
 - optimizer passes: constant folding, filter pushdown, projection pruning, top-N rewrite
 - rewrite eligible subqueries into semi joins, mark joins, or scalar subquery operators
+- match DuckDB's full duplicate-eliminated delim join decorrelation for broader correlated subqueries
 - richer DuckDB-compatibility tests
 - primitive-specialized vectors for fixed-width types
 - columnar append storage with segments and scan state

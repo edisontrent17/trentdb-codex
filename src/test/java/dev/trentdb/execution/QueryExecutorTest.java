@@ -165,6 +165,47 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesUncorrelatedExistsPredicate() {
+        Fixture fixture = peopleOrdersFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT name
+                FROM people
+                WHERE EXISTS (SELECT * FROM orders WHERE total > 20)
+                ORDER BY name
+                """
+        );
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Alice"), List.of("Bob")), result.rows());
+    }
+
+    @Test
+    void executesCorrelatedExistsPredicateAsMarkJoin() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT name
+                FROM people p
+                WHERE EXISTS (
+                    SELECT *
+                    FROM orders o
+                    WHERE o.person_id = p.id
+                    AND o.total > 15
+                )
+                ORDER BY name
+                """
+        );
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Alice"), List.of("Bob")), result.rows());
+    }
+
+    @Test
     void executesLikePredicate() {
         Fixture fixture = peopleFixture();
 

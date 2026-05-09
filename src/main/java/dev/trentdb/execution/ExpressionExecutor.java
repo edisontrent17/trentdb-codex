@@ -10,6 +10,7 @@ import dev.trentdb.planner.BoundBinaryExpression;
 import dev.trentdb.planner.BoundCaseExpression;
 import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
+import dev.trentdb.planner.BoundExistsSubqueryExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
@@ -50,6 +51,7 @@ public final class ExpressionExecutor {
             case BoundBetweenExpression between -> between(between, input);
             case BoundInExpression in -> in(in, input);
             case BoundInSubqueryExpression in -> subqueryEvaluator.in(in, input, execute(in.input(), input));
+            case BoundExistsSubqueryExpression exists -> subqueryEvaluator.exists(exists, input);
             case BoundCastExpression cast -> cast(cast, input);
             case BoundCaseExpression caseExpression -> caseExpression(caseExpression, input);
             case BoundIntervalExpression interval -> throw new ExecutionException(

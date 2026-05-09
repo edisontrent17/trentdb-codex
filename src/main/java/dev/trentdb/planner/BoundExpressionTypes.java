@@ -19,6 +19,7 @@ public final class BoundExpressionTypes {
             case BoundAggregateExpression aggregate -> aggregate.logicalType();
             case BoundBetweenExpression between -> between.logicalType();
             case BoundCaseExpression caseExpression -> caseExpression.logicalType();
+            case BoundExistsSubqueryExpression exists -> exists.logicalType();
             case BoundInExpression in -> in.logicalType();
             case BoundInSubqueryExpression in -> in.logicalType();
             case BoundCastExpression cast -> cast.logicalType();

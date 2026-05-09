@@ -20,6 +20,11 @@ public final class LogicalPlanPrinter {
                 builder.append("LogicalExplain\n");
                 append(explain.child(), builder, depth + 1);
             }
+            case LogicalDependentJoin join -> {
+                builder.append("LogicalDelimJoin type=MARK subquery=EXISTS");
+                builder.append(" marker=").append(join.marker().name()).append("#").append(join.marker().ordinal()).append("\n");
+                append(join.child(), builder, depth + 1);
+            }
             case LogicalProjection projection -> {
                 builder.append("LogicalProjection");
                 builder.append(" [").append(projection.expressions().size()).append("]\n");

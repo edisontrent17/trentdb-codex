@@ -9,6 +9,7 @@ import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CommonTableExpression;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.Expression;
+import dev.trentdb.ast.ExistsExpression;
 import dev.trentdb.ast.FunctionCallExpression;
 import dev.trentdb.ast.InExpression;
 import dev.trentdb.ast.InSubqueryExpression;
@@ -47,31 +48,6 @@ import static dev.trentdb.planner.BoundExpressionTypes.logicalType;
 import static dev.trentdb.planner.BoundExpressionTypes.typeName;
 
 public final class Binder {
-    private record BoundColumnBinding(String relationName, ColumnCatalogEntry column, int ordinal) {
-    }
-
-    private record BindScope(Transaction transaction, CommonTableExpressionScope commonTableExpressions) {
-
-        private BindScope(Transaction transaction) {
-            this(transaction, CommonTableExpressionScope.empty());
-        }
-
-        private BindScope withCommonTableExpressions(List<CommonTableExpression> expressions) {
-            return new BindScope(transaction, commonTableExpressions.with(expressions));
-        }
-
-        private CommonTableExpression findCommonTableExpression(QualifiedName name) {
-            return commonTableExpressions.find(name);
-        }
-
-        private BindScope enterCommonTableExpression(String name) {
-            return new BindScope(transaction, commonTableExpressions.enter(name));
-        }
-    }
-
-    private record BindingContext(BindScope scope, List<BoundColumnBinding> columns) {
-    }
-
     private final Catalog catalog;
     private final FunctionRegistry functionRegistry;
     private final ReplacementScanRegistry replacementScanRegistry;
@@ -105,9 +81,18 @@ public final class Binder {
     }
 
     private BoundSelectStatement bindSelect(BindScope scope, SelectStatement statement) {
+        return bindSelect(scope, statement, List.of());
+    }
+
+    private BoundSelectStatement bindSelect(
+            BindScope scope,
+            SelectStatement statement,
+            List<BoundColumnBinding> outerColumns
+    ) {
         BindScope selectScope = scope.withCommonTableExpressions(statement.commonTableExpressions());
         BoundFrom boundFrom = bindFrom(selectScope, statement);
-        BindingContext context = bindingContext(selectScope, boundFrom);
+        BindingContext localContext = bindingContext(selectScope, boundFrom);
+        BindingContext context = withOuterColumns(localContext, outerColumns);
         BoundExpression where = statement.where() == null ? null : bindWhereExpression(context, statement.where());
         List<HavingAliasResolver.SelectAlias> aliases = selectAliases(statement.selectItems());
         List<BoundExpression> groupBy = bindGroupBy(context, statement.groupBy(), aliases);
@@ -127,6 +112,19 @@ public final class Binder {
                 || !groupBy.isEmpty();
         List<BoundOrderByItem> orderBy = bindOrderBy(context, statement.orderBy(), selectList, selectNames, aggregateQuery);
         return new BoundSelectStatement(boundFrom, selectList, selectNames, where, groupBy, having, orderBy, statement.limit());
+    }
+
+    private BindingContext withOuterColumns(BindingContext localContext, List<BoundColumnBinding> outerColumns) {
+        if (outerColumns.isEmpty()) {
+            return localContext;
+        }
+        ArrayList<BoundColumnBinding> columns = new ArrayList<>(localContext.columns());
+        int localColumnCount = localContext.columns().size();
+        for (int index = 0; index < outerColumns.size(); index++) {
+            BoundColumnBinding outer = outerColumns.get(index);
+            columns.add(new BoundColumnBinding(outer.relationName(), outer.column(), localColumnCount + index));
+        }
+        return new BindingContext(localContext.scope(), columns, localContext.starColumnCount());
     }
 
     private BoundFrom bindFrom(BindScope scope, SelectStatement statement) {
@@ -236,7 +234,7 @@ public final class Binder {
         for (int index = 0; index < tableColumns.size(); index++) {
             bindings.add(new BoundColumnBinding(relationName(tableRef), tableColumns.get(index), index));
         }
-        return new BindingContext(scope, bindings);
+        return new BindingContext(scope, bindings, bindings.size());
     }
 
     private BindingContext bindingContext(BindScope scope, BoundSubqueryRef subqueryRef) {
@@ -244,7 +242,7 @@ public final class Binder {
         for (ColumnCatalogEntry column : subqueryRef.columns()) {
             bindings.add(new BoundColumnBinding(relationName(subqueryRef), column, column.ordinal()));
         }
-        return new BindingContext(scope, bindings);
+        return new BindingContext(scope, bindings, bindings.size());
     }
 
     private BindingContext bindingContext(BindScope scope, BoundFrom left, BoundTableRef right) {
@@ -254,7 +252,7 @@ public final class Binder {
         for (int index = 0; index < rightColumns.size(); index++) {
             bindings.add(new BoundColumnBinding(relationName(right), rightColumns.get(index), offset + index));
         }
-        return new BindingContext(scope, bindings);
+        return new BindingContext(scope, bindings, bindings.size());
     }
 
     private void bindSelectExpression(
@@ -266,7 +264,8 @@ public final class Binder {
             boolean allowAggregates
     ) {
         if (expression instanceof StarExpression) {
-            for (BoundColumnBinding column : context.columns()) {
+            for (int index = 0; index < context.starColumnCount(); index++) {
+                BoundColumnBinding column = context.columns().get(index);
                 selectList.add(new BoundColumnRefExpression(column.column(), column.ordinal()));
                 selectNames.add(column.column().name());
             }
@@ -431,6 +430,9 @@ public final class Binder {
         if (expression instanceof InSubqueryExpression inSubquery) {
             return bindInSubqueryExpression(context, inSubquery, allowAggregates);
         }
+        if (expression instanceof ExistsExpression exists) {
+            return bindExistsExpression(context, exists);
+        }
         if (expression instanceof CastExpression cast) {
             return bindCastExpression(context, cast, allowAggregates);
         }
@@ -511,6 +513,29 @@ public final class Binder {
     private BoundSubqueryExpression bindSubqueryExpression(BindingContext context, SubqueryExpression subquery) {
         BoundSelectStatement boundSubquery = bindSelect(context.scope(), subquery.select());
         return new BoundSubqueryExpression(boundSubquery, singleColumnType(boundSubquery, "Scalar subquery"));
+    }
+
+    private BoundExistsSubqueryExpression bindExistsExpression(BindingContext context, ExistsExpression exists) {
+        BoundSelectStatement subquery = bindSelect(context.scope(), exists.select(), context.columns());
+        int localColumnCount = bindingContext(context.scope(), subquery.from()).columns().size();
+        List<BoundExistsSubqueryExpression.CorrelatedColumn> correlatedColumns =
+                BoundExpressionInspector.containsColumnOrdinalAtLeastOutsideProjection(subquery, localColumnCount)
+                        ? correlatedColumns(context.columns())
+                        : List.of();
+        return new BoundExistsSubqueryExpression(subquery, localColumnCount, correlatedColumns);
+    }
+
+    private List<BoundExistsSubqueryExpression.CorrelatedColumn> correlatedColumns(List<BoundColumnBinding> columns) {
+        ArrayList<BoundExistsSubqueryExpression.CorrelatedColumn> result = new ArrayList<>(columns.size());
+        for (int index = 0; index < columns.size(); index++) {
+            BoundColumnBinding column = columns.get(index);
+            result.add(new BoundExistsSubqueryExpression.CorrelatedColumn(
+                    column.column().name(),
+                    column.column().logicalType(),
+                    column.ordinal()
+            ));
+        }
+        return result;
     }
 
     private LogicalType singleColumnType(BoundSelectStatement subquery, String context) {

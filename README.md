@@ -44,6 +44,7 @@ Supported execution coverage currently includes:
 - scalar `lower(text)` and DuckDB-style `EXTRACT(... FROM date)` lowered through `date_part`
 - arithmetic expressions in `SELECT` and `WHERE`
 - `IN`, `NOT IN`, `LIKE`, `NOT LIKE`, `CASE`, date literals, interval literals, and casts
+- `EXISTS` predicates, including the correlated single-table equality shape used by TPC-H Q4
 - grouped and ungrouped aggregates: `count`, `sum`, `min`, `max`, `avg`, including distinct aggregate arguments
 - `HAVING` filters over grouped and ungrouped aggregate queries
 - single and multiple explicit `INNER JOIN` queries plus `LEFT OUTER JOIN` through physical join operators
@@ -58,6 +59,7 @@ Current TPC-H coverage from generated scale 0.01 CSV fixtures:
 
 - Q1
 - Q3
+- Q4
 - Q5
 - Q6
 - Q7
