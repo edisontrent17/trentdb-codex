@@ -119,7 +119,7 @@ Status:
 - explicit `INNER JOIN` and `LEFT OUTER JOIN` binding is implemented for left-deep multi-join trees with ambiguity handling
 - derived table binding is implemented for non-correlated subqueries in `FROM`, including explicit output column aliases
 - non-recursive common table expression binding is implemented for read queries
-- non-correlated scalar subqueries, `IN`/`NOT IN` subqueries, and the correlated `EXISTS`/`NOT EXISTS` equality and inequality shapes used by TPC-H Q4 and Q21 are implemented
+- non-correlated scalar subqueries, correlated scalar aggregate subqueries for canonical TPC-H Q2/Q17/Q20 shapes, `IN`/`NOT IN` subqueries, and the correlated `EXISTS`/`NOT EXISTS` equality and inequality shapes used by TPC-H Q4 and Q21 are implemented
 
 ## Milestone 7: Logical Planning
 

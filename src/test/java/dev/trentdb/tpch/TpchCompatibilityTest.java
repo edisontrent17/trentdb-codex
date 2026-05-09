@@ -106,7 +106,7 @@ class TpchCompatibilityTest {
     }
 
     @Test
-    void executesTpchQ2FromGeneratedCsv() throws Exception {
+    void executesCanonicalTpchQ2SqlShapeFromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String partCsv = resourcePath("tpch/part_q2_sf001.csv");
         String supplierCsv = resourcePath("tpch/supplier_q2_sf001.csv");
@@ -125,54 +125,34 @@ class TpchCompatibilityTest {
                     s_phone,
                     s_comment
                 FROM
-                    (
-                        SELECT
-                            ps_partkey AS min_partkey,
-                            min(ps_supplycost) AS min_supplycost
-                        FROM
-                            '%3$s' ps
-                        JOIN
-                            '%2$s' s
-                        ON
-                            s_suppkey = ps_suppkey
-                        JOIN
-                            '%4$s' n
-                        ON
-                            s_nationkey = n_nationkey
-                        JOIN
-                            '%5$s' r
-                        ON
-                            n_regionkey = r_regionkey
-                        WHERE
-                            r_name = 'EUROPE'
-                        GROUP BY
-                            ps_partkey
-                    ) minps
-                JOIN
-                    '%1$s' p
-                ON
-                    p_partkey = min_partkey
-                JOIN
-                    '%3$s' ps
-                ON
-                    p_partkey = ps_partkey
-                    AND ps_supplycost = min_supplycost
-                JOIN
-                    '%2$s' s
-                ON
-                    s_suppkey = ps_suppkey
-                JOIN
-                    '%4$s' n
-                ON
-                    s_nationkey = n_nationkey
-                JOIN
+                    '%1$s' p,
+                    '%2$s' s,
+                    '%3$s' ps,
+                    '%4$s' n,
                     '%5$s' r
-                ON
-                    n_regionkey = r_regionkey
                 WHERE
-                    p_size = 15
-                    AND p_type LIKE '%%BRASS'
-                    AND r_name = 'EUROPE'
+                    p.p_partkey = ps.ps_partkey
+                    AND s.s_suppkey = ps.ps_suppkey
+                    AND p.p_size = 15
+                    AND p.p_type LIKE '%%BRASS'
+                    AND s.s_nationkey = n.n_nationkey
+                    AND n.n_regionkey = r.r_regionkey
+                    AND r.r_name = 'EUROPE'
+                    AND ps.ps_supplycost = (
+                        SELECT
+                            min(ps2.ps_supplycost)
+                        FROM
+                            '%3$s' ps2,
+                            '%2$s' s2,
+                            '%4$s' n2,
+                            '%5$s' r2
+                        WHERE
+                            p.p_partkey = ps2.ps_partkey
+                            AND s2.s_suppkey = ps2.ps_suppkey
+                            AND s2.s_nationkey = n2.n_nationkey
+                            AND n2.n_regionkey = r2.r_regionkey
+                            AND r2.r_name = 'EUROPE'
+                    )
                 ORDER BY
                     s_acctbal DESC,
                     n_name,
@@ -214,7 +194,7 @@ class TpchCompatibilityTest {
     }
 
     @Test
-    void executesTpchQ17FromGeneratedCsv() throws Exception {
+    void executesCanonicalTpchQ17SqlShapeFromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String lineitemCsv = resourcePath("tpch/lineitem_q17_sf001.csv");
         String partCsv = resourcePath("tpch/part_q17_sf001.csv");
@@ -223,28 +203,21 @@ class TpchCompatibilityTest {
                 SELECT
                     sum(l_extendedprice) / 7.0 AS avg_yearly
                 FROM
-                    (
-                        SELECT
-                            l_partkey AS avg_partkey,
-                            0.2 * avg(l_quantity) AS quantity_threshold
-                        FROM
-                            '%s'
-                        GROUP BY
-                            l_partkey
-                    ) avg_l
-                JOIN
-                    '%s' p
-                ON
-                    p_partkey = avg_partkey
-                JOIN
-                    '%s' l
-                ON
-                    p_partkey = l_partkey
+                    '%1$s' l,
+                    '%2$s' p
                 WHERE
-                    p_brand = 'Brand#23'
-                    AND p_container = 'MED BOX'
-                    AND l_quantity < quantity_threshold;
-                """.formatted(sqlString(lineitemCsv), sqlString(partCsv), sqlString(lineitemCsv)));
+                    p.p_partkey = l.l_partkey
+                    AND p.p_brand = 'Brand#23'
+                    AND p.p_container = 'MED BOX'
+                    AND l.l_quantity < (
+                        SELECT
+                            0.2 * avg(l2.l_quantity)
+                        FROM
+                            '%1$s' l2
+                        WHERE
+                            l2.l_partkey = p.p_partkey
+                    );
+                """.formatted(sqlString(lineitemCsv), sqlString(partCsv)));
 
         assertEquals(List.of("avg_yearly"), result.columns());
         assertEquals(1, result.rows().size());
@@ -1125,7 +1098,7 @@ class TpchCompatibilityTest {
     }
 
     @Test
-    void executesTpchQ20FromGeneratedCsv() throws Exception {
+    void executesCanonicalTpchQ20SqlShapeFromGeneratedCsv() throws Exception {
         Fixture fixture = emptyFixture();
         String supplierCsv = resourcePath("tpch/supplier_q20_sf001.csv");
         String nationCsv = resourcePath("tpch/nation_q20_sf001.csv");
@@ -1138,49 +1111,37 @@ class TpchCompatibilityTest {
                     s_name,
                     s_address
                 FROM
-                    (
-                        SELECT
-                            ps_suppkey AS eligible_suppkey
-                        FROM
-                            (
-                                SELECT
-                                    l_partkey AS sum_partkey,
-                                    l_suppkey AS sum_suppkey,
-                                    0.5 * sum(l_quantity) AS quantity_threshold
-                                FROM
-                                    '%5$s'
-                                WHERE
-                                    l_shipdate >= DATE '1994-01-01'
-                                    AND l_shipdate < DATE '1995-01-01'
-                                GROUP BY
-                                    l_partkey,
-                                    l_suppkey
-                            ) qty
-                        JOIN
-                            '%4$s' p
-                        ON
-                            p_partkey = sum_partkey
-                        JOIN
-                            '%3$s' ps
-                        ON
-                            ps_partkey = sum_partkey
-                            AND ps_suppkey = sum_suppkey
-                        WHERE
-                            p_name LIKE 'forest%%'
-                            AND ps_availqty > quantity_threshold
-                        GROUP BY
-                            ps_suppkey
-                    ) eligible
-                JOIN
-                    '%1$s' s
-                ON
-                    s_suppkey = eligible_suppkey
-                JOIN
+                    '%1$s' s,
                     '%2$s' n
-                ON
-                    s_nationkey = n_nationkey
                 WHERE
-                    n_name = 'CANADA'
+                    s.s_suppkey IN (
+                        SELECT
+                            ps.ps_suppkey
+                        FROM
+                            '%3$s' ps
+                        WHERE
+                            ps.ps_partkey IN (
+                                SELECT
+                                    p.p_partkey
+                                FROM
+                                    '%4$s' p
+                                WHERE
+                                    p.p_name LIKE 'forest%%'
+                            )
+                            AND ps.ps_availqty > (
+                                SELECT
+                                    0.5 * sum(l.l_quantity)
+                                FROM
+                                    '%5$s' l
+                                WHERE
+                                    l.l_partkey = ps.ps_partkey
+                                    AND l.l_suppkey = ps.ps_suppkey
+                                    AND l.l_shipdate >= DATE '1994-01-01'
+                                    AND l.l_shipdate < DATE '1995-01-01'
+                            )
+                    )
+                    AND s.s_nationkey = n.n_nationkey
+                    AND n.n_name = 'CANADA'
                 ORDER BY
                     s_name;
                 """.formatted(

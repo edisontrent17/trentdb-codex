@@ -52,7 +52,7 @@ Supported execution coverage currently includes:
 - single and multiple explicit `INNER JOIN` queries plus `LEFT OUTER JOIN` through physical join operators
 - derived tables in `FROM` with explicit output column aliases
 - non-recursive common table expressions in read queries
-- non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
+- non-correlated scalar subqueries, correlated scalar aggregate subqueries for the canonical TPC-H Q2/Q17/Q20 shapes, and `IN`/`NOT IN` subqueries
 - `ORDER BY` with DuckDB default null ordering
 - streaming `LIMIT`
 - logical and physical `EXPLAIN`

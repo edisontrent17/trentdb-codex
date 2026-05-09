@@ -3,23 +3,22 @@
 ## Scope
 
 - Added coverage for Q2, Q17, Q20, Q21, and Q22, bringing the regression suite to all 22 TPC-H queries.
-- Q21 and Q22 use canonical SQL shapes, including comma joins, `NOT EXISTS`, and `substring(... FROM ... FOR ...)`.
-- Q2, Q17, and Q20 use DuckDB-equivalent decorrelated query shapes until the optimizer can decorrelate scalar aggregate subqueries generically.
+- Q2, Q17, Q20, Q21, and Q22 use canonical SQL shapes, including scalar aggregate subqueries, nested `IN`, comma joins, `NOT EXISTS`, and `substring(... FROM ... FOR ...)`.
 
 ## Engine Work
 
 - Parser: comma joins and SQL-standard `substring`.
-- Binder: unary `NOT`, unary plus, and unary minus.
+- Binder: unary `NOT`, unary plus, unary minus, local-first outer column resolution, and scalar subquery correlation metadata.
 - Logical planner: non-correlated conjuncts are planned below dependent `EXISTS` mark joins.
-- Physical planner: comma-join predicates can be planned as hash joins.
-- Execution: correlated `EXISTS`/`NOT EXISTS` mark lookup supports one equality key plus one correlated inequality residual.
+- Physical planner: comma-join predicates can be planned as hash joins, while correlated scalar predicates stay above mixed-scope inputs.
+- Execution: correlated `EXISTS`/`NOT EXISTS` mark lookup supports one equality key plus one correlated inequality residual; correlated scalar subqueries execute by substituting the current outer row and rerunning the scalar subquery.
 
 ## Verification
 
 - `mvn test`
 - Result: 182 tests, 0 failures, 0 errors.
 - TPC-H result: 22 tests, 0 failures, 0 errors.
-- DuckDB reference checks were rerun for the newly added canonical outputs, including Q21 and Q22.
+- DuckDB reference checks were rerun for the newly added canonical outputs, including Q2, Q17, Q20, Q21, and Q22.
 
 ## Benchmark Notes
 
@@ -27,31 +26,31 @@ Timings are local wall-clock observations on clean generated SF0.01 data. TrentD
 
 | Query | TrentDB ms | DuckDB ms |
 | --- | ---: | ---: |
-| Q1 | 193 | 250 |
-| Q2 | 27 | 201 |
-| Q3 | 30 | 199 |
-| Q4 | 192 | 198 |
-| Q5 | 106 | 194 |
-| Q6 | 129 | 193 |
-| Q7 | 193 | 180 |
-| Q8 | 287 | 217 |
-| Q9 | 41 | 195 |
-| Q10 | 70 | 189 |
-| Q11 | 13 | 193 |
-| Q12 | 273 | 194 |
-| Q13 | 92 | 186 |
-| Q14 | 17 | 184 |
-| Q15 | 224 | 198 |
-| Q16 | 15 | 183 |
-| Q17 | 76 | 191 |
-| Q18 | 393 | 184 |
-| Q19 | 225 | 205 |
-| Q20 | 139 | 192 |
-| Q21 | 300 | 202 |
-| Q22 | 15 | 194 |
+| Q1 | 173 | 250 |
+| Q2 | 20 | 201 |
+| Q3 | 32 | 199 |
+| Q4 | 135 | 198 |
+| Q5 | 118 | 194 |
+| Q6 | 146 | 193 |
+| Q7 | 112 | 180 |
+| Q8 | 302 | 217 |
+| Q9 | 42 | 195 |
+| Q10 | 68 | 189 |
+| Q11 | 7 | 193 |
+| Q12 | 281 | 194 |
+| Q13 | 93 | 186 |
+| Q14 | 15 | 184 |
+| Q15 | 244 | 198 |
+| Q16 | 16 | 183 |
+| Q17 | 47 | 191 |
+| Q18 | 391 | 184 |
+| Q19 | 192 | 205 |
+| Q20 | 64335 | 192 |
+| Q21 | 313 | 202 |
+| Q22 | 13 | 194 |
 
 ## Follow-Up
 
 - Add optimizer infrastructure next.
-- Replace the current Q2, Q17, and Q20 manual decorrelations with generic scalar aggregate decorrelation.
+- Decorrelate scalar aggregate subqueries into join-shaped plans, with Q20 as the first performance target.
 - Add a repeatable benchmark harness that keeps both TrentDB and DuckDB in-process or otherwise removes CLI startup from both sides.

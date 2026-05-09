@@ -413,7 +413,7 @@ public final class PhysicalPlanner {
             case BoundLiteralExpression ignored -> PredicateScope.NONE;
             case BoundIntervalExpression ignored -> PredicateScope.NONE;
             case BoundOutputColumnExpression output -> columnScope(output.ordinal(), leftColumnCount, rightColumnCount);
-            case BoundSubqueryExpression ignored -> PredicateScope.NONE;
+            case BoundSubqueryExpression subquery -> subquery.isCorrelated() ? PredicateScope.MIXED : PredicateScope.NONE;
         };
     }
 

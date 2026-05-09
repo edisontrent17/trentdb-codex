@@ -6,11 +6,13 @@
 - Mirror DuckDB's parser -> binder -> logical operator -> physical operator -> vectorized execution shape.
 - Use `/home/manoj/Projects/duckdb` as the local architecture reference.
 - Keep write paths behind WAL-capable catalog, storage, and transaction boundaries before claiming durable DDL or DML.
+- Preserve DuckDB-compatible correctness for all 22 TPC-H query shapes before optimizer work.
 
 ## Next
 
 - introduce optimizer scaffolding now that all 22 TPC-H queries have unoptimized regression coverage
-- broaden generic correlated scalar subquery execution beyond the TPC-H-compatible decorrelated query shapes
+- decorrelate scalar aggregate subqueries into join-shaped plans, starting with canonical Q20 performance
+- broaden generic correlated scalar subquery execution beyond the current TPC-H scalar aggregate shapes
 - add semi/anti/mark join rewrite infrastructure for `IN`, `EXISTS`, and scalar subqueries
 - design the durable write path for `CREATE TABLE` and `INSERT` around WAL and recovery boundaries
 
@@ -28,6 +30,7 @@
 - implement DuckDB-shaped `LEFT OUTER JOIN` and non-correlated derived tables in `FROM`
 - implement non-recursive common table expressions for read queries
 - run generated CSV TPC-H compatibility tests for Q1 through Q22
+- execute canonical TPC-H Q2, Q17, and Q20 scalar aggregate subquery shapes
 - add ambiguity handling for unqualified column references in join binding
 - add non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
 - add correlated `EXISTS` planning and execution for the single-table equality shape used by TPC-H Q4
@@ -63,7 +66,6 @@
 - optimizer passes: constant folding, filter pushdown, projection pruning, top-N rewrite
 - rewrite eligible subqueries into semi joins, mark joins, or scalar subquery operators
 - match DuckDB's full duplicate-eliminated delim join decorrelation for broader correlated subqueries
-- implement generic correlated scalar aggregate execution or decorrelation for canonical Q2, Q17, and Q20 forms
 - richer DuckDB-compatibility tests
 - primitive-specialized vectors for fixed-width types
 - columnar append storage with segments and scan state
