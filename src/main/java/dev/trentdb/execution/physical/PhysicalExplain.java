@@ -2,6 +2,7 @@ package dev.trentdb.execution.physical;
 
 import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.Vector;
+import dev.trentdb.planner.PlanTreeRenderer;
 import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.planner.logical.LogicalPlanPrinter;
 import dev.trentdb.types.LogicalType;
@@ -34,9 +35,11 @@ public final class PhysicalExplain implements PhysicalSource {
     }
 
     private String explainText() {
-        return "Logical Plan\n"
+        PlanTreeRenderer renderer = new PlanTreeRenderer();
+        return renderer.title("Logical Plan")
                 + new LogicalPlanPrinter().print(logicalPlan)
                 + "\n"
+                + renderer.title("Physical Plan")
                 + new PhysicalPlanPrinter().print(physicalPlan);
     }
 }

@@ -335,8 +335,7 @@ class QueryExecutorTest {
         );
 
         String plan = (String) result.rows().getFirst().getFirst();
-        assertTrue(plan.contains("LogicalDependentJoin type=SINGLE"));
-        assertTrue(plan.contains("PhysicalSingleJoin subquery=SCALAR"));
+        assertPlanContains(plan, "DELIM_JOIN", "Join Type:", "SINGLE", "SINGLE_JOIN", "Subquery:", "SCALAR");
     }
 
     @Test
@@ -936,19 +935,9 @@ class QueryExecutorTest {
         QueryResult result = execute(fixture, "EXPLAIN SELECT id FROM people WHERE id = 1");
 
         assertEquals(List.of("explain"), result.columns());
-        assertEquals("""
-                Logical Plan
-                LogicalProjection [1]
-                  LogicalFilter
-                    LogicalGet people
-                
-                Physical Plan
-                  Source: PhysicalTableScan table=people
-                  Operators
-                    PhysicalFilter predicate=(id#0 EQUAL 1)
-                    PhysicalProjection expressions=[1]
-                  Sink: RESULT_COLLECTOR
-                """, result.rows().getFirst().getFirst());
+        String plan = (String) result.rows().getFirst().getFirst();
+        assertPlanContains(plan, "Logical Plan", "PROJECTION", "FILTER", "SEQ_SCAN", "Table:", "people");
+        assertPlanContains(plan, "Physical Plan", "Expression:", "(id#0 EQUAL 1)", "Projections:", "id#0");
     }
 
     @Test
@@ -989,6 +978,12 @@ class QueryExecutorTest {
         BoundStatement bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);
         LogicalOperator logical = new LogicalPlanner().plan(bound);
         return new QueryExecutor(fixture.storageManager).execute(logical);
+    }
+
+    private void assertPlanContains(String plan, String... expectedValues) {
+        for (String expectedValue : expectedValues) {
+            assertTrue(plan.contains(expectedValue), "Expected plan to contain '" + expectedValue + "':\n" + plan);
+        }
     }
 
     private String sqlString(String value) {

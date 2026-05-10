@@ -32,6 +32,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class BinderTest {
@@ -849,12 +850,9 @@ class BinderTest {
         BoundStatement bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);
         LogicalOperator logical = new LogicalPlanner().plan(bound);
 
-        assertEquals("""
-                LogicalExplain
-                  LogicalProjection [1]
-                    LogicalFilter
-                      LogicalGet people
-                """, new LogicalPlanPrinter().print(logical));
+        String plan = new LogicalPlanPrinter().print(logical);
+        assertPlanContains(plan, "EXPLAIN", "PROJECTION", "FILTER", "SEQ_SCAN", "Table:", "people");
+        assertPlanContains(plan, "Expressions:", "id#0", "(id#0 EQUAL 1)");
     }
 
     @Test
@@ -864,12 +862,9 @@ class BinderTest {
         BoundStatement bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);
         LogicalOperator logical = new LogicalPlanner().plan(bound);
 
-        assertEquals("""
-                LogicalExplain
-                  LogicalLimit 1
-                    LogicalProjection [1]
-                      LogicalGet people
-                """, new LogicalPlanPrinter().print(logical));
+        String plan = new LogicalPlanPrinter().print(logical);
+        assertPlanContains(plan, "EXPLAIN", "LIMIT", "PROJECTION", "SEQ_SCAN");
+        assertPlanContains(plan, "Limit:", "1", "Table:", "people");
     }
 
     @Test
@@ -879,12 +874,9 @@ class BinderTest {
         BoundStatement bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);
         LogicalOperator logical = new LogicalPlanner().plan(bound);
 
-        assertEquals("""
-                LogicalExplain
-                  LogicalProjection [1]
-                    LogicalOrder [1]
-                      LogicalGet people
-                """, new LogicalPlanPrinter().print(logical));
+        String plan = new LogicalPlanPrinter().print(logical);
+        assertPlanContains(plan, "EXPLAIN", "PROJECTION", "ORDER_BY", "SEQ_SCAN");
+        assertPlanContains(plan, "Order By:", "name#1 ASC", "Table:", "people");
     }
 
     @Test
@@ -894,12 +886,9 @@ class BinderTest {
         BoundStatement bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);
         LogicalOperator logical = new LogicalPlanner().plan(bound);
 
-        assertEquals("""
-                LogicalExplain
-                  LogicalProjection [2]
-                    LogicalAggregate groups=[1] expressions=[2]
-                      LogicalGet people
-                """, new LogicalPlanPrinter().print(logical));
+        String plan = new LogicalPlanPrinter().print(logical);
+        assertPlanContains(plan, "EXPLAIN", "PROJECTION", "AGGREGATE", "SEQ_SCAN");
+        assertPlanContains(plan, "Groups:", "name#1", "Expressions:", "count(*)");
     }
 
     @Test
@@ -917,13 +906,15 @@ class BinderTest {
         BoundStatement bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);
         LogicalOperator logical = new LogicalPlanner().plan(bound);
 
-        assertEquals("""
-                LogicalExplain
-                  LogicalProjection [1]
-                    LogicalComparisonJoin type=INNER
-                      LogicalGet people
-                      LogicalGet orders
-                """, new LogicalPlanPrinter().print(logical));
+        String plan = new LogicalPlanPrinter().print(logical);
+        assertPlanContains(plan, "EXPLAIN", "PROJECTION", "COMPARISON_JOIN", "SEQ_SCAN");
+        assertPlanContains(plan, "Join Type:", "INNER", "people", "orders");
+    }
+
+    private void assertPlanContains(String plan, String... expectedValues) {
+        for (String expectedValue : expectedValues) {
+            assertTrue(plan.contains(expectedValue), "Expected plan to contain '" + expectedValue + "':\n" + plan);
+        }
     }
 
     private BoundSelectStatement bindSelect(Fixture fixture, String sql) {

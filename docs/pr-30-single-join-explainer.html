@@ -426,6 +426,24 @@ for each candidate partsupp row:
     </div>
   </section>
 
+  <section class="section panel">
+    <h2>DuckDB Plan Printer Shape</h2>
+    <p>
+      DuckDB does not print plans as an indented list. `EXPLAIN` renders a tree of fixed-width operator boxes.
+      Each box has an uppercase operator name, a separator line, parameter sections such as `Join Type`,
+      `Conditions`, `Groups`, `Aggregates`, and an estimated row count when available.
+    </p>
+    <div class="file-list">
+      <div class="file"><code>EXPLAIN</code> internally produces rows keyed as <code>logical_plan</code>, <code>logical_opt</code>, and <code>physical_plan</code> when <code>explain_output='all'</code>.</div>
+      <div class="file">The rendered text comes from DuckDB's <code>TreeRenderer</code>, using each operator's <code>GetName()</code> and <code>ParamsToString()</code>.</div>
+      <div class="file">DuckDB also supports <code>EXPLAIN (FORMAT HTML)</code>, which renders the same operator tree as collapsible cards.</div>
+    </div>
+    <p class="note">
+      Source references checked locally: <code>src/execution/physical_plan/plan_explain.cpp</code>,
+      <code>src/common/render_tree.cpp</code>, and <code>src/common/tree_renderer/text_tree_renderer.cpp</code>.
+    </p>
+  </section>
+
   <section class="section grid two">
     <div class="panel">
       <h2>Q20 Shape</h2>
@@ -443,16 +461,129 @@ for each candidate partsupp row:
     </div>
     <div class="panel">
       <h2>Plan Change Summary</h2>
-      <pre>LogicalDependentJoin type=SINGLE
-  marker=#scalar...
+      <pre>DuckDB logical reference:
+  DELIM_JOIN
+    Join Type: SINGLE
+    Conditions:
+      ps_partkey IS NOT DISTINCT FROM ps_partkey
+      ps_suppkey IS NOT DISTINCT FROM ps_suppkey
 
-PhysicalSingleJoin subquery=SCALAR
-  build keys: l_partkey, l_suppkey
-  output marker: 0.5 * sum(l_quantity)</pre>
+DuckDB physical reference:
+  RIGHT_DELIM_JOIN
+    HASH_GROUP_BY
+    DELIM_SCAN
+
+TrentDB PR #30:
+  DELIM_JOIN
+    Join Type: SINGLE
+  SINGLE_JOIN
+    Join Type: SINGLE
+    Subquery: SCALAR</pre>
       <p class="note">
-        The final WHERE predicate compares the outer column with the appended scalar marker column.
+        TrentDB's current physical implementation is the narrow first slice. It is semantically aimed at DuckDB's
+        `SINGLE` dependent join shape, but it is not yet DuckDB's full `RIGHT_DELIM_JOIN` physical architecture.
       </p>
     </div>
+  </section>
+
+  <section class="section panel">
+    <h2>Exact DuckDB Q20 Physical Excerpt</h2>
+    <pre>┌─────────────────────────────┐
+│┌───────────────────────────┐│
+││       Physical Plan       ││
+│└───────────────────────────┘│
+└─────────────────────────────┘
+...
+┌─────────────┴─────────────┐
+│      RIGHT_DELIM_JOIN     │
+│    ────────────────────   │
+│      Join Type: RIGHT     │
+│                           │
+│        Conditions:        │
+│ ps_partkey IS NOT DISTINCT├───────────────────────────────────────────┐
+│       FROM ps_partkey     │                                           │
+│ ps_suppkey IS NOT DISTINCT│                                           │
+│       FROM ps_suppkey     │                                           │
+│                           │                                           │
+│         ~1307 Rows        │                                           │
+└─────────────┬─────────────┘                                           │
+┌─────────────┴─────────────┐                             ┌─────────────┴─────────────┐
+│         HASH_JOIN         │                             │         HASH_JOIN         │
+│    ────────────────────   │                             │    ────────────────────   │
+│      Join Type: SEMI      │                             │      Join Type: RIGHT     │
+│                           │                             │                           │
+│        Conditions:        │                             │        Conditions:        │
+│      ps_partkey = #0      ├──────────────┐              │ ps_partkey IS NOT DISTINCT├───────────────────────────────────────────┐
+│                           │              │              │       FROM ps_partkey     │                                           │
+│                           │              │              │ ps_suppkey IS NOT DISTINCT│                                           │
+│                           │              │              │       FROM ps_suppkey     │                                           │
+│         ~1307 Rows        │              │              │         ~1307 Rows        │                                           │
+└─────────────┬─────────────┘              │              └─────────────┬─────────────┘                                           │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐                             ┌─────────────┴─────────────┐
+│       READ_CSV_AUTO       ││         PROJECTION        ││         PROJECTION        │                             │         DUMMY_SCAN        │
+│    ────────────────────   ││    ────────────────────   ││    ────────────────────   │                             │                           │
+│         Function:         ││         p_partkey         ││  (0.5 * sum(l_quantity))  │                             │                           │
+│       READ_CSV_AUTO       ││                           ││         ps_partkey        │                             │                           │
+│        Projections:       ││                           ││         ps_suppkey        │                             │                           │
+│         ps_partkey        ││                           ││                           │                             │                           │
+│        ps_availqty        ││                           ││                           │                             │                           │
+│         ps_suppkey        ││                           ││                           │                             │                           │
+│         ~6539 Rows        ││         ~1524 Rows        ││         ~726 Rows         │                             │                           │
+└───────────────────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘                             └───────────────────────────┘
+                             ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+                             │           FILTER          ││       HASH_GROUP_BY       │
+                             │    ────────────────────   ││    ────────────────────   │
+                             │  prefix(p_name, 'forest') ││          Groups:          │
+                             │                           ││             #0            │
+                             │                           ││             #1            │
+                             │                           ││                           │
+                             │                           ││    Aggregates: sum(#2)    │
+                             │         ~1524 Rows        ││         ~726 Rows         │
+                             └─────────────┬─────────────┘└─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+                             │       READ_CSV_AUTO       ││         PROJECTION        │
+                             │    ────────────────────   ││    ────────────────────   │
+                             │         Function:         ││         ps_partkey        │
+                             │       READ_CSV_AUTO       ││         ps_suppkey        │
+                             │        Projections:       ││         l_quantity        │
+                             │           p_name          ││                           │
+                             │         p_partkey         ││                           │
+                             │         ~7622 Rows        ││         ~1453 Rows        │
+                             └───────────────────────────┘└─────────────┬─────────────┘
+                                                          ┌─────────────┴─────────────┐
+                                                          │         HASH_JOIN         │
+                                                          │    ────────────────────   │
+                                                          │      Join Type: INNER     │
+                                                          │                           │
+                                                          │        Conditions:        ├──────────────┐
+                                                          │   l_partkey = ps_partkey  │              │
+                                                          │   l_suppkey = ps_suppkey  │              │
+                                                          │         ~1453 Rows        │              │
+                                                          └─────────────┬─────────────┘              │
+                                                          ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+                                                          │           FILTER          ││         DELIM_SCAN        │
+                                                          │    ────────────────────   ││    ────────────────────   │
+                                                          │ (l_shipdate BETWEEN '1994 ││       Delim Index: 1      │
+                                                          │ -01-01'::DATE AND '1995-01││                           │
+                                                          │        -01'::DATE)        ││         ~653 Rows         │
+                                                          │        ~14557 Rows        │└───────────────────────────┘
+                                                          └─────────────┬─────────────┘
+                                                          ┌─────────────┴─────────────┐
+                                                          │       READ_CSV_AUTO       │
+                                                          │    ────────────────────   │
+                                                          │         Function:         │
+                                                          │       READ_CSV_AUTO       │
+                                                          │        Projections:       │
+                                                          │         l_partkey         │
+                                                          │         l_suppkey         │
+                                                          │         l_shipdate        │
+                                                          │         l_quantity        │
+                                                          │        ~72789 Rows        │
+                                                          └───────────────────────────┘</pre>
+    <p class="note">
+      This is the DuckDB CLI physical-plan excerpt for the same Q20 CSV query, with unrelated outer joins elided by `...`.
+      The key reference is `RIGHT_DELIM_JOIN` feeding `HASH_GROUP_BY` through `DELIM_SCAN`.
+    </p>
   </section>
 
   <section class="section panel">
@@ -498,36 +629,76 @@ Expression execution
           <h3>New Plan</h3>
           <span class="plan-label new">PR #30</span>
         </div>
-        <pre>Logical Plan
-LogicalProjection [s_name, s_address]
-  LogicalOrder [s_name]
-    LogicalFilter
-      predicate:
-        ps_availqty > #scalar
-      child:
-        LogicalDependentJoin type=SINGLE
-          marker=#scalar
-          child:
-            joins and filters for supplier, nation, partsupp, part
+        <pre>┌───────────────────────────┐
+│       Logical Plan        │
+└───────────────────────────┘
+┌───────────────────────────┐
+│        PROJECTION         │
+│    ───────────────────    │
+│       Expressions:        │
+│          s_name           │
+│         s_address         │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│         ORDER_BY          │
+│    ───────────────────    │
+│         Order By:         │
+│         s_name ASC        │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│          FILTER           │
+│    ───────────────────    │
+│       Expressions:        │
+│ (ps_availqty GREATER_THAN │
+│        #scalar_q20)       │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│        DELIM_JOIN         │
+│    ───────────────────    │
+│        Join Type:         │
+│          SINGLE           │
+│          Marker:          │
+│        #scalar_q20        │
+│         Subquery:         │
+│          SCALAR           │
+└───────────────────────────┘
+              │
+             ...
 
-Physical Plan
-  Source: PhysicalTableScan table=supplier
-  Operators
-    PhysicalHashJoin / PhysicalNestedLoopJoin ...
-    PhysicalSingleJoin subquery=SCALAR
-      build:
-        scan lineitem once
-        filter shipdate range
-        aggregate sum(l_quantity)
-        key by (l_partkey, l_suppkey)
-      output:
-        append #scalar marker column
-    PhysicalFilter
-      predicate:
-        ps_availqty > #scalar
-    PhysicalOrder
-    PhysicalProjection
-  Sink: RESULT_COLLECTOR</pre>
+┌───────────────────────────┐
+│       Physical Plan       │
+└───────────────────────────┘
+┌───────────────────────────┐
+│        PROJECTION         │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│         ORDER_BY          │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│          FILTER           │
+│    ───────────────────    │
+│        Expression:        │
+│ (ps_availqty GREATER_THAN │
+│        #scalar_q20)       │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│        SINGLE_JOIN        │
+│    ───────────────────    │
+│        Join Type:         │
+│          SINGLE           │
+│         Subquery:         │
+│          SCALAR           │
+│          Marker:          │
+│        #scalar_q20        │
+└───────────────────────────┘
+              │
+             ...</pre>
         <p class="note">
           The scalar aggregate is now a physical operator. It builds the lookup once and probes it for each outer row.
         </p>
