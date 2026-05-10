@@ -7,6 +7,7 @@ import dev.trentdb.ast.TypeName;
 import dev.trentdb.catalog.Catalog;
 import dev.trentdb.catalog.TableCatalogEntry;
 import dev.trentdb.planner.BoundBinaryExpression;
+import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundTableRef;
@@ -83,10 +84,11 @@ class OptimizerRewriteTest {
     }
 
     @Test
-    void optimizerCollectsImmutableRewriteMetricsWhenEnabled() {
-        LogicalGet get = new LogicalGet(new BoundTableRef(table(), null));
+    void optimizerCollectsRewriteMetricsWhenEnabled() {
+        TableCatalogEntry table = table();
+        LogicalGet get = new LogicalGet(new BoundTableRef(table, null));
         LogicalProjection projection = new LogicalProjection(
-                List.of(binaryLiteralExpression(1L, 3L)),
+                List.of(new BoundColumnRefExpression(table.columns().getFirst())),
                 List.of("value"),
                 get
         );
@@ -98,9 +100,70 @@ class OptimizerRewriteTest {
         assertSame(projection, optimized);
         assertEquals(2, metrics.logicalOperatorsVisited());
         assertEquals(0, metrics.logicalOperatorsRebuilt());
-        assertEquals(3, metrics.boundExpressionsVisited());
+        assertEquals(1, metrics.boundExpressionsVisited());
         assertEquals(0, metrics.boundExpressionsRebuilt());
         assertEquals(0, metrics.expressionListsRebuilt());
+    }
+
+    @Test
+    void optimizerFoldsLiteralExpressionsWithoutMetricsCollection() {
+        LogicalGet get = new LogicalGet(new BoundTableRef(table(), null));
+        LogicalProjection projection = new LogicalProjection(
+                List.of(binaryLiteralExpression(1L, 3L)),
+                List.of("value"),
+                get
+        );
+        Optimizer optimizer = new Optimizer();
+
+        LogicalOperator optimized = optimizer.optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        BoundLiteralExpression folded = assertInstanceOf(
+                BoundLiteralExpression.class,
+                optimizedProjection.expressions().getFirst()
+        );
+        assertEquals(4L, folded.value());
+        assertEquals(LogicalType.BIGINT, folded.logicalType());
+        assertEquals(0, optimizer.metrics().logicalOperatorsVisited());
+    }
+
+    @Test
+    void optimizerReportsConstantFoldingMetricsWhenEnabled() {
+        LogicalGet get = new LogicalGet(new BoundTableRef(table(), null));
+        LogicalProjection projection = new LogicalProjection(
+                List.of(binaryLiteralExpression(1L, 3L)),
+                List.of("value"),
+                get
+        );
+        Optimizer optimizer = new Optimizer(true);
+
+        LogicalOperator optimized = optimizer.optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        assertInstanceOf(BoundLiteralExpression.class, optimizedProjection.expressions().getFirst());
+        Optimizer.Metrics metrics = optimizer.metrics();
+        assertEquals(2, metrics.logicalOperatorsVisited());
+        assertEquals(1, metrics.logicalOperatorsRebuilt());
+        assertEquals(3, metrics.boundExpressionsVisited());
+        assertEquals(1, metrics.boundExpressionsRebuilt());
+        assertEquals(1, metrics.expressionListsRebuilt());
+    }
+
+    @Test
+    void optimizerLeavesFailingConstantExpressionsForExecution() {
+        BoundExpression expression = new BoundBinaryExpression(
+                new BoundLiteralExpression(LogicalType.BIGINT, 1L),
+                BinaryOperator.DIVIDE,
+                new BoundLiteralExpression(LogicalType.BIGINT, 0L),
+                LogicalType.DOUBLE
+        );
+        LogicalGet get = new LogicalGet(new BoundTableRef(table(), null));
+        LogicalProjection projection = new LogicalProjection(List.of(expression), List.of("value"), get);
+
+        LogicalOperator optimized = new Optimizer().optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        assertInstanceOf(BoundBinaryExpression.class, optimizedProjection.expressions().getFirst());
     }
 
     private BoundExpression binaryLiteralExpression(long left, long right) {

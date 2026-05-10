@@ -936,7 +936,7 @@ class QueryExecutorTest {
 
         assertEquals(List.of("explain"), result.columns());
         String plan = (String) result.rows().getFirst().getFirst();
-        assertPlanContains(plan, "Logical Plan", "PROJECTION", "FILTER", "SEQ_SCAN", "Table:", "people");
+        assertPlanContains(plan, "Optimized Logical Plan", "PROJECTION", "FILTER", "SEQ_SCAN", "Table:", "people");
         assertPlanContains(plan, "Physical Plan", "Expression:", "(id#0 EQUAL 1)", "Projections:", "id#0");
     }
 
