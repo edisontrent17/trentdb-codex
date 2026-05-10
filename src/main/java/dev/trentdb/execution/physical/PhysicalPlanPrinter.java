@@ -73,6 +73,11 @@ public final class PhysicalPlanPrinter {
                     + join.marker().name() + "#" + join.marker().ordinal());
             return;
         }
+        if (operator instanceof PhysicalCorrelatedScalarAggregateJoin join) {
+            appendLine(builder, depth, "PhysicalSingleJoin subquery=SCALAR marker="
+                    + join.marker().name() + "#" + join.marker().ordinal());
+            return;
+        }
         if (operator instanceof PhysicalNestedLoopJoin join) {
             appendLine(builder, depth, "PhysicalNestedLoopJoin right=" + tableName(join.right())
                     + " type=" + join.joinType().name());

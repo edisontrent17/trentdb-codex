@@ -100,7 +100,7 @@ public final class LogicalPlanner {
     }
 
     private LogicalOperator planWhere(LogicalOperator root, BoundExpression where) {
-        if (!containsCorrelatedExists(where)) {
+        if (!containsDependentSubquery(where)) {
             return new LogicalFilter(where, root);
         }
         ArrayList<BoundExpression> pushdown = new ArrayList<>();
@@ -113,7 +113,7 @@ public final class LogicalPlanner {
         if (dependentPredicate == null) {
             return root;
         }
-        DependentRewrite rewrite = rewriteDependentExists(root, dependentPredicate);
+        DependentRewrite rewrite = rewriteDependentSubqueries(root, dependentPredicate);
         return new LogicalFilter(rewrite.expression(), rewrite.root());
     }
 
@@ -127,7 +127,7 @@ public final class LogicalPlanner {
             splitDependentConjuncts(binary.right(), pushdown, dependent);
             return;
         }
-        if (containsCorrelatedExists(expression)) {
+        if (containsDependentSubquery(expression)) {
             dependent.add(expression);
             return;
         }
@@ -310,71 +310,71 @@ public final class LogicalPlanner {
         );
     }
 
-    private DependentRewrite rewriteDependentExists(LogicalOperator root, BoundExpression expression) {
+    private DependentRewrite rewriteDependentSubqueries(LogicalOperator root, BoundExpression expression) {
         return switch (expression) {
             case BoundAggregateExpression aggregate -> rewriteAggregate(root, aggregate);
             case BoundBetweenExpression between -> rewriteBetween(root, between);
             case BoundBinaryExpression binary -> rewriteBinary(root, binary);
             case BoundCaseExpression caseExpression -> rewriteCase(root, caseExpression);
             case BoundCastExpression cast -> {
-                DependentRewrite child = rewriteDependentExists(root, cast.child());
+                DependentRewrite child = rewriteDependentSubqueries(root, cast.child());
                 yield new DependentRewrite(child.root(), new BoundCastExpression(child.expression(), cast.logicalType()));
             }
             case BoundExistsSubqueryExpression exists -> rewriteExists(root, exists);
             case BoundFunctionExpression function -> rewriteFunction(root, function);
             case BoundInExpression in -> rewriteIn(root, in);
             case BoundInSubqueryExpression in -> {
-                DependentRewrite input = rewriteDependentExists(root, in.input());
+                DependentRewrite input = rewriteDependentSubqueries(root, in.input());
                 yield new DependentRewrite(input.root(), new BoundInSubqueryExpression(input.expression(), in.subquery(), in.negated()));
             }
             case BoundColumnRefExpression column -> new DependentRewrite(root, column);
             case BoundIntervalExpression interval -> new DependentRewrite(root, interval);
             case BoundLiteralExpression literal -> new DependentRewrite(root, literal);
             case BoundOutputColumnExpression output -> new DependentRewrite(root, output);
-            case BoundSubqueryExpression subquery -> new DependentRewrite(root, subquery);
+            case BoundSubqueryExpression subquery -> rewriteScalar(root, subquery);
         };
     }
 
-    private boolean containsCorrelatedExists(BoundExpression expression) {
+    private boolean containsDependentSubquery(BoundExpression expression) {
         if (expression == null) {
             return false;
         }
         return switch (expression) {
-            case BoundAggregateExpression aggregate -> containsCorrelatedExists(aggregate.arguments());
-            case BoundBetweenExpression between -> containsCorrelatedExists(between.input())
-                    || containsCorrelatedExists(between.lower())
-                    || containsCorrelatedExists(between.upper());
-            case BoundBinaryExpression binary -> containsCorrelatedExists(binary.left())
-                    || containsCorrelatedExists(binary.right());
-            case BoundCaseExpression caseExpression -> containsCorrelatedExists(caseExpression);
-            case BoundCastExpression cast -> containsCorrelatedExists(cast.child());
+            case BoundAggregateExpression aggregate -> containsDependentSubquery(aggregate.arguments());
+            case BoundBetweenExpression between -> containsDependentSubquery(between.input())
+                    || containsDependentSubquery(between.lower())
+                    || containsDependentSubquery(between.upper());
+            case BoundBinaryExpression binary -> containsDependentSubquery(binary.left())
+                    || containsDependentSubquery(binary.right());
+            case BoundCaseExpression caseExpression -> containsDependentSubquery(caseExpression);
+            case BoundCastExpression cast -> containsDependentSubquery(cast.child());
             case BoundExistsSubqueryExpression exists -> exists.isCorrelated();
-            case BoundFunctionExpression function -> containsCorrelatedExists(function.arguments());
-            case BoundInExpression in -> containsCorrelatedExists(in.input()) || containsCorrelatedExists(in.candidates());
-            case BoundInSubqueryExpression in -> containsCorrelatedExists(in.input());
+            case BoundFunctionExpression function -> containsDependentSubquery(function.arguments());
+            case BoundInExpression in -> containsDependentSubquery(in.input()) || containsDependentSubquery(in.candidates());
+            case BoundInSubqueryExpression in -> containsDependentSubquery(in.input());
             case BoundColumnRefExpression ignored -> false;
             case BoundIntervalExpression ignored -> false;
             case BoundLiteralExpression ignored -> false;
             case BoundOutputColumnExpression ignored -> false;
-            case BoundSubqueryExpression ignored -> false;
+            case BoundSubqueryExpression subquery -> canDecorrelateScalarAggregate(subquery);
         };
     }
 
-    private boolean containsCorrelatedExists(List<BoundExpression> expressions) {
+    private boolean containsDependentSubquery(List<BoundExpression> expressions) {
         for (BoundExpression expression : expressions) {
-            if (containsCorrelatedExists(expression)) {
+            if (containsDependentSubquery(expression)) {
                 return true;
             }
         }
         return false;
     }
 
-    private boolean containsCorrelatedExists(BoundCaseExpression caseExpression) {
-        if (containsCorrelatedExists(caseExpression.elseExpression())) {
+    private boolean containsDependentSubquery(BoundCaseExpression caseExpression) {
+        if (containsDependentSubquery(caseExpression.elseExpression())) {
             return true;
         }
         for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
-            if (containsCorrelatedExists(branch.condition()) || containsCorrelatedExists(branch.result())) {
+            if (containsDependentSubquery(branch.condition()) || containsDependentSubquery(branch.result())) {
                 return true;
             }
         }
@@ -391,9 +391,35 @@ public final class LogicalPlanner {
         return new DependentRewrite(new LogicalDependentJoin(root, exists, marker), marker);
     }
 
+    private DependentRewrite rewriteScalar(LogicalOperator root, BoundSubqueryExpression subquery) {
+        if (!canDecorrelateScalarAggregate(subquery)) {
+            return new DependentRewrite(root, subquery);
+        }
+        int markerOrdinal = outputColumnCount(root);
+        ColumnCatalogEntry markerColumn = new ColumnCatalogEntry("#scalar" + markerOrdinal, subquery.logicalType(), markerOrdinal);
+        BoundColumnRefExpression marker = new BoundColumnRefExpression(markerColumn, markerOrdinal);
+        return new DependentRewrite(LogicalDependentJoin.single(root, subquery, marker), marker);
+    }
+
+    private boolean canDecorrelateScalarAggregate(BoundSubqueryExpression subquery) {
+        if (!subquery.isCorrelated()) {
+            return false;
+        }
+        BoundSelectStatement statement = subquery.subquery();
+        return statement.from() instanceof BoundTableRef
+                && statement.isAggregateQuery()
+                && statement.groupBy().isEmpty()
+                && statement.having() == null
+                && statement.orderBy().isEmpty()
+                && statement.limit() == null
+                && statement.selectList().size() == 1
+                && decorrelatableAggregateOutput(statement.selectList().getFirst()) != null
+                && decorrelatableCorrelations(subquery, statement.where());
+    }
+
     private DependentRewrite rewriteBinary(LogicalOperator root, BoundBinaryExpression binary) {
-        DependentRewrite left = rewriteDependentExists(root, binary.left());
-        DependentRewrite right = rewriteDependentExists(left.root(), binary.right());
+        DependentRewrite left = rewriteDependentSubqueries(root, binary.left());
+        DependentRewrite right = rewriteDependentSubqueries(left.root(), binary.right());
         return new DependentRewrite(
                 right.root(),
                 new BoundBinaryExpression(left.expression(), binary.operator(), right.expression(), binary.logicalType())
@@ -401,9 +427,9 @@ public final class LogicalPlanner {
     }
 
     private DependentRewrite rewriteBetween(LogicalOperator root, BoundBetweenExpression between) {
-        DependentRewrite input = rewriteDependentExists(root, between.input());
-        DependentRewrite lower = rewriteDependentExists(input.root(), between.lower());
-        DependentRewrite upper = rewriteDependentExists(lower.root(), between.upper());
+        DependentRewrite input = rewriteDependentSubqueries(root, between.input());
+        DependentRewrite lower = rewriteDependentSubqueries(input.root(), between.lower());
+        DependentRewrite upper = rewriteDependentSubqueries(lower.root(), between.upper());
         return new DependentRewrite(
                 upper.root(),
                 new BoundBetweenExpression(input.expression(), lower.expression(), upper.expression())
@@ -414,12 +440,12 @@ public final class LogicalPlanner {
         DependentRewrite current = new DependentRewrite(root, null);
         ArrayList<BoundCaseExpression.WhenClause> branches = new ArrayList<>(caseExpression.branches().size());
         for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
-            DependentRewrite condition = rewriteDependentExists(current.root(), branch.condition());
-            DependentRewrite result = rewriteDependentExists(condition.root(), branch.result());
+            DependentRewrite condition = rewriteDependentSubqueries(current.root(), branch.condition());
+            DependentRewrite result = rewriteDependentSubqueries(condition.root(), branch.result());
             branches.add(new BoundCaseExpression.WhenClause(condition.expression(), result.expression()));
             current = result;
         }
-        DependentRewrite elseExpression = rewriteDependentExists(current.root(), caseExpression.elseExpression());
+        DependentRewrite elseExpression = rewriteDependentSubqueries(current.root(), caseExpression.elseExpression());
         return new DependentRewrite(
                 elseExpression.root(),
                 new BoundCaseExpression(branches, elseExpression.expression(), caseExpression.logicalType())
@@ -448,7 +474,7 @@ public final class LogicalPlanner {
     }
 
     private DependentRewrite rewriteIn(LogicalOperator root, BoundInExpression in) {
-        DependentRewrite input = rewriteDependentExists(root, in.input());
+        DependentRewrite input = rewriteDependentSubqueries(root, in.input());
         ExpressionListRewrite candidates = rewriteExpressions(input.root(), in.candidates());
         return new DependentRewrite(
                 candidates.root(),
@@ -460,11 +486,150 @@ public final class LogicalPlanner {
         LogicalOperator currentRoot = root;
         ArrayList<BoundExpression> rewritten = new ArrayList<>(expressions.size());
         for (BoundExpression expression : expressions) {
-            DependentRewrite rewrite = rewriteDependentExists(currentRoot, expression);
+            DependentRewrite rewrite = rewriteDependentSubqueries(currentRoot, expression);
             currentRoot = rewrite.root();
             rewritten.add(rewrite.expression());
         }
         return new ExpressionListRewrite(currentRoot, rewritten);
+    }
+
+    private BoundAggregateExpression decorrelatableAggregateOutput(BoundExpression expression) {
+        if (expression instanceof BoundAggregateExpression aggregate) {
+            return aggregate.distinct() ? null : aggregate;
+        }
+        if (expression instanceof BoundBinaryExpression binary) {
+            BoundAggregateExpression left = decorrelatableAggregateOutput(binary.left());
+            BoundAggregateExpression right = decorrelatableAggregateOutput(binary.right());
+            return combineAggregateCandidate(left, right);
+        }
+        if (expression instanceof BoundCastExpression cast) {
+            return decorrelatableAggregateOutput(cast.child());
+        }
+        if (expression instanceof BoundLiteralExpression) {
+            return null;
+        }
+        return null;
+    }
+
+    private BoundAggregateExpression combineAggregateCandidate(
+            BoundAggregateExpression left,
+            BoundAggregateExpression right
+    ) {
+        if (left == null) {
+            return right;
+        }
+        if (right == null || left.equals(right)) {
+            return left;
+        }
+        return null;
+    }
+
+    private boolean decorrelatableCorrelations(BoundSubqueryExpression subquery, BoundExpression where) {
+        ArrayList<BoundExpression> conjuncts = new ArrayList<>();
+        flattenConjuncts(where, conjuncts);
+        int equalityCount = 0;
+        for (BoundExpression conjunct : conjuncts) {
+            if (decorrelatableCorrelationEquality(subquery, conjunct)) {
+                equalityCount++;
+            } else if (containsOuterReference(subquery, conjunct)) {
+                return false;
+            }
+        }
+        return equalityCount > 0 && equalityCount <= 2;
+    }
+
+    private void flattenConjuncts(BoundExpression expression, List<BoundExpression> output) {
+        if (expression == null) {
+            return;
+        }
+        if (expression instanceof BoundBinaryExpression binary && binary.operator() == BinaryOperator.AND) {
+            flattenConjuncts(binary.left(), output);
+            flattenConjuncts(binary.right(), output);
+            return;
+        }
+        output.add(expression);
+    }
+
+    private boolean decorrelatableCorrelationEquality(BoundSubqueryExpression subquery, BoundExpression expression) {
+        if (!(expression instanceof BoundBinaryExpression binary) || binary.operator() != BinaryOperator.EQUAL) {
+            return false;
+        }
+        if (!(binary.left() instanceof BoundColumnRefExpression left)
+                || !(binary.right() instanceof BoundColumnRefExpression right)) {
+            return false;
+        }
+        return decorrelatableCorrelationEquality(subquery, left, right)
+                || decorrelatableCorrelationEquality(subquery, right, left);
+    }
+
+    private boolean decorrelatableCorrelationEquality(
+            BoundSubqueryExpression subquery,
+            BoundColumnRefExpression inner,
+            BoundColumnRefExpression outer
+    ) {
+        if (inner.ordinal() >= subquery.localColumnCount() || outer.ordinal() < subquery.localColumnCount()) {
+            return false;
+        }
+        if (!inner.logicalType().equals(outer.logicalType()) || !supportsScalarAggregateKeyType(inner.logicalType())) {
+            return false;
+        }
+        int correlatedIndex = outer.ordinal() - subquery.localColumnCount();
+        return correlatedIndex >= 0 && correlatedIndex < subquery.correlatedColumns().size();
+    }
+
+    private boolean containsOuterReference(BoundSubqueryExpression subquery, BoundExpression expression) {
+        if (expression == null) {
+            return false;
+        }
+        return switch (expression) {
+            case BoundAggregateExpression aggregate -> containsOuterReference(subquery, aggregate.arguments());
+            case BoundBetweenExpression between -> containsOuterReference(subquery, between.input())
+                    || containsOuterReference(subquery, between.lower())
+                    || containsOuterReference(subquery, between.upper());
+            case BoundBinaryExpression binary -> containsOuterReference(subquery, binary.left())
+                    || containsOuterReference(subquery, binary.right());
+            case BoundCaseExpression caseExpression -> containsOuterReference(subquery, caseExpression);
+            case BoundCastExpression cast -> containsOuterReference(subquery, cast.child());
+            case BoundColumnRefExpression column -> column.ordinal() >= subquery.localColumnCount();
+            case BoundFunctionExpression function -> containsOuterReference(subquery, function.arguments());
+            case BoundInExpression in -> containsOuterReference(subquery, in.input())
+                    || containsOuterReference(subquery, in.candidates());
+            case BoundOutputColumnExpression output -> output.ordinal() >= subquery.localColumnCount();
+            case BoundExistsSubqueryExpression ignored -> false;
+            case BoundInSubqueryExpression in -> containsOuterReference(subquery, in.input());
+            case BoundIntervalExpression ignored -> false;
+            case BoundLiteralExpression ignored -> false;
+            case BoundSubqueryExpression ignored -> false;
+        };
+    }
+
+    private boolean containsOuterReference(BoundSubqueryExpression subquery, List<BoundExpression> expressions) {
+        for (BoundExpression expression : expressions) {
+            if (containsOuterReference(subquery, expression)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean containsOuterReference(BoundSubqueryExpression subquery, BoundCaseExpression caseExpression) {
+        if (containsOuterReference(subquery, caseExpression.elseExpression())) {
+            return true;
+        }
+        for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
+            if (containsOuterReference(subquery, branch.condition())
+                    || containsOuterReference(subquery, branch.result())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean supportsScalarAggregateKeyType(LogicalType logicalType) {
+        return logicalType.equals(LogicalType.BOOLEAN)
+                || logicalType.equals(LogicalType.INTEGER)
+                || logicalType.equals(LogicalType.BIGINT)
+                || logicalType.equals(LogicalType.DATE);
     }
 
     private int outputColumnCount(LogicalOperator operator) {

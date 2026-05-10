@@ -24,6 +24,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class QueryExecutorTest {
     private final SqlParser parser = new SqlParser();
@@ -300,6 +301,100 @@ class QueryExecutorTest {
         );
 
         assertEquals("Scalar subquery returned more than one row", error.getMessage());
+    }
+
+    @Test
+    void executesCorrelatedScalarAggregatePredicateAsSingleJoin() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT name
+                FROM people p
+                WHERE (SELECT count(*) FROM orders o WHERE o.person_id = p.id) = 0
+                ORDER BY name
+                """
+        );
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Charlie")), result.rows());
+    }
+
+    @Test
+    void explainsCorrelatedScalarAggregateAsSingleJoin() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                EXPLAIN SELECT name
+                FROM people p
+                WHERE (SELECT count(*) FROM orders o WHERE o.person_id = p.id) = 0
+                """
+        );
+
+        String plan = (String) result.rows().getFirst().getFirst();
+        assertTrue(plan.contains("LogicalDependentJoin type=SINGLE"));
+        assertTrue(plan.contains("PhysicalSingleJoin subquery=SCALAR"));
+    }
+
+    @Test
+    void keepsUnsupportedCorrelatedScalarAggregateOnEvaluatorPath() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT name
+                FROM people p
+                WHERE (SELECT count(*) FROM orders o WHERE o.person_id > p.id) = 1
+                ORDER BY name
+                """
+        );
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Alice")), result.rows());
+    }
+
+    @Test
+    void correlatedScalarAggregateSingleJoinSupportsBigintMinKey() {
+        Catalog catalog = new Catalog();
+        Transaction transaction = transactionManager.startTransaction();
+        TableCatalogEntry people = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("people")),
+                List.of(
+                        new ColumnDefinition("id", TypeName.BIGINT),
+                        new ColumnDefinition("name", TypeName.TEXT)
+                )
+        );
+        TableCatalogEntry orders = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("person_id", TypeName.BIGINT),
+                        new ColumnDefinition("total", TypeName.BIGINT)
+                )
+        );
+        StorageManager storageManager = new StorageManager();
+        InMemoryTableStorage peopleStorage = storageManager.createTable(people);
+        peopleStorage.appendRow(List.of(Long.MIN_VALUE, "Alice"));
+        peopleStorage.appendRow(List.of(1L, "Bob"));
+        InMemoryTableStorage orderStorage = storageManager.createTable(orders);
+        orderStorage.appendRow(List.of(Long.MIN_VALUE, 10L));
+
+        QueryResult result = execute(
+                new Fixture(catalog, transaction, storageManager),
+                """
+                SELECT name
+                FROM people p
+                WHERE (SELECT count(*) FROM orders o WHERE o.person_id = p.id) = 1
+                """
+        );
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Alice")), result.rows());
     }
 
     @Test

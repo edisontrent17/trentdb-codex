@@ -21,7 +21,7 @@ public final class LogicalPlanPrinter {
                 append(explain.child(), builder, depth + 1);
             }
             case LogicalDependentJoin join -> {
-                builder.append("LogicalDelimJoin type=MARK subquery=EXISTS");
+                builder.append("LogicalDependentJoin type=").append(join.kind().name());
                 builder.append(" marker=").append(join.marker().name()).append("#").append(join.marker().ordinal()).append("\n");
                 append(join.child(), builder, depth + 1);
             }
