@@ -15,7 +15,7 @@ public final class Optimizer {
     }
 
     public LogicalOperator optimize(LogicalOperator plan) {
-        BoundExpressionRewriter expressionRewriter = new ConstantFoldingExpressionRewriter();
+        BoundExpressionRewriter expressionRewriter = new OptimizerExpressionRewriter();
         LogicalOperatorRewriter logicalRewriter = new LogicalOperatorRewriter(expressionRewriter);
         LogicalOperator rewritten = logicalRewriter.rewrite(plan);
         metrics = collectMetrics ? Metrics.from(logicalRewriter, expressionRewriter) : Metrics.empty();
