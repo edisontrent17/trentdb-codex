@@ -36,7 +36,7 @@ public final class PhysicalExplain implements PhysicalSource {
 
     private String explainText() {
         PlanTreeRenderer renderer = new PlanTreeRenderer();
-        return renderer.title("Logical Plan")
+        return renderer.title("Optimized Logical Plan")
                 + new LogicalPlanPrinter().print(logicalPlan)
                 + "\n"
                 + renderer.title("Physical Plan")

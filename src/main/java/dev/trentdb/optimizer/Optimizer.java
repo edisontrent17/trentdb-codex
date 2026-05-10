@@ -15,14 +15,10 @@ public final class Optimizer {
     }
 
     public LogicalOperator optimize(LogicalOperator plan) {
-        if (!collectMetrics) {
-            metrics = Metrics.empty();
-            return plan;
-        }
-        BoundExpressionRewriter expressionRewriter = new BoundExpressionRewriter();
+        BoundExpressionRewriter expressionRewriter = new ConstantFoldingExpressionRewriter();
         LogicalOperatorRewriter logicalRewriter = new LogicalOperatorRewriter(expressionRewriter);
         LogicalOperator rewritten = logicalRewriter.rewrite(plan);
-        metrics = Metrics.from(logicalRewriter, expressionRewriter);
+        metrics = collectMetrics ? Metrics.from(logicalRewriter, expressionRewriter) : Metrics.empty();
         return rewritten;
     }
 
