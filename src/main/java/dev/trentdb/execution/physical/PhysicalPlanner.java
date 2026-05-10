@@ -113,14 +113,25 @@ public final class PhysicalPlanner {
         if (logical instanceof LogicalDependentJoin join) {
             PhysicalSource source = buildPipeline(join.child(), operators);
             List<ColumnCatalogEntry> leftColumns = columns(join.child());
-            operators.add(new PhysicalCorrelatedExistsMarkJoin(
-                    storageManager,
-                    names(leftColumns),
-                    types(leftColumns),
-                    join.subquery(),
-                    join.marker(),
-                    expressionExecutor
-            ));
+            if (join.kind() == LogicalDependentJoin.Kind.MARK) {
+                operators.add(new PhysicalCorrelatedExistsMarkJoin(
+                        storageManager,
+                        names(leftColumns),
+                        types(leftColumns),
+                        join.subquery(),
+                        join.marker(),
+                        expressionExecutor
+                ));
+            } else {
+                operators.add(new PhysicalCorrelatedScalarAggregateJoin(
+                        storageManager,
+                        names(leftColumns),
+                        types(leftColumns),
+                        join.scalarSubquery(),
+                        join.marker(),
+                        expressionExecutor
+                ));
+            }
             return source;
         }
         if (logical instanceof LogicalLimit limit) {

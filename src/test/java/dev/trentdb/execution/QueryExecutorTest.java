@@ -24,6 +24,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class QueryExecutorTest {
     private final SqlParser parser = new SqlParser();
@@ -300,6 +301,99 @@ class QueryExecutorTest {
         );
 
         assertEquals("Scalar subquery returned more than one row", error.getMessage());
+    }
+
+    @Test
+    void executesCorrelatedScalarAggregatePredicateAsSingleJoin() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT name
+                FROM people p
+                WHERE (SELECT count(*) FROM orders o WHERE o.person_id = p.id) = 0
+                ORDER BY name
+                """
+        );
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Charlie")), result.rows());
+    }
+
+    @Test
+    void explainsCorrelatedScalarAggregateAsSingleJoin() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                EXPLAIN SELECT name
+                FROM people p
+                WHERE (SELECT count(*) FROM orders o WHERE o.person_id = p.id) = 0
+                """
+        );
+
+        String plan = (String) result.rows().getFirst().getFirst();
+        assertPlanContains(plan, "DELIM_JOIN", "Join Type:", "SINGLE", "SINGLE_JOIN", "Subquery:", "SCALAR");
+    }
+
+    @Test
+    void keepsUnsupportedCorrelatedScalarAggregateOnEvaluatorPath() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+
+        QueryResult result = execute(
+                fixture,
+                """
+                SELECT name
+                FROM people p
+                WHERE (SELECT count(*) FROM orders o WHERE o.person_id > p.id) = 1
+                ORDER BY name
+                """
+        );
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Alice")), result.rows());
+    }
+
+    @Test
+    void correlatedScalarAggregateSingleJoinSupportsBigintMinKey() {
+        Catalog catalog = new Catalog();
+        Transaction transaction = transactionManager.startTransaction();
+        TableCatalogEntry people = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("people")),
+                List.of(
+                        new ColumnDefinition("id", TypeName.BIGINT),
+                        new ColumnDefinition("name", TypeName.TEXT)
+                )
+        );
+        TableCatalogEntry orders = catalog.createTable(
+                transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(
+                        new ColumnDefinition("person_id", TypeName.BIGINT),
+                        new ColumnDefinition("total", TypeName.BIGINT)
+                )
+        );
+        StorageManager storageManager = new StorageManager();
+        InMemoryTableStorage peopleStorage = storageManager.createTable(people);
+        peopleStorage.appendRow(List.of(Long.MIN_VALUE, "Alice"));
+        peopleStorage.appendRow(List.of(1L, "Bob"));
+        InMemoryTableStorage orderStorage = storageManager.createTable(orders);
+        orderStorage.appendRow(List.of(Long.MIN_VALUE, 10L));
+
+        QueryResult result = execute(
+                new Fixture(catalog, transaction, storageManager),
+                """
+                SELECT name
+                FROM people p
+                WHERE (SELECT count(*) FROM orders o WHERE o.person_id = p.id) = 1
+                """
+        );
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Alice")), result.rows());
     }
 
     @Test
@@ -841,19 +935,9 @@ class QueryExecutorTest {
         QueryResult result = execute(fixture, "EXPLAIN SELECT id FROM people WHERE id = 1");
 
         assertEquals(List.of("explain"), result.columns());
-        assertEquals("""
-                Logical Plan
-                LogicalProjection [1]
-                  LogicalFilter
-                    LogicalGet people
-                
-                Physical Plan
-                  Source: PhysicalTableScan table=people
-                  Operators
-                    PhysicalFilter predicate=(id#0 EQUAL 1)
-                    PhysicalProjection expressions=[1]
-                  Sink: RESULT_COLLECTOR
-                """, result.rows().getFirst().getFirst());
+        String plan = (String) result.rows().getFirst().getFirst();
+        assertPlanContains(plan, "Logical Plan", "PROJECTION", "FILTER", "SEQ_SCAN", "Table:", "people");
+        assertPlanContains(plan, "Physical Plan", "Expression:", "(id#0 EQUAL 1)", "Projections:", "id#0");
     }
 
     @Test
@@ -894,6 +978,12 @@ class QueryExecutorTest {
         BoundStatement bound = new Binder(fixture.catalog).bind(fixture.transaction, statement);
         LogicalOperator logical = new LogicalPlanner().plan(bound);
         return new QueryExecutor(fixture.storageManager).execute(logical);
+    }
+
+    private void assertPlanContains(String plan, String... expectedValues) {
+        for (String expectedValue : expectedValues) {
+            assertTrue(plan.contains(expectedValue), "Expected plan to contain '" + expectedValue + "':\n" + plan);
+        }
     }
 
     private String sqlString(String value) {

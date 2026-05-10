@@ -1,154 +1,150 @@
 package dev.trentdb.execution.physical;
 
-import dev.trentdb.planner.BoundAggregateExpression;
-import dev.trentdb.planner.BoundBetweenExpression;
-import dev.trentdb.planner.BoundBinaryExpression;
-import dev.trentdb.planner.BoundCaseExpression;
-import dev.trentdb.planner.BoundCastExpression;
-import dev.trentdb.planner.BoundColumnRefExpression;
-import dev.trentdb.planner.BoundExistsSubqueryExpression;
 import dev.trentdb.planner.BoundExpression;
-import dev.trentdb.planner.BoundFunctionExpression;
-import dev.trentdb.planner.BoundInExpression;
-import dev.trentdb.planner.BoundInSubqueryExpression;
-import dev.trentdb.planner.BoundIntervalExpression;
-import dev.trentdb.planner.BoundLiteralExpression;
-import dev.trentdb.planner.BoundOutputColumnExpression;
-import dev.trentdb.planner.BoundSubqueryExpression;
+import dev.trentdb.planner.BoundExpressionPrinter;
+import dev.trentdb.planner.BoundOrderByItem;
 import dev.trentdb.planner.BoundTableRef;
+import dev.trentdb.planner.PlanTreeRenderer;
+import dev.trentdb.planner.PlanTreeRenderer.Entry;
+import dev.trentdb.planner.PlanTreeRenderer.Node;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public final class PhysicalPlanPrinter {
+    private final PlanTreeRenderer renderer = new PlanTreeRenderer();
+    private final BoundExpressionPrinter expressionPrinter = new BoundExpressionPrinter();
+
     public String print(Pipeline pipeline) {
-        StringBuilder builder = new StringBuilder();
-        builder.append("Physical Plan\n");
-        appendSource(builder, pipeline.source(), 1);
-        if (!pipeline.operators().isEmpty()) {
-            appendLine(builder, 1, "Operators");
-            for (PhysicalOperator operator : pipeline.operators()) {
-                appendOperator(builder, operator, 2);
-            }
+        Node current = sourceNode(pipeline.source());
+        for (PhysicalOperator operator : pipeline.operators()) {
+            current = operatorNode(operator, current);
         }
-        appendLine(builder, 1, "Sink: " + pipeline.sink().type().name());
-        return builder.toString();
+        return renderer.print(current);
     }
 
-    private void appendSource(StringBuilder builder, PhysicalSource source, int depth) {
+    private Node sourceNode(PhysicalSource source) {
         if (source instanceof PhysicalTableScan scan) {
-            appendLine(builder, depth, "Source: PhysicalTableScan table=" + tableName(scan.tableRef()));
-            return;
+            return scanNode(scan.tableRef());
         }
-        appendLine(builder, depth, "Source: " + source.type().name());
+        return Node.leaf(source.type().name());
     }
 
-    private void appendOperator(StringBuilder builder, PhysicalOperator operator, int depth) {
+    private Node operatorNode(PhysicalOperator operator, Node child) {
         if (operator instanceof PhysicalFilter filter) {
-            appendLine(builder, depth, "PhysicalFilter predicate=" + expression(filter.predicate()));
-            return;
+            return Node.of(
+                    "FILTER",
+                    List.of(Entry.of("Expression", expressionPrinter.print(filter.predicate()))),
+                    List.of(child)
+            );
         }
         if (operator instanceof PhysicalProjection projection) {
-            appendLine(builder, depth, "PhysicalProjection expressions=[" + projection.expressions().size() + "]");
-            return;
+            return Node.of(
+                    "PROJECTION",
+                    List.of(Entry.of("Projections", expressionPrinter.printListValues(projection.expressions()))),
+                    List.of(child)
+            );
         }
         if (operator instanceof PhysicalHashAggregate aggregate) {
-            String mode = aggregate.groups().isEmpty() ? "ungrouped" : "grouped";
-            appendLine(builder, depth, "PhysicalHashAggregate mode=" + mode
-                    + " groups=[" + aggregate.groups().size() + "]"
-                    + " expressions=[" + aggregate.selectList().size() + "]");
-            return;
+            String name = aggregate.groups().isEmpty() ? "UNGROUPED_AGGREGATE" : "HASH_GROUP_BY";
+            return Node.of(name, aggregateEntries(aggregate), List.of(child));
         }
         if (operator instanceof PhysicalHashJoin join) {
-            appendLine(builder, depth, "PhysicalHashJoin right=" + tableName(join.right())
-                    + " type=" + join.joinType().name()
-                    + " leftKeyOrdinal=" + join.leftKeyOrdinal()
-                    + " rightKeyOrdinal=" + join.rightKeyOrdinal());
-            appendOptionalExpression(builder, depth + 1, "rightFilter", join.rightFilter());
-            appendOptionalExpression(builder, depth + 1, "residualFilter", join.residualFilter());
-            return;
+            return Node.of("HASH_JOIN", hashJoinEntries(join), List.of(child, scanNode(join.right())));
         }
         if (operator instanceof PhysicalCorrelatedExistsMarkJoin join) {
-            appendLine(builder, depth, "PhysicalMarkJoin subquery=EXISTS marker="
-                    + join.marker().name() + "#" + join.marker().ordinal());
-            return;
+            return Node.of("MARK_JOIN", markJoinEntries(join), List.of(child));
+        }
+        if (operator instanceof PhysicalCorrelatedScalarAggregateJoin join) {
+            return Node.of("SINGLE_JOIN", singleJoinEntries(join), List.of(child));
         }
         if (operator instanceof PhysicalNestedLoopJoin join) {
-            appendLine(builder, depth, "PhysicalNestedLoopJoin right=" + tableName(join.right())
-                    + " type=" + join.joinType().name());
-            appendOptionalExpression(builder, depth + 1, "condition", join.condition());
-            appendOptionalExpression(builder, depth + 1, "rightFilter", join.rightFilter());
-            return;
+            return Node.of("NESTED_LOOP_JOIN", nestedLoopJoinEntries(join), List.of(child, scanNode(join.right())));
         }
         if (operator instanceof PhysicalOrder order) {
-            appendLine(builder, depth, "PhysicalOrder orders=[" + order.orders().size() + "]");
-            return;
+            return Node.of(
+                    "ORDER_BY",
+                    List.of(Entry.of("Order By", orderEntries(order.orders()))),
+                    List.of(child)
+            );
         }
         if (operator instanceof PhysicalLimit limit) {
-            appendLine(builder, depth, "PhysicalLimit " + limit.limit());
-            return;
+            return Node.of(
+                    "STREAMING_LIMIT",
+                    List.of(Entry.of("Limit", Long.toString(limit.limit()))),
+                    List.of(child)
+            );
         }
-        appendLine(builder, depth, operator.type().name());
+        return Node.of(operator.type().name(), List.of(), List.of(child));
     }
 
-    private void appendOptionalExpression(StringBuilder builder, int depth, String label, BoundExpression expression) {
+    private List<Entry> aggregateEntries(PhysicalHashAggregate aggregate) {
+        ArrayList<Entry> entries = new ArrayList<>();
+        if (!aggregate.groups().isEmpty()) {
+            entries.add(Entry.of("Groups", expressionPrinter.printListValues(aggregate.groups())));
+        }
+        entries.add(Entry.of("Aggregates", expressionPrinter.printListValues(aggregate.selectList())));
+        return List.copyOf(entries);
+    }
+
+    private List<Entry> hashJoinEntries(PhysicalHashJoin join) {
+        ArrayList<Entry> entries = new ArrayList<>();
+        entries.add(Entry.of("Join Type", join.joinType().name()));
+        entries.add(Entry.of(
+                "Conditions",
+                "left[" + join.leftKeyOrdinal() + "] = right[" + join.rightKeyOrdinal() + "]"
+        ));
+        appendOptionalExpression(entries, "Right Filter", join.rightFilter());
+        appendOptionalExpression(entries, "Residual", join.residualFilter());
+        return List.copyOf(entries);
+    }
+
+    private List<Entry> markJoinEntries(PhysicalCorrelatedExistsMarkJoin join) {
+        return List.of(
+                Entry.of("Join Type", "MARK"),
+                Entry.of("Subquery", "EXISTS"),
+                Entry.of("Marker", join.marker().name() + "#" + join.marker().ordinal())
+        );
+    }
+
+    private List<Entry> singleJoinEntries(PhysicalCorrelatedScalarAggregateJoin join) {
+        return List.of(
+                Entry.of("Join Type", "SINGLE"),
+                Entry.of("Subquery", "SCALAR"),
+                Entry.of("Marker", join.marker().name() + "#" + join.marker().ordinal())
+        );
+    }
+
+    private List<Entry> nestedLoopJoinEntries(PhysicalNestedLoopJoin join) {
+        ArrayList<Entry> entries = new ArrayList<>();
+        entries.add(Entry.of("Join Type", join.joinType().name()));
+        appendOptionalExpression(entries, "Conditions", join.condition());
+        appendOptionalExpression(entries, "Right Filter", join.rightFilter());
+        return List.copyOf(entries);
+    }
+
+    private void appendOptionalExpression(ArrayList<Entry> entries, String label, BoundExpression expression) {
         if (expression != null) {
-            appendLine(builder, depth, label + "=" + expression(expression));
+            entries.add(Entry.of(label, expressionPrinter.print(expression)));
         }
     }
 
-    private String tableName(BoundTableRef tableRef) {
+    private List<String> orderEntries(List<BoundOrderByItem> orders) {
+        ArrayList<String> values = new ArrayList<>(orders.size());
+        for (BoundOrderByItem order : orders) {
+            values.add(expressionPrinter.print(order.expression()) + " " + order.direction().name());
+        }
+        return List.copyOf(values);
+    }
+
+    private Node scanNode(BoundTableRef tableRef) {
         if (tableRef.isReplacementScan()) {
-            return tableRef.replacementScan().path();
+            return Node.of(
+                    "READ_CSV_AUTO",
+                    List.of(Entry.of("Path", tableRef.replacementScan().path())),
+                    List.of()
+            );
         }
-        return tableRef.table().name();
-    }
-
-    private String expression(BoundExpression expression) {
-        return switch (expression) {
-            case BoundAggregateExpression aggregate -> aggregate.name() + "("
-                    + (aggregate.distinct() ? "DISTINCT " : "")
-                    + (aggregate.starArgument() ? "*" : expressions(aggregate.arguments())) + ")";
-            case BoundBetweenExpression between -> "(" + expression(between.input())
-                    + " BETWEEN " + expression(between.lower()) + " AND " + expression(between.upper()) + ")";
-            case BoundBinaryExpression binary -> "(" + expression(binary.left())
-                    + " " + binary.operator().name() + " " + expression(binary.right()) + ")";
-            case BoundCaseExpression caseExpression -> caseExpression(caseExpression);
-            case BoundCastExpression cast -> "CAST(" + expression(cast.child()) + " AS " + cast.logicalType().id().name() + ")";
-            case BoundColumnRefExpression column -> column.name() + "#" + column.ordinal();
-            case BoundFunctionExpression function -> function.name() + "(" + expressions(function.arguments()) + ")";
-            case BoundInExpression in -> expression(in.input()) + (in.negated() ? " NOT IN " : " IN ")
-                    + "(" + expressions(in.candidates()) + ")";
-            case BoundInSubqueryExpression in -> expression(in.input())
-                    + (in.negated() ? " NOT IN " : " IN ") + "(SUBQUERY)";
-            case BoundExistsSubqueryExpression ignored -> "EXISTS (SUBQUERY)";
-            case BoundIntervalExpression interval -> "INTERVAL '" + interval.amount() + "' " + interval.unit().name();
-            case BoundLiteralExpression literal -> literal.value() == null ? "NULL" : literal.value().toString();
-            case BoundOutputColumnExpression output -> output.name() + "#" + output.ordinal();
-            case BoundSubqueryExpression ignored -> "(SUBQUERY)";
-        };
-    }
-
-    private String caseExpression(BoundCaseExpression caseExpression) {
-        StringBuilder builder = new StringBuilder("CASE");
-        for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
-            builder.append(" WHEN ").append(expression(branch.condition()));
-            builder.append(" THEN ").append(expression(branch.result()));
-        }
-        builder.append(" ELSE ").append(expression(caseExpression.elseExpression()));
-        builder.append(" END");
-        return builder.toString();
-    }
-
-    private String expressions(List<BoundExpression> expressions) {
-        ArrayList<String> printed = new ArrayList<>(expressions.size());
-        for (BoundExpression expression : expressions) {
-            printed.add(expression(expression));
-        }
-        return String.join(", ", printed);
-    }
-
-    private void appendLine(StringBuilder builder, int depth, String line) {
-        builder.append("  ".repeat(depth)).append(line).append("\n");
+        return Node.of("SEQ_SCAN", List.of(Entry.of("Table", tableRef.table().name())), List.of());
     }
 }

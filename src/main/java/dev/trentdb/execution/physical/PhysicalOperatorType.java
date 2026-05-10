@@ -4,6 +4,7 @@ public enum PhysicalOperatorType {
     TABLE_SCAN,
     HASH_JOIN,
     MARK_JOIN,
+    SINGLE_JOIN,
     NESTED_LOOP_JOIN,
     FILTER,
     PROJECTION,

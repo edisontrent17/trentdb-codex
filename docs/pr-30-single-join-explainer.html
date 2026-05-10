@@ -1,0 +1,816 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PR 30: Correlated Scalar Aggregate SINGLE Join</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18202a;
+      --muted: #5e6b78;
+      --line: #d9e1e8;
+      --panel: #ffffff;
+      --soft: #f6f8fa;
+      --accent: #0f766e;
+      --accent-soft: #d8f3ef;
+      --warn: #9a3412;
+      --warn-soft: #ffedd5;
+      --code: #102a43;
+      --code-bg: #eef2f6;
+      --good: #166534;
+      --bad: #991b1b;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: #f3f5f7;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      font-size: 38px;
+      margin-bottom: 12px;
+    }
+
+    h2 {
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+
+    h3 {
+      font-size: 17px;
+      margin-bottom: 10px;
+    }
+
+    p {
+      margin: 0;
+    }
+
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    pre {
+      margin: 0;
+      overflow: auto;
+      white-space: pre-wrap;
+      color: var(--code);
+      background: var(--code-bg);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 13px;
+    }
+
+    .hero {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 28px;
+      margin-bottom: 18px;
+    }
+
+    .subtitle {
+      max-width: 880px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+    }
+
+    .metric {
+      display: grid;
+      gap: 8px;
+    }
+
+    .metric strong {
+      font-size: 28px;
+      line-height: 1;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .section {
+      margin-top: 18px;
+    }
+
+    .diagram {
+      display: grid;
+      gap: 12px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(120px, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .step {
+      min-height: 92px;
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      position: relative;
+    }
+
+    .step::after {
+      content: ">";
+      position: absolute;
+      right: -10px;
+      top: 34px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .step:last-child::after {
+      display: none;
+    }
+
+    .step strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+
+    .step span {
+      color: var(--muted);
+      display: block;
+      font-size: 13px;
+    }
+
+    .before-after {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .before {
+      border-left: 4px solid var(--bad);
+    }
+
+    .after {
+      border-left: 4px solid var(--good);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      background: var(--accent-soft);
+      color: var(--accent);
+      margin-right: 6px;
+      margin-bottom: 6px;
+    }
+
+    .pill.warn {
+      background: var(--warn-soft);
+      color: var(--warn);
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 58px 1fr 82px;
+      gap: 10px;
+      align-items: center;
+      margin-top: 10px;
+      font-size: 13px;
+    }
+
+    .bar {
+      height: 14px;
+      border-radius: 8px;
+      background: #dbeafe;
+      overflow: hidden;
+      border: 1px solid #bfdbfe;
+    }
+
+    .bar > span {
+      display: block;
+      height: 100%;
+      background: #2563eb;
+    }
+
+    .bar.fast > span {
+      background: var(--accent);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th, td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 10px 8px;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 10px;
+    }
+
+    .callout {
+      background: var(--accent-soft);
+      border: 1px solid #99d8cf;
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .callout strong {
+      color: var(--accent);
+    }
+
+    .plan-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .plan-label {
+      flex: none;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .plan-label.old {
+      color: var(--bad);
+      background: #fee2e2;
+    }
+
+    .plan-label.new {
+      color: var(--good);
+      background: #dcfce7;
+    }
+
+    .file-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 6px;
+    }
+
+    .file {
+      padding: 10px;
+      background: var(--soft);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-size: 13px;
+    }
+
+    @media (max-width: 860px) {
+      h1 {
+        font-size: 30px;
+      }
+
+      .two,
+      .three,
+      .before-after,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .step::after {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <div class="pill">PR #30</div>
+    <div class="pill">Optimizer</div>
+    <div class="pill">DuckDB-shaped SINGLE join</div>
+    <h1>Correlated Scalar Aggregate Subqueries as SINGLE Joins</h1>
+    <p class="subtitle">
+      This PR replaces the worst correlated scalar aggregate execution path with a join-shaped plan.
+      Instead of rerunning the aggregate subquery once per outer row, TrentDB scans the inner table once,
+      builds an aggregate lookup keyed by correlated columns, then probes that lookup for each outer row.
+    </p>
+  </section>
+
+  <section class="grid three">
+    <div class="panel metric">
+      <span>Primary target</span>
+      <strong>TPC-H Q20</strong>
+      <span>Canonical correlated scalar aggregate shape.</span>
+    </div>
+    <div class="panel metric">
+      <span>Before recorded smoke time</span>
+      <strong>64,335 ms</strong>
+      <span>Per-row correlated subquery execution.</span>
+    </div>
+    <div class="panel metric">
+      <span>Current PR smoke time</span>
+      <strong>125 ms</strong>
+      <span>Native aggregate lookup plus probes.</span>
+    </div>
+  </section>
+
+  <section class="section panel">
+    <h2>The Problem</h2>
+    <div class="before-after">
+      <div class="panel before">
+        <h3>Before: execute scalar subquery per outer row</h3>
+        <pre>for each candidate partsupp row:
+    scan lineitem
+    apply l_partkey = ps_partkey
+    apply l_suppkey = ps_suppkey
+    apply date filter
+    compute sum(l_quantity)
+    compare ps_availqty > 0.5 * sum</pre>
+        <p class="note">
+          This is correct, but it repeats the same inner scan many times. Q20 exposes that cost clearly.
+        </p>
+      </div>
+      <div class="panel after">
+        <h3>After: build once, probe many times</h3>
+        <pre>scan lineitem once:
+    apply date filter
+    group by (l_partkey, l_suppkey)
+    compute sum(l_quantity)
+
+for each candidate partsupp row:
+    lookup (ps_partkey, ps_suppkey)
+    compare ps_availqty > 0.5 * sum</pre>
+        <p class="note">
+          This is the narrow first step toward DuckDB-style decorrelation.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section panel">
+    <h2>Pipeline Shape</h2>
+    <div class="flow">
+      <div class="step">
+        <strong>SQL</strong>
+        <span>Correlated scalar aggregate in WHERE.</span>
+      </div>
+      <div class="step">
+        <strong>Binder</strong>
+        <span>Marks outer references and scalar subquery metadata.</span>
+      </div>
+      <div class="step">
+        <strong>Logical Planner</strong>
+        <span>Rewrites eligible scalar subquery to dependent join kind SINGLE.</span>
+      </div>
+      <div class="step">
+        <strong>Physical Planner</strong>
+        <span>Maps SINGLE to PhysicalCorrelatedScalarAggregateJoin.</span>
+      </div>
+      <div class="step">
+        <strong>Execution</strong>
+        <span>Build aggregate hash table once, then append scalar marker values.</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section panel">
+    <h2>DuckDB Plan Printer Shape</h2>
+    <p>
+      DuckDB does not print plans as an indented list. `EXPLAIN` renders a tree of fixed-width operator boxes.
+      Each box has an uppercase operator name, a separator line, parameter sections such as `Join Type`,
+      `Conditions`, `Groups`, `Aggregates`, and an estimated row count when available.
+    </p>
+    <div class="file-list">
+      <div class="file"><code>EXPLAIN</code> internally produces rows keyed as <code>logical_plan</code>, <code>logical_opt</code>, and <code>physical_plan</code> when <code>explain_output='all'</code>.</div>
+      <div class="file">The rendered text comes from DuckDB's <code>TreeRenderer</code>, using each operator's <code>GetName()</code> and <code>ParamsToString()</code>.</div>
+      <div class="file">DuckDB also supports <code>EXPLAIN (FORMAT HTML)</code>, which renders the same operator tree as collapsible cards.</div>
+    </div>
+    <p class="note">
+      Source references checked locally: <code>src/execution/physical_plan/plan_explain.cpp</code>,
+      <code>src/common/render_tree.cpp</code>, and <code>src/common/tree_renderer/text_tree_renderer.cpp</code>.
+    </p>
+  </section>
+
+  <section class="section grid two">
+    <div class="panel">
+      <h2>Q20 Shape</h2>
+      <pre>ps.ps_availqty > (
+    SELECT 0.5 * sum(l.l_quantity)
+    FROM lineitem l
+    WHERE l.l_partkey = ps.ps_partkey
+      AND l.l_suppkey = ps.ps_suppkey
+      AND l.l_shipdate >= DATE '1994-01-01'
+      AND l.l_shipdate < DATE '1995-01-01'
+)</pre>
+      <p class="note">
+        The equality predicates become lookup keys. The date predicates are residual filters applied while building the lookup.
+      </p>
+    </div>
+    <div class="panel">
+      <h2>Plan Change Summary</h2>
+      <pre>DuckDB logical reference:
+  DELIM_JOIN
+    Join Type: SINGLE
+    Conditions:
+      ps_partkey IS NOT DISTINCT FROM ps_partkey
+      ps_suppkey IS NOT DISTINCT FROM ps_suppkey
+
+DuckDB physical reference:
+  RIGHT_DELIM_JOIN
+    HASH_GROUP_BY
+    DELIM_SCAN
+
+TrentDB PR #30:
+  DELIM_JOIN
+    Join Type: SINGLE
+  SINGLE_JOIN
+    Join Type: SINGLE
+    Subquery: SCALAR</pre>
+      <p class="note">
+        TrentDB's current physical implementation is the narrow first slice. It is semantically aimed at DuckDB's
+        `SINGLE` dependent join shape, but it is not yet DuckDB's full `RIGHT_DELIM_JOIN` physical architecture.
+      </p>
+    </div>
+  </section>
+
+  <section class="section panel">
+    <h2>Exact DuckDB Q20 Physical Excerpt</h2>
+    <pre>┌─────────────────────────────┐
+│┌───────────────────────────┐│
+││       Physical Plan       ││
+│└───────────────────────────┘│
+└─────────────────────────────┘
+...
+┌─────────────┴─────────────┐
+│      RIGHT_DELIM_JOIN     │
+│    ────────────────────   │
+│      Join Type: RIGHT     │
+│                           │
+│        Conditions:        │
+│ ps_partkey IS NOT DISTINCT├───────────────────────────────────────────┐
+│       FROM ps_partkey     │                                           │
+│ ps_suppkey IS NOT DISTINCT│                                           │
+│       FROM ps_suppkey     │                                           │
+│                           │                                           │
+│         ~1307 Rows        │                                           │
+└─────────────┬─────────────┘                                           │
+┌─────────────┴─────────────┐                             ┌─────────────┴─────────────┐
+│         HASH_JOIN         │                             │         HASH_JOIN         │
+│    ────────────────────   │                             │    ────────────────────   │
+│      Join Type: SEMI      │                             │      Join Type: RIGHT     │
+│                           │                             │                           │
+│        Conditions:        │                             │        Conditions:        │
+│      ps_partkey = #0      ├──────────────┐              │ ps_partkey IS NOT DISTINCT├───────────────────────────────────────────┐
+│                           │              │              │       FROM ps_partkey     │                                           │
+│                           │              │              │ ps_suppkey IS NOT DISTINCT│                                           │
+│                           │              │              │       FROM ps_suppkey     │                                           │
+│         ~1307 Rows        │              │              │         ~1307 Rows        │                                           │
+└─────────────┬─────────────┘              │              └─────────────┬─────────────┘                                           │
+┌─────────────┴─────────────┐┌─────────────┴─────────────┐┌─────────────┴─────────────┐                             ┌─────────────┴─────────────┐
+│       READ_CSV_AUTO       ││         PROJECTION        ││         PROJECTION        │                             │         DUMMY_SCAN        │
+│    ────────────────────   ││    ────────────────────   ││    ────────────────────   │                             │                           │
+│         Function:         ││         p_partkey         ││  (0.5 * sum(l_quantity))  │                             │                           │
+│       READ_CSV_AUTO       ││                           ││         ps_partkey        │                             │                           │
+│        Projections:       ││                           ││         ps_suppkey        │                             │                           │
+│         ps_partkey        ││                           ││                           │                             │                           │
+│        ps_availqty        ││                           ││                           │                             │                           │
+│         ps_suppkey        ││                           ││                           │                             │                           │
+│         ~6539 Rows        ││         ~1524 Rows        ││         ~726 Rows         │                             │                           │
+└───────────────────────────┘└─────────────┬─────────────┘└─────────────┬─────────────┘                             └───────────────────────────┘
+                             ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+                             │           FILTER          ││       HASH_GROUP_BY       │
+                             │    ────────────────────   ││    ────────────────────   │
+                             │  prefix(p_name, 'forest') ││          Groups:          │
+                             │                           ││             #0            │
+                             │                           ││             #1            │
+                             │                           ││                           │
+                             │                           ││    Aggregates: sum(#2)    │
+                             │         ~1524 Rows        ││         ~726 Rows         │
+                             └─────────────┬─────────────┘└─────────────┬─────────────┘
+                             ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+                             │       READ_CSV_AUTO       ││         PROJECTION        │
+                             │    ────────────────────   ││    ────────────────────   │
+                             │         Function:         ││         ps_partkey        │
+                             │       READ_CSV_AUTO       ││         ps_suppkey        │
+                             │        Projections:       ││         l_quantity        │
+                             │           p_name          ││                           │
+                             │         p_partkey         ││                           │
+                             │         ~7622 Rows        ││         ~1453 Rows        │
+                             └───────────────────────────┘└─────────────┬─────────────┘
+                                                          ┌─────────────┴─────────────┐
+                                                          │         HASH_JOIN         │
+                                                          │    ────────────────────   │
+                                                          │      Join Type: INNER     │
+                                                          │                           │
+                                                          │        Conditions:        ├──────────────┐
+                                                          │   l_partkey = ps_partkey  │              │
+                                                          │   l_suppkey = ps_suppkey  │              │
+                                                          │         ~1453 Rows        │              │
+                                                          └─────────────┬─────────────┘              │
+                                                          ┌─────────────┴─────────────┐┌─────────────┴─────────────┐
+                                                          │           FILTER          ││         DELIM_SCAN        │
+                                                          │    ────────────────────   ││    ────────────────────   │
+                                                          │ (l_shipdate BETWEEN '1994 ││       Delim Index: 1      │
+                                                          │ -01-01'::DATE AND '1995-01││                           │
+                                                          │        -01'::DATE)        ││         ~653 Rows         │
+                                                          │        ~14557 Rows        │└───────────────────────────┘
+                                                          └─────────────┬─────────────┘
+                                                          ┌─────────────┴─────────────┐
+                                                          │       READ_CSV_AUTO       │
+                                                          │    ────────────────────   │
+                                                          │         Function:         │
+                                                          │       READ_CSV_AUTO       │
+                                                          │        Projections:       │
+                                                          │         l_partkey         │
+                                                          │         l_suppkey         │
+                                                          │         l_shipdate        │
+                                                          │         l_quantity        │
+                                                          │        ~72789 Rows        │
+                                                          └───────────────────────────┘</pre>
+    <p class="note">
+      This is the DuckDB CLI physical-plan excerpt for the same Q20 CSV query, with unrelated outer joins elided by `...`.
+      The key reference is `RIGHT_DELIM_JOIN` feeding `HASH_GROUP_BY` through `DELIM_SCAN`.
+    </p>
+  </section>
+
+  <section class="section panel">
+    <h2>Previous Plan vs New Plan</h2>
+    <div class="before-after">
+      <div class="panel before">
+        <div class="plan-title">
+          <h3>Previous Plan</h3>
+          <span class="plan-label old">Before PR #30</span>
+        </div>
+        <pre>Logical Plan
+LogicalProjection [s_name, s_address]
+  LogicalOrder [s_name]
+    LogicalFilter
+      predicate:
+        ps_availqty > (SCALAR SUBQUERY)
+      child:
+        joins and filters for supplier, nation, partsupp, part
+
+Physical Plan
+  Source: PhysicalTableScan table=supplier
+  Operators
+    PhysicalHashJoin / PhysicalNestedLoopJoin ...
+    PhysicalFilter
+      predicate:
+        ps_availqty > (SUBQUERY)
+    PhysicalOrder
+    PhysicalProjection
+  Sink: RESULT_COLLECTOR
+
+Expression execution
+  For each outer row that reaches the filter:
+    SubqueryExpressionEvaluator substitutes ps_partkey and ps_suppkey
+    QueryExecutor reruns the scalar aggregate subquery
+    lineitem is scanned and aggregated again</pre>
+        <p class="note">
+          The plan is correct, but the scalar aggregate is hidden inside the filter expression.
+          Because it is not a join-shaped operator, the engine cannot build reusable aggregate state.
+        </p>
+      </div>
+      <div class="panel after">
+        <div class="plan-title">
+          <h3>New Plan</h3>
+          <span class="plan-label new">PR #30</span>
+        </div>
+        <pre>┌───────────────────────────┐
+│       Logical Plan        │
+└───────────────────────────┘
+┌───────────────────────────┐
+│        PROJECTION         │
+│    ───────────────────    │
+│       Expressions:        │
+│          s_name           │
+│         s_address         │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│         ORDER_BY          │
+│    ───────────────────    │
+│         Order By:         │
+│         s_name ASC        │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│          FILTER           │
+│    ───────────────────    │
+│       Expressions:        │
+│ (ps_availqty GREATER_THAN │
+│        #scalar_q20)       │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│        DELIM_JOIN         │
+│    ───────────────────    │
+│        Join Type:         │
+│          SINGLE           │
+│          Marker:          │
+│        #scalar_q20        │
+│         Subquery:         │
+│          SCALAR           │
+└───────────────────────────┘
+              │
+             ...
+
+┌───────────────────────────┐
+│       Physical Plan       │
+└───────────────────────────┘
+┌───────────────────────────┐
+│        PROJECTION         │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│         ORDER_BY          │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│          FILTER           │
+│    ───────────────────    │
+│        Expression:        │
+│ (ps_availqty GREATER_THAN │
+│        #scalar_q20)       │
+└───────────────────────────┘
+              │
+┌───────────────────────────┐
+│        SINGLE_JOIN        │
+│    ───────────────────    │
+│        Join Type:         │
+│          SINGLE           │
+│         Subquery:         │
+│          SCALAR           │
+│          Marker:          │
+│        #scalar_q20        │
+└───────────────────────────┘
+              │
+             ...</pre>
+        <p class="note">
+          The scalar aggregate is now a physical operator. It builds the lookup once and probes it for each outer row.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section panel">
+    <h2>Eligibility Rules</h2>
+    <table>
+      <thead>
+      <tr>
+        <th>Rule</th>
+        <th>Why it exists</th>
+        <th>Unsupported behavior</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+        <td>Subquery must be correlated.</td>
+        <td>Uncorrelated scalar subqueries already have a separate execution path.</td>
+        <td>Leave existing path unchanged.</td>
+      </tr>
+      <tr>
+        <td>Subquery FROM must be one table or replacement scan.</td>
+        <td>The new physical lookup builds from a single inner scan.</td>
+        <td>Leave existing evaluator path.</td>
+      </tr>
+      <tr>
+        <td>One ungrouped aggregate output.</td>
+        <td>The lookup stores one scalar aggregate result per key.</td>
+        <td>Leave existing evaluator path.</td>
+      </tr>
+      <tr>
+        <td>No DISTINCT aggregate yet.</td>
+        <td>DISTINCT needs different aggregate state.</td>
+        <td>Leave existing evaluator path.</td>
+      </tr>
+      <tr>
+        <td>One or two correlated equality keys.</td>
+        <td>The hash table stores native long keys for the first slice.</td>
+        <td>Leave existing evaluator path.</td>
+      </tr>
+      <tr>
+        <td>Key types: BOOLEAN, INTEGER, BIGINT, DATE.</td>
+        <td>These map directly to native long keys without Object-backed keys.</td>
+        <td>Leave existing evaluator path.</td>
+      </tr>
+      <tr>
+        <td>Correlated non-equality predicates are not rewritten.</td>
+        <td>Those need dependent join residual handling or a later decorrelation rule.</td>
+        <td>Leave existing evaluator path.</td>
+      </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section grid two">
+    <div class="panel">
+      <h2>Semantic Details</h2>
+      <p>
+        Missing lookup rows are not blindly treated as SQL NULL. They are evaluated as an aggregate over an empty input,
+        matching scalar aggregate semantics.
+      </p>
+      <div class="file-list">
+        <div class="file"><code>count(*)</code> over no matching rows returns <code>0</code>.</div>
+        <div class="file"><code>sum(...)</code>, <code>avg(...)</code>, <code>min(...)</code>, and <code>max(...)</code> over no matching rows return <code>NULL</code>.</div>
+        <div class="file">A NULL outer correlation key also behaves like no matching inner rows.</div>
+        <div class="file">The native key path does not use <code>Long.MIN_VALUE</code> as a null sentinel, so real BIGINT min keys remain valid.</div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Performance Smoke</h2>
+      <div class="bar-row">
+        <span>Q20 old</span>
+        <div class="bar"><span style="width: 100%"></span></div>
+        <span>64,335 ms</span>
+      </div>
+      <div class="bar-row">
+        <span>Q20 PR</span>
+        <div class="bar fast"><span style="width: 1%"></span></div>
+        <span>125 ms</span>
+      </div>
+      <div class="bar-row">
+        <span>Q17 PR</span>
+        <div class="bar fast"><span style="width: 1%"></span></div>
+        <span>92 ms</span>
+      </div>
+      <p class="note">
+        These are local smoke timings from the JUnit TPC-H report. They are useful directionally, not as a final benchmark harness.
+      </p>
+    </div>
+  </section>
+
+  <section class="section panel">
+    <h2>Files To Review</h2>
+    <div class="file-list">
+      <div class="file"><code>LogicalPlanner</code>: detects eligible scalar aggregate subqueries and rewrites them to <code>LogicalDependentJoin.Kind.SINGLE</code>.</div>
+      <div class="file"><code>LogicalDependentJoin</code>: now represents both <code>MARK</code> and <code>SINGLE</code> dependent joins.</div>
+      <div class="file"><code>PhysicalPlanner</code>: maps <code>MARK</code> to the existing exists mark join and <code>SINGLE</code> to the new scalar aggregate join.</div>
+      <div class="file"><code>PhysicalCorrelatedScalarAggregateJoin</code>: scans the inner table, builds aggregate lookup state, and appends the scalar marker vector.</div>
+      <div class="file"><code>ScalarAggregateHashTable</code>: native long-key aggregate hash table and scalar value materialization.</div>
+      <div class="file"><code>QueryExecutorTest</code>: targeted regression tests for plan shape, fallback, empty groups, and key edge cases.</div>
+    </div>
+  </section>
+
+  <section class="section callout">
+    <strong>What this PR does not do:</strong>
+    It does not implement arbitrary query unnesting yet. It is a production-safe first slice:
+    only the scalar aggregate shapes the new physical operator can execute are rewritten.
+    Everything else keeps the previous evaluator path.
+  </section>
+</main>
+</body>
+</html>

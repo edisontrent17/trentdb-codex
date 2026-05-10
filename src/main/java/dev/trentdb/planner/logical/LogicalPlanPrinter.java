@@ -1,66 +1,111 @@
 package dev.trentdb.planner.logical;
 
+import dev.trentdb.planner.BoundExpressionPrinter;
+import dev.trentdb.planner.BoundOrderByItem;
+import dev.trentdb.planner.BoundTableRef;
+import dev.trentdb.planner.PlanTreeRenderer;
+import dev.trentdb.planner.PlanTreeRenderer.Entry;
+import dev.trentdb.planner.PlanTreeRenderer.Node;
+
+import java.util.ArrayList;
+import java.util.List;
+
 public final class LogicalPlanPrinter {
+    private final PlanTreeRenderer renderer = new PlanTreeRenderer();
+    private final BoundExpressionPrinter expressionPrinter = new BoundExpressionPrinter();
+
     public String print(LogicalOperator operator) {
-        StringBuilder builder = new StringBuilder();
-        append(operator, builder, 0);
-        return builder.toString();
+        return renderer.print(node(operator));
     }
 
-    private void append(LogicalOperator operator, StringBuilder builder, int depth) {
-        builder.append("  ".repeat(depth));
-        switch (operator) {
-            case LogicalAggregate aggregate -> {
-                builder.append("LogicalAggregate");
-                builder.append(" groups=[").append(aggregate.groups().size()).append("]");
-                builder.append(" expressions=[").append(aggregate.selectList().size()).append("]\n");
-                append(aggregate.child(), builder, depth + 1);
-            }
-            case LogicalExplain explain -> {
-                builder.append("LogicalExplain\n");
-                append(explain.child(), builder, depth + 1);
-            }
-            case LogicalDependentJoin join -> {
-                builder.append("LogicalDelimJoin type=MARK subquery=EXISTS");
-                builder.append(" marker=").append(join.marker().name()).append("#").append(join.marker().ordinal()).append("\n");
-                append(join.child(), builder, depth + 1);
-            }
-            case LogicalProjection projection -> {
-                builder.append("LogicalProjection");
-                builder.append(" [").append(projection.expressions().size()).append("]\n");
-                append(projection.child(), builder, depth + 1);
-            }
-            case LogicalJoin join -> {
-                builder.append("LogicalComparisonJoin type=").append(join.joinType().name()).append("\n");
-                append(join.left(), builder, depth + 1);
-                append(join.right(), builder, depth + 1);
-            }
-            case LogicalFilter filter -> {
-                builder.append("LogicalFilter\n");
-                append(filter.child(), builder, depth + 1);
-            }
-            case LogicalLimit limit -> {
-                builder.append("LogicalLimit ").append(limit.limit()).append("\n");
-                append(limit.child(), builder, depth + 1);
-            }
-            case LogicalOrder order -> {
-                builder.append("LogicalOrder");
-                builder.append(" [").append(order.orders().size()).append("]\n");
-                append(order.child(), builder, depth + 1);
-            }
-            case LogicalGet get -> builder.append("LogicalGet ").append(getName(get.tableRef())).append("\n");
+    private Node node(LogicalOperator operator) {
+        return switch (operator) {
+            case LogicalAggregate aggregate -> Node.of(
+                    "AGGREGATE",
+                    aggregateEntries(aggregate),
+                    List.of(node(aggregate.child()))
+            );
+            case LogicalExplain explain -> Node.of("EXPLAIN", List.of(), List.of(node(explain.child())));
+            case LogicalDependentJoin join -> Node.of(
+                    "DELIM_JOIN",
+                    dependentJoinEntries(join),
+                    List.of(node(join.child()))
+            );
+            case LogicalProjection projection -> Node.of(
+                    "PROJECTION",
+                    List.of(Entry.of("Expressions", expressionPrinter.printListValues(projection.expressions()))),
+                    List.of(node(projection.child()))
+            );
+            case LogicalJoin join -> Node.of(
+                    "COMPARISON_JOIN",
+                    comparisonJoinEntries(join),
+                    List.of(node(join.left()), node(join.right()))
+            );
+            case LogicalFilter filter -> Node.of(
+                    "FILTER",
+                    List.of(Entry.of("Expressions", expressionPrinter.print(filter.predicate()))),
+                    List.of(node(filter.child()))
+            );
+            case LogicalLimit limit -> Node.of(
+                    "LIMIT",
+                    List.of(Entry.of("Limit", Long.toString(limit.limit()))),
+                    List.of(node(limit.child()))
+            );
+            case LogicalOrder order -> Node.of(
+                    "ORDER_BY",
+                    List.of(Entry.of("Order By", orderEntries(order.orders()))),
+                    List.of(node(order.child()))
+            );
+            case LogicalGet get -> getNode(get.tableRef());
+        };
+    }
+
+    private List<Entry> aggregateEntries(LogicalAggregate aggregate) {
+        ArrayList<Entry> entries = new ArrayList<>();
+        if (!aggregate.groups().isEmpty()) {
+            entries.add(Entry.of("Groups", expressionPrinter.printListValues(aggregate.groups())));
         }
+        entries.add(Entry.of("Expressions", expressionPrinter.printListValues(aggregate.selectList())));
+        return List.copyOf(entries);
     }
 
-    private void appendGet(dev.trentdb.planner.BoundTableRef tableRef, StringBuilder builder, int depth) {
-        builder.append("  ".repeat(depth));
-        builder.append("LogicalGet ").append(getName(tableRef)).append("\n");
+    private List<Entry> comparisonJoinEntries(LogicalJoin join) {
+        ArrayList<Entry> entries = new ArrayList<>();
+        entries.add(Entry.of("Join Type", join.joinType().name()));
+        if (join.condition() != null) {
+            entries.add(Entry.of("Conditions", expressionPrinter.print(join.condition())));
+        }
+        return List.copyOf(entries);
     }
 
-    private String getName(dev.trentdb.planner.BoundTableRef tableRef) {
+    private List<Entry> dependentJoinEntries(LogicalDependentJoin join) {
+        ArrayList<Entry> entries = new ArrayList<>();
+        entries.add(Entry.of("Join Type", join.kind().name()));
+        entries.add(Entry.of("Marker", join.marker().name() + "#" + join.marker().ordinal()));
+        if (join.kind() == LogicalDependentJoin.Kind.MARK) {
+            entries.add(Entry.of("Subquery", "EXISTS"));
+        } else {
+            entries.add(Entry.of("Subquery", "SCALAR"));
+        }
+        return List.copyOf(entries);
+    }
+
+    private List<String> orderEntries(List<BoundOrderByItem> orders) {
+        ArrayList<String> values = new ArrayList<>(orders.size());
+        for (BoundOrderByItem order : orders) {
+            values.add(expressionPrinter.print(order.expression()) + " " + order.direction().name());
+        }
+        return List.copyOf(values);
+    }
+
+    private Node getNode(BoundTableRef tableRef) {
         if (tableRef.isReplacementScan()) {
-            return tableRef.replacementScan().path();
+            return Node.of(
+                    "READ_CSV_AUTO",
+                    List.of(Entry.of("Path", tableRef.replacementScan().path())),
+                    List.of()
+            );
         }
-        return tableRef.table().name();
+        return Node.of("SEQ_SCAN", List.of(Entry.of("Table", tableRef.table().name())), List.of());
     }
 }

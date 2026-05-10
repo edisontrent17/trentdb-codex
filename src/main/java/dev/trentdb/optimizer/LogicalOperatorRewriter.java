@@ -57,7 +57,9 @@ class LogicalOperatorRewriter {
 
     private LogicalOperator rewriteDependentJoin(LogicalDependentJoin join) {
         LogicalOperator child = rewrite(join.child());
-        return child == join.child() ? join : new LogicalDependentJoin(child, join.subquery(), join.marker());
+        return child == join.child()
+                ? join
+                : new LogicalDependentJoin(child, join.subquery(), join.scalarSubquery(), join.marker(), join.kind());
     }
 
     private LogicalOperator rewriteExplain(LogicalExplain explain) {
