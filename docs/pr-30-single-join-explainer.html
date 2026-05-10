@@ -277,6 +277,32 @@
       color: var(--accent);
     }
 
+    .plan-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .plan-label {
+      flex: none;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .plan-label.old {
+      color: var(--bad);
+      background: #fee2e2;
+    }
+
+    .plan-label.new {
+      color: var(--good);
+      background: #dcfce7;
+    }
+
     .file-list {
       display: grid;
       gap: 8px;
@@ -416,7 +442,7 @@ for each candidate partsupp row:
       </p>
     </div>
     <div class="panel">
-      <h2>Plan Result</h2>
+      <h2>Plan Change Summary</h2>
       <pre>LogicalDependentJoin type=SINGLE
   marker=#scalar...
 
@@ -426,6 +452,86 @@ PhysicalSingleJoin subquery=SCALAR
       <p class="note">
         The final WHERE predicate compares the outer column with the appended scalar marker column.
       </p>
+    </div>
+  </section>
+
+  <section class="section panel">
+    <h2>Previous Plan vs New Plan</h2>
+    <div class="before-after">
+      <div class="panel before">
+        <div class="plan-title">
+          <h3>Previous Plan</h3>
+          <span class="plan-label old">Before PR #30</span>
+        </div>
+        <pre>Logical Plan
+LogicalProjection [s_name, s_address]
+  LogicalOrder [s_name]
+    LogicalFilter
+      predicate:
+        ps_availqty > (SCALAR SUBQUERY)
+      child:
+        joins and filters for supplier, nation, partsupp, part
+
+Physical Plan
+  Source: PhysicalTableScan table=supplier
+  Operators
+    PhysicalHashJoin / PhysicalNestedLoopJoin ...
+    PhysicalFilter
+      predicate:
+        ps_availqty > (SUBQUERY)
+    PhysicalOrder
+    PhysicalProjection
+  Sink: RESULT_COLLECTOR
+
+Expression execution
+  For each outer row that reaches the filter:
+    SubqueryExpressionEvaluator substitutes ps_partkey and ps_suppkey
+    QueryExecutor reruns the scalar aggregate subquery
+    lineitem is scanned and aggregated again</pre>
+        <p class="note">
+          The plan is correct, but the scalar aggregate is hidden inside the filter expression.
+          Because it is not a join-shaped operator, the engine cannot build reusable aggregate state.
+        </p>
+      </div>
+      <div class="panel after">
+        <div class="plan-title">
+          <h3>New Plan</h3>
+          <span class="plan-label new">PR #30</span>
+        </div>
+        <pre>Logical Plan
+LogicalProjection [s_name, s_address]
+  LogicalOrder [s_name]
+    LogicalFilter
+      predicate:
+        ps_availqty > #scalar
+      child:
+        LogicalDependentJoin type=SINGLE
+          marker=#scalar
+          child:
+            joins and filters for supplier, nation, partsupp, part
+
+Physical Plan
+  Source: PhysicalTableScan table=supplier
+  Operators
+    PhysicalHashJoin / PhysicalNestedLoopJoin ...
+    PhysicalSingleJoin subquery=SCALAR
+      build:
+        scan lineitem once
+        filter shipdate range
+        aggregate sum(l_quantity)
+        key by (l_partkey, l_suppkey)
+      output:
+        append #scalar marker column
+    PhysicalFilter
+      predicate:
+        ps_availqty > #scalar
+    PhysicalOrder
+    PhysicalProjection
+  Sink: RESULT_COLLECTOR</pre>
+        <p class="note">
+          The scalar aggregate is now a physical operator. It builds the lookup once and probes it for each outer row.
+        </p>
+      </div>
     </div>
   </section>
 
