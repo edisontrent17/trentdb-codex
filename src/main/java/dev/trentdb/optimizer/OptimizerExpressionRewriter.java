@@ -1,5 +1,6 @@
 package dev.trentdb.optimizer;
 
+import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.common.vector.DataChunk;
 import dev.trentdb.common.vector.Vector;
 import dev.trentdb.execution.ExpressionExecutor;
@@ -11,6 +12,7 @@ import dev.trentdb.planner.BoundCastExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExistsSubqueryExpression;
 import dev.trentdb.planner.BoundExpression;
+import dev.trentdb.planner.BoundExpressionTypes;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
 import dev.trentdb.planner.BoundInSubqueryExpression;
@@ -23,7 +25,7 @@ import dev.trentdb.types.LogicalType;
 
 import java.util.List;
 
-final class ConstantFoldingExpressionRewriter extends BoundExpressionRewriter {
+final class OptimizerExpressionRewriter extends BoundExpressionRewriter {
     private final DataChunk scalarInput = new DataChunk(
             List.of("__constant_fold_row"),
             List.of(new Vector(LogicalType.BIGINT, 1))
@@ -37,7 +39,9 @@ final class ConstantFoldingExpressionRewriter extends BoundExpressionRewriter {
 
     @Override
     protected BoundExpression visitBinary(BoundBinaryExpression binary) {
-        return fold(super.visitBinary(binary));
+        BoundExpression rewritten = super.visitBinary(binary);
+        BoundExpression simplified = simplifyArithmetic(rewritten);
+        return fold(simplified);
     }
 
     @Override
@@ -58,6 +62,95 @@ final class ConstantFoldingExpressionRewriter extends BoundExpressionRewriter {
     @Override
     protected BoundExpression visitIn(BoundInExpression in) {
         return fold(super.visitIn(in));
+    }
+
+    private BoundExpression simplifyArithmetic(BoundExpression expression) {
+        if (!(expression instanceof BoundBinaryExpression binary) || !isNumericArithmetic(binary)) {
+            return expression;
+        }
+        if (isNullLiteral(binary.left()) || isNullLiteral(binary.right())) {
+            return new BoundLiteralExpression(binary.logicalType(), null);
+        }
+        return switch (binary.operator()) {
+            case ADD -> simplifyAdd(binary);
+            case SUBTRACT -> simplifySubtract(binary);
+            case MULTIPLY -> simplifyMultiply(binary);
+            case DIVIDE -> simplifyDivide(binary);
+            default -> expression;
+        };
+    }
+
+    private BoundExpression simplifyAdd(BoundBinaryExpression binary) {
+        if (isZero(binary.left()) && canReplace(binary.right(), binary)) {
+            return binary.right();
+        }
+        if (isZero(binary.right()) && canReplace(binary.left(), binary)) {
+            return binary.left();
+        }
+        return binary;
+    }
+
+    private BoundExpression simplifySubtract(BoundBinaryExpression binary) {
+        if (isZero(binary.right()) && canReplace(binary.left(), binary)) {
+            return binary.left();
+        }
+        return binary;
+    }
+
+    private BoundExpression simplifyMultiply(BoundBinaryExpression binary) {
+        if (isOne(binary.left()) && canReplace(binary.right(), binary)) {
+            return binary.right();
+        }
+        if (isOne(binary.right()) && canReplace(binary.left(), binary)) {
+            return binary.left();
+        }
+        return binary;
+    }
+
+    private BoundExpression simplifyDivide(BoundBinaryExpression binary) {
+        if (isOne(binary.right()) && canReplace(binary.left(), binary)) {
+            return binary.left();
+        }
+        return binary;
+    }
+
+    private boolean isNumericArithmetic(BoundBinaryExpression binary) {
+        return switch (binary.operator()) {
+            case ADD, SUBTRACT, MULTIPLY, DIVIDE -> BoundExpressionTypes.isNumeric(binary.logicalType());
+            default -> false;
+        };
+    }
+
+    private boolean canReplace(BoundExpression child, BoundBinaryExpression binary) {
+        return BoundExpressionTypes.logicalType(child).equals(binary.logicalType());
+    }
+
+    private boolean isNullLiteral(BoundExpression expression) {
+        return expression instanceof BoundLiteralExpression literal && literal.value() == null;
+    }
+
+    private boolean isZero(BoundExpression expression) {
+        if (!(expression instanceof BoundLiteralExpression literal) || literal.value() == null) {
+            return false;
+        }
+        return switch (literal.logicalType().id()) {
+            case INTEGER -> ((Number) literal.value()).intValue() == 0;
+            case BIGINT -> ((Number) literal.value()).longValue() == 0L;
+            case DOUBLE -> ((Number) literal.value()).doubleValue() == 0.0d;
+            default -> false;
+        };
+    }
+
+    private boolean isOne(BoundExpression expression) {
+        if (!(expression instanceof BoundLiteralExpression literal) || literal.value() == null) {
+            return false;
+        }
+        return switch (literal.logicalType().id()) {
+            case INTEGER -> ((Number) literal.value()).intValue() == 1;
+            case BIGINT -> ((Number) literal.value()).longValue() == 1L;
+            case DOUBLE -> ((Number) literal.value()).doubleValue() == 1.0d;
+            default -> false;
+        };
     }
 
     private BoundExpression fold(BoundExpression expression) {

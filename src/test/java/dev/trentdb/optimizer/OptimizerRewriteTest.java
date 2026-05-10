@@ -24,6 +24,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -164,6 +165,83 @@ class OptimizerRewriteTest {
 
         LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
         assertInstanceOf(BoundBinaryExpression.class, optimizedProjection.expressions().getFirst());
+    }
+
+    @Test
+    void optimizerSimplifiesArithmeticIdentityExpressions() {
+        TableCatalogEntry table = table();
+        BoundColumnRefExpression column = new BoundColumnRefExpression(table.columns().getFirst());
+        LogicalProjection projection = new LogicalProjection(
+                List.of(new BoundBinaryExpression(
+                        column,
+                        BinaryOperator.ADD,
+                        new BoundLiteralExpression(LogicalType.BIGINT, 0L),
+                        LogicalType.BIGINT
+                )),
+                List.of("value"),
+                new LogicalGet(new BoundTableRef(table, null))
+        );
+
+        LogicalOperator optimized = new Optimizer().optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        assertSame(column, optimizedProjection.expressions().getFirst());
+    }
+
+    @Test
+    void optimizerSimplifiesArithmeticWithNullLiteralToTypedNull() {
+        TableCatalogEntry table = table();
+        BoundColumnRefExpression column = new BoundColumnRefExpression(table.columns().getFirst());
+        LogicalProjection projection = new LogicalProjection(
+                List.of(new BoundBinaryExpression(
+                        column,
+                        BinaryOperator.ADD,
+                        new BoundLiteralExpression(LogicalType.NULL, null),
+                        LogicalType.BIGINT
+                )),
+                List.of("value"),
+                new LogicalGet(new BoundTableRef(table, null))
+        );
+
+        LogicalOperator optimized = new Optimizer().optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        BoundLiteralExpression literal = assertInstanceOf(
+                BoundLiteralExpression.class,
+                optimizedProjection.expressions().getFirst()
+        );
+        assertEquals(LogicalType.BIGINT, literal.logicalType());
+        assertNull(literal.value());
+    }
+
+    @Test
+    void optimizerKeepsArithmeticSimplificationsThatWouldChangeTypeOrNullSemantics() {
+        TableCatalogEntry table = table();
+        BoundColumnRefExpression column = new BoundColumnRefExpression(table.columns().getFirst());
+        LogicalProjection projection = new LogicalProjection(
+                List.of(
+                        new BoundBinaryExpression(
+                                column,
+                                BinaryOperator.DIVIDE,
+                                new BoundLiteralExpression(LogicalType.BIGINT, 1L),
+                                LogicalType.DOUBLE
+                        ),
+                        new BoundBinaryExpression(
+                                column,
+                                BinaryOperator.MULTIPLY,
+                                new BoundLiteralExpression(LogicalType.BIGINT, 0L),
+                                LogicalType.BIGINT
+                        )
+                ),
+                List.of("divided", "multiplied"),
+                new LogicalGet(new BoundTableRef(table, null))
+        );
+
+        LogicalOperator optimized = new Optimizer().optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        assertInstanceOf(BoundBinaryExpression.class, optimizedProjection.expressions().get(0));
+        assertInstanceOf(BoundBinaryExpression.class, optimizedProjection.expressions().get(1));
     }
 
     private BoundExpression binaryLiteralExpression(long left, long right) {
