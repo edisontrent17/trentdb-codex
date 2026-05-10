@@ -244,6 +244,104 @@ class OptimizerRewriteTest {
         assertInstanceOf(BoundBinaryExpression.class, optimizedProjection.expressions().get(1));
     }
 
+    @Test
+    void optimizerSimplifiesConjunctionIdentityExpressions() {
+        TableCatalogEntry table = table(TypeName.BOOLEAN);
+        BoundColumnRefExpression column = new BoundColumnRefExpression(table.columns().getFirst());
+        LogicalProjection projection = new LogicalProjection(
+                List.of(
+                        new BoundBinaryExpression(
+                                new BoundLiteralExpression(LogicalType.BOOLEAN, true),
+                                BinaryOperator.AND,
+                                column,
+                                LogicalType.BOOLEAN
+                        ),
+                        new BoundBinaryExpression(
+                                new BoundLiteralExpression(LogicalType.BOOLEAN, false),
+                                BinaryOperator.OR,
+                                column,
+                                LogicalType.BOOLEAN
+                        )
+                ),
+                List.of("anded", "ored"),
+                new LogicalGet(new BoundTableRef(table, null))
+        );
+
+        LogicalOperator optimized = new Optimizer().optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        assertSame(column, optimizedProjection.expressions().get(0));
+        assertSame(column, optimizedProjection.expressions().get(1));
+    }
+
+    @Test
+    void optimizerSimplifiesConjunctionDominatingConstants() {
+        TableCatalogEntry table = table(TypeName.BOOLEAN);
+        BoundColumnRefExpression column = new BoundColumnRefExpression(table.columns().getFirst());
+        LogicalProjection projection = new LogicalProjection(
+                List.of(
+                        new BoundBinaryExpression(
+                                column,
+                                BinaryOperator.AND,
+                                new BoundLiteralExpression(LogicalType.BOOLEAN, false),
+                                LogicalType.BOOLEAN
+                        ),
+                        new BoundBinaryExpression(
+                                column,
+                                BinaryOperator.OR,
+                                new BoundLiteralExpression(LogicalType.BOOLEAN, true),
+                                LogicalType.BOOLEAN
+                        )
+                ),
+                List.of("anded", "ored"),
+                new LogicalGet(new BoundTableRef(table, null))
+        );
+
+        LogicalOperator optimized = new Optimizer().optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        BoundLiteralExpression andLiteral = assertInstanceOf(
+                BoundLiteralExpression.class,
+                optimizedProjection.expressions().get(0)
+        );
+        BoundLiteralExpression orLiteral = assertInstanceOf(
+                BoundLiteralExpression.class,
+                optimizedProjection.expressions().get(1)
+        );
+        assertEquals(false, andLiteral.value());
+        assertEquals(true, orLiteral.value());
+    }
+
+    @Test
+    void optimizerKeepsConjunctionsWithNullLiteral() {
+        TableCatalogEntry table = table(TypeName.BOOLEAN);
+        BoundColumnRefExpression column = new BoundColumnRefExpression(table.columns().getFirst());
+        LogicalProjection projection = new LogicalProjection(
+                List.of(
+                        new BoundBinaryExpression(
+                                column,
+                                BinaryOperator.AND,
+                                new BoundLiteralExpression(LogicalType.NULL, null),
+                                LogicalType.BOOLEAN
+                        ),
+                        new BoundBinaryExpression(
+                                column,
+                                BinaryOperator.OR,
+                                new BoundLiteralExpression(LogicalType.NULL, null),
+                                LogicalType.BOOLEAN
+                        )
+                ),
+                List.of("anded", "ored"),
+                new LogicalGet(new BoundTableRef(table, null))
+        );
+
+        LogicalOperator optimized = new Optimizer().optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        assertInstanceOf(BoundBinaryExpression.class, optimizedProjection.expressions().get(0));
+        assertInstanceOf(BoundBinaryExpression.class, optimizedProjection.expressions().get(1));
+    }
+
     private BoundExpression binaryLiteralExpression(long left, long right) {
         return new BoundBinaryExpression(
                 new BoundLiteralExpression(LogicalType.BIGINT, left),
@@ -254,12 +352,16 @@ class OptimizerRewriteTest {
     }
 
     private TableCatalogEntry table() {
+        return table(TypeName.BIGINT);
+    }
+
+    private TableCatalogEntry table(TypeName columnType) {
         Catalog catalog = new Catalog();
         Transaction transaction = new TransactionManager().startTransaction();
         return catalog.createTable(
                 transaction,
                 new QualifiedName(List.of("people")),
-                List.of(new ColumnDefinition("id", TypeName.BIGINT))
+                List.of(new ColumnDefinition("id", columnType))
         );
     }
 

@@ -40,7 +40,8 @@ final class OptimizerExpressionRewriter extends BoundExpressionRewriter {
     @Override
     protected BoundExpression visitBinary(BoundBinaryExpression binary) {
         BoundExpression rewritten = super.visitBinary(binary);
-        BoundExpression simplified = simplifyArithmetic(rewritten);
+        BoundExpression simplified = simplifyConjunction(rewritten);
+        simplified = simplifyArithmetic(simplified);
         return fold(simplified);
     }
 
@@ -62,6 +63,49 @@ final class OptimizerExpressionRewriter extends BoundExpressionRewriter {
     @Override
     protected BoundExpression visitIn(BoundInExpression in) {
         return fold(super.visitIn(in));
+    }
+
+    private BoundExpression simplifyConjunction(BoundExpression expression) {
+        if (!(expression instanceof BoundBinaryExpression binary)) {
+            return expression;
+        }
+        if (binary.operator() == BinaryOperator.AND) {
+            return simplifyAnd(binary);
+        }
+        if (binary.operator() == BinaryOperator.OR) {
+            return simplifyOr(binary);
+        }
+        return expression;
+    }
+
+    private BoundExpression simplifyAnd(BoundBinaryExpression binary) {
+        Boolean left = booleanLiteral(binary.left());
+        Boolean right = booleanLiteral(binary.right());
+        if (Boolean.FALSE.equals(left) || Boolean.FALSE.equals(right)) {
+            return new BoundLiteralExpression(LogicalType.BOOLEAN, false);
+        }
+        if (Boolean.TRUE.equals(left)) {
+            return binary.right();
+        }
+        if (Boolean.TRUE.equals(right)) {
+            return binary.left();
+        }
+        return binary;
+    }
+
+    private BoundExpression simplifyOr(BoundBinaryExpression binary) {
+        Boolean left = booleanLiteral(binary.left());
+        Boolean right = booleanLiteral(binary.right());
+        if (Boolean.TRUE.equals(left) || Boolean.TRUE.equals(right)) {
+            return new BoundLiteralExpression(LogicalType.BOOLEAN, true);
+        }
+        if (Boolean.FALSE.equals(left)) {
+            return binary.right();
+        }
+        if (Boolean.FALSE.equals(right)) {
+            return binary.left();
+        }
+        return binary;
     }
 
     private BoundExpression simplifyArithmetic(BoundExpression expression) {
@@ -151,6 +195,15 @@ final class OptimizerExpressionRewriter extends BoundExpressionRewriter {
             case DOUBLE -> ((Number) literal.value()).doubleValue() == 1.0d;
             default -> false;
         };
+    }
+
+    private Boolean booleanLiteral(BoundExpression expression) {
+        if (!(expression instanceof BoundLiteralExpression literal)
+                || !literal.logicalType().equals(LogicalType.BOOLEAN)
+                || literal.value() == null) {
+            return null;
+        }
+        return (Boolean) literal.value();
     }
 
     private BoundExpression fold(BoundExpression expression) {
