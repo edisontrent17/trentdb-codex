@@ -36,6 +36,7 @@
 - add non-correlated scalar subqueries and `IN`/`NOT IN` subqueries
 - add correlated `EXISTS` planning and execution for the single-table equality shape used by TPC-H Q4
 - add comma join parsing, SQL-standard `substring(... FROM ... FOR ...)`, unary `NOT` binding, and correlated `EXISTS`/`NOT EXISTS` inequality support for the remaining TPC-H query shapes
+- add initial TPC-H benchmark harness with profiler-backed CSV and execution phase timings
 
 ## DuckDB Reference Areas
 
