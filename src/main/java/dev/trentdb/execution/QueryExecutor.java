@@ -1,12 +1,15 @@
 package dev.trentdb.execution;
 
 import dev.trentdb.execution.physical.PhysicalPlanner;
+import dev.trentdb.execution.physical.Pipeline;
 import dev.trentdb.execution.physical.PipelineExecutor;
 import dev.trentdb.optimizer.Optimizer;
 import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.storage.StorageManager;
 
 public final class QueryExecutor {
+    private static final ThreadLocal<Integer> EXECUTION_DEPTH = ThreadLocal.withInitial(() -> 0);
+
     private final StorageManager storageManager;
 
     public QueryExecutor(StorageManager storageManager) {
@@ -14,11 +17,27 @@ public final class QueryExecutor {
     }
 
     public QueryResult execute(LogicalOperator operator) {
+        int previousDepth = EXECUTION_DEPTH.get();
+        int depth = previousDepth + 1;
+        EXECUTION_DEPTH.set(depth);
+        try {
+            return executeAtDepth(operator, depth);
+        } finally {
+            if (previousDepth == 0) {
+                EXECUTION_DEPTH.remove();
+            } else {
+                EXECUTION_DEPTH.set(previousDepth);
+            }
+        }
+    }
+
+    private QueryResult executeAtDepth(LogicalOperator operator, int depth) {
         long totalStart = ExecutionProfiler.start();
         long optimizeStart = ExecutionProfiler.start();
         Optimizer optimizer = new Optimizer(ExecutionProfiler.enabled());
         LogicalOperator optimized = optimizer.optimize(operator);
-        String optimizerDetails = "input=" + operator.getClass().getSimpleName()
+        String optimizerDetails = depthDetails(depth)
+                + " input=" + operator.getClass().getSimpleName()
                 + " output=" + optimized.getClass().getSimpleName();
         if (ExecutionProfiler.enabled()) {
             optimizerDetails = optimizerDetails + " " + optimizer.metrics().profileDetails();
@@ -31,12 +50,12 @@ public final class QueryExecutor {
         );
 
         long planStart = ExecutionProfiler.start();
-        dev.trentdb.execution.physical.Pipeline pipeline = new PhysicalPlanner(storageManager).plan(optimized);
+        Pipeline pipeline = new PhysicalPlanner(storageManager).plan(optimized);
         ExecutionProfiler.log(
                 "QueryExecutor",
                 "plan",
                 planStart,
-                "logical=" + optimized.getClass().getSimpleName()
+                depthDetails(depth) + " logical=" + optimized.getClass().getSimpleName()
         );
 
         long pipelineStart = ExecutionProfiler.start();
@@ -45,7 +64,9 @@ public final class QueryExecutor {
                 "QueryExecutor",
                 "pipeline",
                 pipelineStart,
-                "source=" + pipeline.source().type().name() + " operators=" + pipeline.operators().size()
+                depthDetails(depth)
+                        + " source=" + pipeline.source().type().name()
+                        + " operators=" + pipeline.operators().size()
         );
 
         long resultStart = ExecutionProfiler.start();
@@ -54,9 +75,15 @@ public final class QueryExecutor {
                 "QueryExecutor",
                 "result",
                 resultStart,
-                "rows=" + result.rows().size() + " columns=" + result.columns().size()
+                depthDetails(depth)
+                        + " rows=" + result.rows().size()
+                        + " columns=" + result.columns().size()
         );
-        ExecutionProfiler.log("QueryExecutor", "total", totalStart, null);
+        ExecutionProfiler.log("QueryExecutor", "total", totalStart, depthDetails(depth));
         return result;
+    }
+
+    private static String depthDetails(int depth) {
+        return "depth=" + depth;
     }
 }
