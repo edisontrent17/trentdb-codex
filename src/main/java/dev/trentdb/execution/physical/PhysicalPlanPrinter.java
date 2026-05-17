@@ -25,7 +25,7 @@ public final class PhysicalPlanPrinter {
 
     private Node sourceNode(PhysicalSource source) {
         if (source instanceof PhysicalTableScan scan) {
-            return scanNode(scan.tableRef());
+            return scanNode(scan.tableRef(), scan.projectedOrdinals());
         }
         return Node.leaf(source.type().name());
     }
@@ -50,7 +50,11 @@ public final class PhysicalPlanPrinter {
             return Node.of(name, aggregateEntries(aggregate), List.of(child));
         }
         if (operator instanceof PhysicalHashJoin join) {
-            return Node.of("HASH_JOIN", hashJoinEntries(join), List.of(child, scanNode(join.right())));
+            return Node.of(
+                    "HASH_JOIN",
+                    hashJoinEntries(join),
+                    List.of(child, scanNode(join.right(), join.rightProjectedOrdinals()))
+            );
         }
         if (operator instanceof PhysicalCorrelatedExistsMarkJoin join) {
             return Node.of("MARK_JOIN", markJoinEntries(join), List.of(child));
@@ -59,7 +63,11 @@ public final class PhysicalPlanPrinter {
             return Node.of("SINGLE_JOIN", singleJoinEntries(join), List.of(child));
         }
         if (operator instanceof PhysicalNestedLoopJoin join) {
-            return Node.of("NESTED_LOOP_JOIN", nestedLoopJoinEntries(join), List.of(child, scanNode(join.right())));
+            return Node.of(
+                    "NESTED_LOOP_JOIN",
+                    nestedLoopJoinEntries(join),
+                    List.of(child, scanNode(join.right(), join.rightProjectedOrdinals()))
+            );
         }
         if (operator instanceof PhysicalOrder order) {
             return Node.of(
@@ -137,14 +145,37 @@ public final class PhysicalPlanPrinter {
         return List.copyOf(values);
     }
 
-    private Node scanNode(BoundTableRef tableRef) {
+    private Node scanNode(BoundTableRef tableRef, List<Integer> projectedOrdinals) {
+        List<Entry> entries = scanEntries(tableRef, projectedOrdinals);
         if (tableRef.isReplacementScan()) {
             return Node.of(
                     "READ_CSV_AUTO",
-                    List.of(Entry.of("Path", tableRef.replacementScan().path())),
+                    entries,
                     List.of()
             );
         }
-        return Node.of("SEQ_SCAN", List.of(Entry.of("Table", tableRef.table().name())), List.of());
+        return Node.of("SEQ_SCAN", entries, List.of());
+    }
+
+    private List<Entry> scanEntries(BoundTableRef tableRef, List<Integer> projectedOrdinals) {
+        ArrayList<Entry> entries = new ArrayList<>();
+        if (tableRef.isReplacementScan()) {
+            entries.add(Entry.of("Path", tableRef.replacementScan().path()));
+        } else {
+            entries.add(Entry.of("Table", tableRef.table().name()));
+        }
+        entries.add(Entry.of("Columns", projectedColumns(tableRef, projectedOrdinals)));
+        return List.copyOf(entries);
+    }
+
+    private List<String> projectedColumns(BoundTableRef tableRef, List<Integer> projectedOrdinals) {
+        ArrayList<String> columns = new ArrayList<>(projectedOrdinals.size());
+        for (Integer ordinal : projectedOrdinals) {
+            String name = tableRef.isReplacementScan()
+                    ? tableRef.replacementScan().columns().get(ordinal).name()
+                    : tableRef.table().columns().get(ordinal).name();
+            columns.add(name);
+        }
+        return List.copyOf(columns);
     }
 }

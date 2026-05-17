@@ -2,7 +2,9 @@ package dev.trentdb.optimizer;
 
 import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.ast.ColumnDefinition;
+import dev.trentdb.ast.JoinType;
 import dev.trentdb.ast.QualifiedName;
+import dev.trentdb.ast.SortDirection;
 import dev.trentdb.ast.TypeName;
 import dev.trentdb.catalog.Catalog;
 import dev.trentdb.catalog.TableCatalogEntry;
@@ -10,9 +12,13 @@ import dev.trentdb.planner.BoundBinaryExpression;
 import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundOrderByItem;
 import dev.trentdb.planner.BoundTableRef;
+import dev.trentdb.planner.logical.LogicalFilter;
 import dev.trentdb.planner.logical.LogicalGet;
+import dev.trentdb.planner.logical.LogicalJoin;
 import dev.trentdb.planner.logical.LogicalOperator;
+import dev.trentdb.planner.logical.LogicalOrder;
 import dev.trentdb.planner.logical.LogicalProjection;
 import dev.trentdb.transaction.Transaction;
 import dev.trentdb.transaction.TransactionManager;
@@ -342,6 +348,136 @@ class OptimizerRewriteTest {
         assertInstanceOf(BoundBinaryExpression.class, optimizedProjection.expressions().get(1));
     }
 
+    @Test
+    void optimizerPrunesUnusedScanColumnsAndRemapsProjectionOrdinals() {
+        TableCatalogEntry table = table(
+                "people",
+                new ColumnDefinition("id", TypeName.BIGINT),
+                new ColumnDefinition("name", TypeName.TEXT),
+                new ColumnDefinition("age", TypeName.BIGINT)
+        );
+        LogicalProjection projection = new LogicalProjection(
+                List.of(new BoundColumnRefExpression(table.columns().get(1))),
+                List.of("name"),
+                new LogicalGet(new BoundTableRef(table, null))
+        );
+
+        LogicalOperator optimized = new Optimizer().optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        BoundColumnRefExpression expression = assertInstanceOf(
+                BoundColumnRefExpression.class,
+                optimizedProjection.expressions().getFirst()
+        );
+        LogicalGet get = assertInstanceOf(LogicalGet.class, optimizedProjection.child());
+        assertEquals(List.of(1), get.projectedOrdinals());
+        assertEquals(0, expression.ordinal());
+    }
+
+    @Test
+    void optimizerKeepsFilterAndOrderColumnsWhilePruningUnusedScanColumns() {
+        TableCatalogEntry table = table(
+                "people",
+                new ColumnDefinition("id", TypeName.BIGINT),
+                new ColumnDefinition("name", TypeName.TEXT),
+                new ColumnDefinition("age", TypeName.BIGINT),
+                new ColumnDefinition("city", TypeName.TEXT)
+        );
+        BoundColumnRefExpression id = new BoundColumnRefExpression(table.columns().get(0));
+        BoundColumnRefExpression name = new BoundColumnRefExpression(table.columns().get(1));
+        BoundColumnRefExpression age = new BoundColumnRefExpression(table.columns().get(2));
+        BoundExpression predicate = new BoundBinaryExpression(
+                age,
+                BinaryOperator.GREATER_THAN,
+                new BoundLiteralExpression(LogicalType.BIGINT, 18L),
+                LogicalType.BOOLEAN
+        );
+        LogicalProjection projection = new LogicalProjection(
+                List.of(name),
+                List.of("name"),
+                new LogicalOrder(
+                        List.of(new BoundOrderByItem(id, SortDirection.ASC)),
+                        new LogicalFilter(predicate, new LogicalGet(new BoundTableRef(table, null)))
+                )
+        );
+
+        LogicalOperator optimized = new Optimizer().optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        LogicalOrder order = assertInstanceOf(LogicalOrder.class, optimizedProjection.child());
+        LogicalFilter filter = assertInstanceOf(LogicalFilter.class, order.child());
+        LogicalGet get = assertInstanceOf(LogicalGet.class, filter.child());
+        BoundColumnRefExpression projectedName = assertInstanceOf(
+                BoundColumnRefExpression.class,
+                optimizedProjection.expressions().getFirst()
+        );
+        BoundColumnRefExpression orderId = assertInstanceOf(
+                BoundColumnRefExpression.class,
+                order.orders().getFirst().expression()
+        );
+        BoundBinaryExpression filterPredicate = assertInstanceOf(BoundBinaryExpression.class, filter.predicate());
+        BoundColumnRefExpression filterAge = assertInstanceOf(BoundColumnRefExpression.class, filterPredicate.left());
+        assertEquals(List.of(0, 1, 2), get.projectedOrdinals());
+        assertEquals(1, projectedName.ordinal());
+        assertEquals(0, orderId.ordinal());
+        assertEquals(2, filterAge.ordinal());
+    }
+
+    @Test
+    void optimizerPrunesJoinInputsAndRemapsJoinOutputOrdinals() {
+        TableCatalogEntry people = table(
+                "people",
+                new ColumnDefinition("id", TypeName.BIGINT),
+                new ColumnDefinition("name", TypeName.TEXT),
+                new ColumnDefinition("age", TypeName.BIGINT)
+        );
+        TableCatalogEntry orders = table(
+                "orders",
+                new ColumnDefinition("person_id", TypeName.BIGINT),
+                new ColumnDefinition("total", TypeName.BIGINT),
+                new ColumnDefinition("status", TypeName.TEXT)
+        );
+        BoundColumnRefExpression peopleId = new BoundColumnRefExpression(people.columns().get(0), 0);
+        BoundColumnRefExpression peopleName = new BoundColumnRefExpression(people.columns().get(1), 1);
+        BoundColumnRefExpression orderPersonId = new BoundColumnRefExpression(orders.columns().get(0), 3);
+        BoundColumnRefExpression orderTotal = new BoundColumnRefExpression(orders.columns().get(1), 4);
+        LogicalJoin join = new LogicalJoin(
+                new LogicalGet(new BoundTableRef(people, null)),
+                new LogicalGet(new BoundTableRef(orders, null)),
+                new BoundBinaryExpression(peopleId, BinaryOperator.EQUAL, orderPersonId, LogicalType.BOOLEAN),
+                JoinType.INNER
+        );
+        LogicalProjection projection = new LogicalProjection(
+                List.of(peopleName, orderTotal),
+                List.of("name", "total"),
+                join
+        );
+
+        LogicalOperator optimized = new Optimizer().optimize(projection);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        LogicalJoin optimizedJoin = assertInstanceOf(LogicalJoin.class, optimizedProjection.child());
+        LogicalGet left = assertInstanceOf(LogicalGet.class, optimizedJoin.left());
+        LogicalGet right = assertInstanceOf(LogicalGet.class, optimizedJoin.right());
+        BoundColumnRefExpression projectedName = assertInstanceOf(
+                BoundColumnRefExpression.class,
+                optimizedProjection.expressions().get(0)
+        );
+        BoundColumnRefExpression projectedTotal = assertInstanceOf(
+                BoundColumnRefExpression.class,
+                optimizedProjection.expressions().get(1)
+        );
+        BoundBinaryExpression condition = assertInstanceOf(BoundBinaryExpression.class, optimizedJoin.condition());
+        BoundColumnRefExpression leftKey = assertInstanceOf(BoundColumnRefExpression.class, condition.left());
+        BoundColumnRefExpression rightKey = assertInstanceOf(BoundColumnRefExpression.class, condition.right());
+        assertEquals(List.of(0, 1), left.projectedOrdinals());
+        assertEquals(List.of(0, 1), right.projectedOrdinals());
+        assertEquals(1, projectedName.ordinal());
+        assertEquals(3, projectedTotal.ordinal());
+        assertEquals(0, leftKey.ordinal());
+        assertEquals(2, rightKey.ordinal());
+    }
+
     private BoundExpression binaryLiteralExpression(long left, long right) {
         return new BoundBinaryExpression(
                 new BoundLiteralExpression(LogicalType.BIGINT, left),
@@ -356,12 +492,16 @@ class OptimizerRewriteTest {
     }
 
     private TableCatalogEntry table(TypeName columnType) {
+        return table("people", new ColumnDefinition("id", columnType));
+    }
+
+    private TableCatalogEntry table(String name, ColumnDefinition... columns) {
         Catalog catalog = new Catalog();
         Transaction transaction = new TransactionManager().startTransaction();
         return catalog.createTable(
                 transaction,
-                new QualifiedName(List.of("people")),
-                List.of(new ColumnDefinition("id", columnType))
+                new QualifiedName(List.of(name)),
+                List.of(columns)
         );
     }
 

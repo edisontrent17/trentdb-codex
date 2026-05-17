@@ -22,6 +22,7 @@ public final class PhysicalHashJoin implements PhysicalOperator {
     private final List<String> leftNames;
     private final List<LogicalType> leftTypes;
     private final BoundTableRef right;
+    private final List<Integer> rightProjectedOrdinals;
     private final JoinType joinType;
     private final int leftKeyOrdinal;
     private final int rightKeyOrdinal;
@@ -34,6 +35,7 @@ public final class PhysicalHashJoin implements PhysicalOperator {
             List<String> leftNames,
             List<LogicalType> leftTypes,
             BoundTableRef right,
+            List<Integer> rightProjectedOrdinals,
             JoinType joinType,
             int leftKeyOrdinal,
             int rightKeyOrdinal,
@@ -45,6 +47,7 @@ public final class PhysicalHashJoin implements PhysicalOperator {
         this.leftNames = List.copyOf(leftNames);
         this.leftTypes = List.copyOf(leftTypes);
         this.right = right;
+        this.rightProjectedOrdinals = List.copyOf(rightProjectedOrdinals);
         this.joinType = joinType;
         this.leftKeyOrdinal = leftKeyOrdinal;
         this.rightKeyOrdinal = rightKeyOrdinal;
@@ -55,6 +58,10 @@ public final class PhysicalHashJoin implements PhysicalOperator {
 
     public BoundTableRef right() {
         return right;
+    }
+
+    public List<Integer> rightProjectedOrdinals() {
+        return rightProjectedOrdinals;
     }
 
     public JoinType joinType() {
@@ -84,7 +91,10 @@ public final class PhysicalHashJoin implements PhysicalOperator {
 
     @Override
     public LocalOperatorState createLocalOperatorState(GlobalOperatorState globalState) {
-        List<ColumnCatalogEntry> rightColumns = columns(right);
+        List<ColumnCatalogEntry> rightColumns = PhysicalTableScan.projectColumns(
+                columns(right),
+                rightProjectedOrdinals
+        );
         List<String> outputNames = outputNames(rightColumns);
         List<LogicalType> outputTypes = outputTypes(rightColumns);
         long rightScanStart = ExecutionProfiler.start();
@@ -167,10 +177,10 @@ public final class PhysicalHashJoin implements PhysicalOperator {
     }
 
     private List<DataChunk> scanChunks(BoundTableRef tableRef) {
-        if (tableRef.isReplacementScan()) {
-            return tableRef.replacementScan().scanFunction().scan();
-        }
-        return storageManager.getTable(tableRef.table()).scanChunks();
+        List<DataChunk> chunks = tableRef.isReplacementScan()
+                ? tableRef.replacementScan().scanFunction().scan()
+                : storageManager.getTable(tableRef.table()).scanChunks();
+        return PhysicalTableScan.projectChunks(chunks, rightProjectedOrdinals);
     }
 
     private List<DataChunk> filterChunks(List<DataChunk> inputChunks, BoundExpression predicate, String profileEvent) {
