@@ -145,7 +145,7 @@ public final class PhysicalPlanner {
             return source;
         }
         if (logical instanceof LogicalGet get) {
-            return new PhysicalTableScan(storageManager, get.tableRef());
+            return new PhysicalTableScan(storageManager, get.tableRef(), get.projectedOrdinals());
         }
         if (logical instanceof LogicalJoin join) {
             PhysicalSource source = buildPipeline(join.left(), operators);
@@ -162,19 +162,21 @@ public final class PhysicalPlanner {
             BoundExpression residualPredicate
     ) {
         RightJoinInput rightInput = rightJoinInput(join.right());
-        BoundTableRef right = rightInput.table();
+        LogicalGet rightGet = rightInput.get();
+        BoundTableRef right = rightGet.tableRef();
         BoundExpression combinedRightPredicate = combineNullable(rightPredicate, rightInput.predicate());
         List<ColumnCatalogEntry> leftColumns = columns(join.left());
         List<String> leftNames = names(leftColumns);
         List<LogicalType> leftTypes = types(leftColumns);
         BoundExpression joinPredicate = combineNullable(join.condition(), residualPredicate);
-        HashJoinPlan hashJoinPlan = hashJoinPlan(join.left(), right, joinPredicate);
+        HashJoinPlan hashJoinPlan = hashJoinPlan(join.left(), rightGet, joinPredicate);
         if (hashJoinPlan != null) {
             operators.add(new PhysicalHashJoin(
                     storageManager,
                     leftNames,
                     leftTypes,
                     right,
+                    rightGet.projectedOrdinals(),
                     join.joinType(),
                     hashJoinPlan.keys().leftKeyOrdinal(),
                     hashJoinPlan.keys().rightKeyOrdinal(),
@@ -189,6 +191,7 @@ public final class PhysicalPlanner {
                 leftNames,
                 leftTypes,
                 right,
+                rightGet.projectedOrdinals(),
                 join.joinType(),
                 joinPredicate,
                 combinedRightPredicate,
@@ -196,7 +199,7 @@ public final class PhysicalPlanner {
         ));
     }
 
-    private HashJoinPlan hashJoinPlan(LogicalOperator left, BoundTableRef right, BoundExpression condition) {
+    private HashJoinPlan hashJoinPlan(LogicalOperator left, LogicalGet right, BoundExpression condition) {
         ArrayList<BoundExpression> conjuncts = new ArrayList<>();
         flattenConjuncts(condition, conjuncts);
         for (int index = 0; index < conjuncts.size(); index++) {
@@ -211,7 +214,7 @@ public final class PhysicalPlanner {
         return null;
     }
 
-    private HashJoinKeys hashJoinKeys(LogicalOperator left, BoundTableRef right, BoundExpression condition) {
+    private HashJoinKeys hashJoinKeys(LogicalOperator left, LogicalGet right, BoundExpression condition) {
         if (!(condition instanceof BoundBinaryExpression binary)) {
             return null;
         }
@@ -565,7 +568,7 @@ public final class PhysicalPlanner {
 
     private List<ColumnCatalogEntry> columns(LogicalOperator logical) {
         if (logical instanceof LogicalGet get) {
-            return columns(get.tableRef());
+            return get.projectedColumns();
         }
         if (logical instanceof LogicalFilter filter) {
             return columns(filter.child());
@@ -616,9 +619,9 @@ public final class PhysicalPlanner {
         return types;
     }
 
-    private BoundTableRef rightTable(LogicalOperator logical) {
+    private LogicalGet rightGet(LogicalOperator logical) {
         if (logical instanceof LogicalGet get) {
-            return get.tableRef();
+            return get;
         }
         throw new ExecutionException("Only left-deep joins with table right sides are supported");
     }
@@ -626,9 +629,9 @@ public final class PhysicalPlanner {
     private RightJoinInput rightJoinInput(LogicalOperator logical) {
         if (logical instanceof LogicalFilter filter) {
             RightJoinInput child = rightJoinInput(filter.child());
-            return new RightJoinInput(child.table(), combineNullable(filter.predicate(), child.predicate()));
+            return new RightJoinInput(child.get(), combineNullable(filter.predicate(), child.predicate()));
         }
-        return new RightJoinInput(rightTable(logical), null);
+        return new RightJoinInput(rightGet(logical), null);
     }
 
     private boolean supportsHashJoinKeyType(LogicalType logicalType) {
@@ -658,6 +661,6 @@ public final class PhysicalPlanner {
     private record SideOrdinal(Side side, int ordinal) {
     }
 
-    private record RightJoinInput(BoundTableRef table, BoundExpression predicate) {
+    private record RightJoinInput(LogicalGet get, BoundExpression predicate) {
     }
 }

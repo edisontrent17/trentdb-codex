@@ -438,9 +438,7 @@ final class FilterPushdown {
             case LogicalDependentJoin join -> outputColumnCount(join.child()) + 1;
             case LogicalExplain ignored -> 1;
             case LogicalFilter filter -> outputColumnCount(filter.child());
-            case LogicalGet get -> get.tableRef().isReplacementScan()
-                    ? get.tableRef().replacementScan().columns().size()
-                    : get.tableRef().table().columns().size();
+            case LogicalGet get -> get.projectedOrdinals().size();
             case LogicalJoin join -> outputColumnCount(join.left()) + outputColumnCount(join.right());
             case LogicalLimit limit -> outputColumnCount(limit.child());
             case LogicalOrder order -> outputColumnCount(order.child());

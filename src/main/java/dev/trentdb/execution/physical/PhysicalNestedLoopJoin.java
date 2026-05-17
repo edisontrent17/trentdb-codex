@@ -21,6 +21,7 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
     private final List<String> leftNames;
     private final List<LogicalType> leftTypes;
     private final BoundTableRef right;
+    private final List<Integer> rightProjectedOrdinals;
     private final JoinType joinType;
     private final BoundExpression condition;
     private final BoundExpression rightFilter;
@@ -31,6 +32,7 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
             List<String> leftNames,
             List<LogicalType> leftTypes,
             BoundTableRef right,
+            List<Integer> rightProjectedOrdinals,
             JoinType joinType,
             BoundExpression condition,
             BoundExpression rightFilter,
@@ -40,6 +42,7 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
         this.leftNames = List.copyOf(leftNames);
         this.leftTypes = List.copyOf(leftTypes);
         this.right = right;
+        this.rightProjectedOrdinals = List.copyOf(rightProjectedOrdinals);
         this.joinType = joinType;
         this.condition = condition;
         this.rightFilter = rightFilter;
@@ -48,6 +51,10 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
 
     public BoundTableRef right() {
         return right;
+    }
+
+    public List<Integer> rightProjectedOrdinals() {
+        return rightProjectedOrdinals;
     }
 
     public BoundExpression condition() {
@@ -69,7 +76,10 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
 
     @Override
     public LocalOperatorState createLocalOperatorState(GlobalOperatorState globalState) {
-        List<ColumnCatalogEntry> rightColumns = columns(right);
+        List<ColumnCatalogEntry> rightColumns = PhysicalTableScan.projectColumns(
+                columns(right),
+                rightProjectedOrdinals
+        );
         List<String> outputNames = outputNames(rightColumns);
         List<LogicalType> outputTypes = outputTypes(rightColumns);
         List<DataChunk> rightChunks = filterChunks(scanChunks(right), rightFilter);
@@ -121,10 +131,10 @@ public final class PhysicalNestedLoopJoin implements PhysicalOperator {
     }
 
     private List<DataChunk> scanChunks(BoundTableRef tableRef) {
-        if (tableRef.isReplacementScan()) {
-            return tableRef.replacementScan().scanFunction().scan();
-        }
-        return storageManager.getTable(tableRef.table()).scanChunks();
+        List<DataChunk> chunks = tableRef.isReplacementScan()
+                ? tableRef.replacementScan().scanFunction().scan()
+                : storageManager.getTable(tableRef.table()).scanChunks();
+        return PhysicalTableScan.projectChunks(chunks, rightProjectedOrdinals);
     }
 
     private List<DataChunk> filterChunks(List<DataChunk> inputChunks, BoundExpression predicate) {

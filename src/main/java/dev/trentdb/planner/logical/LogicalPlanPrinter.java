@@ -1,5 +1,6 @@
 package dev.trentdb.planner.logical;
 
+import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.planner.BoundExpressionPrinter;
 import dev.trentdb.planner.BoundOrderByItem;
 import dev.trentdb.planner.BoundTableRef;
@@ -56,7 +57,7 @@ public final class LogicalPlanPrinter {
                     List.of(Entry.of("Order By", orderEntries(order.orders()))),
                     List.of(node(order.child()))
             );
-            case LogicalGet get -> getNode(get.tableRef());
+            case LogicalGet get -> getNode(get);
         };
     }
 
@@ -98,14 +99,37 @@ public final class LogicalPlanPrinter {
         return List.copyOf(values);
     }
 
-    private Node getNode(BoundTableRef tableRef) {
+    private Node getNode(LogicalGet get) {
+        BoundTableRef tableRef = get.tableRef();
+        List<Entry> entries = getEntries(get);
         if (tableRef.isReplacementScan()) {
             return Node.of(
                     "READ_CSV_AUTO",
-                    List.of(Entry.of("Path", tableRef.replacementScan().path())),
+                    entries,
                     List.of()
             );
         }
-        return Node.of("SEQ_SCAN", List.of(Entry.of("Table", tableRef.table().name())), List.of());
+        return Node.of("SEQ_SCAN", entries, List.of());
+    }
+
+    private List<Entry> getEntries(LogicalGet get) {
+        ArrayList<Entry> entries = new ArrayList<>();
+        BoundTableRef tableRef = get.tableRef();
+        if (tableRef.isReplacementScan()) {
+            entries.add(Entry.of("Path", tableRef.replacementScan().path()));
+        } else {
+            entries.add(Entry.of("Table", tableRef.table().name()));
+        }
+        entries.add(Entry.of("Columns", projectedColumns(get)));
+        return List.copyOf(entries);
+    }
+
+    private List<String> projectedColumns(LogicalGet get) {
+        ArrayList<String> columns = new ArrayList<>(get.projectedOrdinals().size());
+        List<ColumnCatalogEntry> tableColumns = get.tableColumns();
+        for (Integer ordinal : get.projectedOrdinals()) {
+            columns.add(tableColumns.get(ordinal).name());
+        }
+        return List.copyOf(columns);
     }
 }
