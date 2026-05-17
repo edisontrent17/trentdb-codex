@@ -19,6 +19,7 @@ public final class Optimizer {
         LogicalOperatorRewriter logicalRewriter = new LogicalOperatorRewriter(expressionRewriter);
         LogicalOperator rewritten = logicalRewriter.rewrite(plan);
         rewritten = new ProjectionPruner().prune(rewritten);
+        rewritten = new FilterPushdown().optimize(rewritten);
         metrics = collectMetrics ? Metrics.from(logicalRewriter, expressionRewriter) : Metrics.empty();
         return rewritten;
     }
