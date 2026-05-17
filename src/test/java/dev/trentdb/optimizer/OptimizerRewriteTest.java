@@ -2,6 +2,7 @@ package dev.trentdb.optimizer;
 
 import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.ast.ColumnDefinition;
+import dev.trentdb.ast.JoinType;
 import dev.trentdb.ast.QualifiedName;
 import dev.trentdb.ast.TypeName;
 import dev.trentdb.catalog.Catalog;
@@ -11,7 +12,9 @@ import dev.trentdb.planner.BoundColumnRefExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
 import dev.trentdb.planner.BoundTableRef;
+import dev.trentdb.planner.logical.LogicalFilter;
 import dev.trentdb.planner.logical.LogicalGet;
+import dev.trentdb.planner.logical.LogicalJoin;
 import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.planner.logical.LogicalProjection;
 import dev.trentdb.transaction.Transaction;
@@ -342,6 +345,119 @@ class OptimizerRewriteTest {
         assertInstanceOf(BoundBinaryExpression.class, optimizedProjection.expressions().get(1));
     }
 
+    @Test
+    void optimizerPushesFilterBelowProjection() {
+        TableCatalogEntry table = table(
+                "people",
+                new ColumnDefinition("id", TypeName.BIGINT),
+                new ColumnDefinition("name", TypeName.TEXT)
+        );
+        BoundColumnRefExpression sourceId = new BoundColumnRefExpression(table.columns().getFirst(), 0);
+        BoundColumnRefExpression outputId = new BoundColumnRefExpression(table.columns().getFirst(), 0);
+        LogicalProjection projection = new LogicalProjection(
+                List.of(sourceId),
+                List.of("id"),
+                new LogicalGet(new BoundTableRef(table, null))
+        );
+        LogicalFilter filter = new LogicalFilter(
+                new BoundBinaryExpression(
+                        outputId,
+                        BinaryOperator.EQUAL,
+                        new BoundLiteralExpression(LogicalType.BIGINT, 1L),
+                        LogicalType.BOOLEAN
+                ),
+                projection
+        );
+
+        LogicalOperator optimized = new Optimizer().optimize(filter);
+
+        LogicalProjection optimizedProjection = assertInstanceOf(LogicalProjection.class, optimized);
+        LogicalFilter pushedFilter = assertInstanceOf(LogicalFilter.class, optimizedProjection.child());
+        assertInstanceOf(LogicalGet.class, pushedFilter.child());
+        BoundBinaryExpression predicate = assertInstanceOf(BoundBinaryExpression.class, pushedFilter.predicate());
+        BoundColumnRefExpression pushedColumn = assertInstanceOf(BoundColumnRefExpression.class, predicate.left());
+        assertSame(sourceId, pushedColumn);
+    }
+
+    @Test
+    void optimizerPushesInnerJoinFiltersToInputs() {
+        TableCatalogEntry people = table(
+                "people",
+                new ColumnDefinition("id", TypeName.BIGINT),
+                new ColumnDefinition("name", TypeName.TEXT)
+        );
+        TableCatalogEntry orders = table(
+                "orders",
+                new ColumnDefinition("person_id", TypeName.BIGINT),
+                new ColumnDefinition("total", TypeName.BIGINT)
+        );
+        BoundColumnRefExpression peopleName = new BoundColumnRefExpression(people.columns().get(1), 1);
+        BoundColumnRefExpression orderTotal = new BoundColumnRefExpression(orders.columns().get(1), 3);
+        LogicalJoin join = new LogicalJoin(
+                new LogicalGet(new BoundTableRef(people, null)),
+                new LogicalGet(new BoundTableRef(orders, null)),
+                null,
+                JoinType.INNER
+        );
+        BoundExpression predicate = new BoundBinaryExpression(
+                new BoundBinaryExpression(
+                        peopleName,
+                        BinaryOperator.EQUAL,
+                        new BoundLiteralExpression(LogicalType.TEXT, "alice"),
+                        LogicalType.BOOLEAN
+                ),
+                BinaryOperator.AND,
+                new BoundBinaryExpression(
+                        orderTotal,
+                        BinaryOperator.GREATER_THAN,
+                        new BoundLiteralExpression(LogicalType.BIGINT, 100L),
+                        LogicalType.BOOLEAN
+                ),
+                LogicalType.BOOLEAN
+        );
+
+        LogicalOperator optimized = new Optimizer().optimize(new LogicalFilter(predicate, join));
+
+        LogicalJoin optimizedJoin = assertInstanceOf(LogicalJoin.class, optimized);
+        LogicalFilter leftFilter = assertInstanceOf(LogicalFilter.class, optimizedJoin.left());
+        LogicalFilter rightFilter = assertInstanceOf(LogicalFilter.class, optimizedJoin.right());
+        BoundBinaryExpression leftPredicate = assertInstanceOf(BoundBinaryExpression.class, leftFilter.predicate());
+        BoundBinaryExpression rightPredicate = assertInstanceOf(BoundBinaryExpression.class, rightFilter.predicate());
+        BoundColumnRefExpression leftColumn = assertInstanceOf(BoundColumnRefExpression.class, leftPredicate.left());
+        BoundColumnRefExpression rightColumn = assertInstanceOf(BoundColumnRefExpression.class, rightPredicate.left());
+        assertEquals(1, leftColumn.ordinal());
+        assertEquals(1, rightColumn.ordinal());
+    }
+
+    @Test
+    void optimizerKeepsMixedAndOuterJoinFiltersAboveJoin() {
+        TableCatalogEntry people = table(
+                "people",
+                new ColumnDefinition("id", TypeName.BIGINT),
+                new ColumnDefinition("name", TypeName.TEXT)
+        );
+        TableCatalogEntry orders = table(
+                "orders",
+                new ColumnDefinition("person_id", TypeName.BIGINT),
+                new ColumnDefinition("total", TypeName.BIGINT)
+        );
+        BoundColumnRefExpression peopleId = new BoundColumnRefExpression(people.columns().get(0), 0);
+        BoundColumnRefExpression orderTotal = new BoundColumnRefExpression(orders.columns().get(1), 3);
+        LogicalJoin join = new LogicalJoin(
+                new LogicalGet(new BoundTableRef(people, null)),
+                new LogicalGet(new BoundTableRef(orders, null)),
+                null,
+                JoinType.LEFT
+        );
+        BoundExpression predicate = new BoundBinaryExpression(peopleId, BinaryOperator.EQUAL, orderTotal, LogicalType.BOOLEAN);
+
+        LogicalOperator optimized = new Optimizer().optimize(new LogicalFilter(predicate, join));
+
+        LogicalFilter filter = assertInstanceOf(LogicalFilter.class, optimized);
+        assertSame(predicate, filter.predicate());
+        assertInstanceOf(LogicalJoin.class, filter.child());
+    }
+
     private BoundExpression binaryLiteralExpression(long left, long right) {
         return new BoundBinaryExpression(
                 new BoundLiteralExpression(LogicalType.BIGINT, left),
@@ -356,12 +472,16 @@ class OptimizerRewriteTest {
     }
 
     private TableCatalogEntry table(TypeName columnType) {
+        return table("people", new ColumnDefinition("id", columnType));
+    }
+
+    private TableCatalogEntry table(String name, ColumnDefinition... columns) {
         Catalog catalog = new Catalog();
         Transaction transaction = new TransactionManager().startTransaction();
         return catalog.createTable(
                 transaction,
-                new QualifiedName(List.of("people")),
-                List.of(new ColumnDefinition("id", columnType))
+                new QualifiedName(List.of(name)),
+                List.of(columns)
         );
     }
 

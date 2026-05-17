@@ -79,7 +79,7 @@ class LogicalOperatorRewriter {
     private LogicalOperator rewriteJoin(LogicalJoin join) {
         LogicalOperator left = rewrite(join.left());
         LogicalOperator right = rewrite(join.right());
-        BoundExpression condition = expressionRewriter.rewrite(join.condition());
+        BoundExpression condition = join.condition() == null ? null : expressionRewriter.rewrite(join.condition());
         if (left == join.left() && right == join.right() && condition == join.condition()) {
             return join;
         }
