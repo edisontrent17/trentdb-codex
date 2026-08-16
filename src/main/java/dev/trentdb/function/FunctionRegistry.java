@@ -39,6 +39,12 @@ public final class FunctionRegistry {
     public ScalarFunction bindScalar(String name, List<LogicalType> argumentTypes) {
         ScalarFunction function = scalarFunctions.get(normalize(name));
         if (function == null) {
+            if (normalize(name).equals("coalesce")) {
+                return bindCoalesce(name, argumentTypes);
+            }
+            if (normalize(name).equals("abs")) {
+                return bindAbs(name, argumentTypes);
+            }
             throw new FunctionException("Scalar function not found: " + name);
         }
         if (argumentTypes.size() != function.argumentCount()) {
@@ -54,6 +60,43 @@ public final class FunctionRegistry {
             }
         }
         return function;
+    }
+
+    private ScalarFunction bindAbs(String name, List<LogicalType> argumentTypes) {
+        if (argumentTypes.size() != 1) {
+            throw new FunctionException("Scalar function " + name + " expects 1 argument but got " + argumentTypes.size());
+        }
+        LogicalType argumentType = argumentTypes.getFirst();
+        if (!isNumeric(argumentType)) {
+            throw new FunctionException("Scalar function " + name + " expects numeric input but got " + argumentType.id());
+        }
+        return new ScalarFunction("abs", List.of(argumentType), argumentType);
+    }
+
+    private ScalarFunction bindCoalesce(String name, List<LogicalType> argumentTypes) {
+        if (argumentTypes.isEmpty()) {
+            throw new FunctionException("Scalar function " + name + " expects at least 1 argument");
+        }
+        LogicalType result = LogicalType.NULL;
+        for (LogicalType argumentType : argumentTypes) {
+            result = commonCoalesceType(name, result, argumentType);
+        }
+        return new ScalarFunction("coalesce", argumentTypes, result);
+    }
+
+    private LogicalType commonCoalesceType(String name, LogicalType left, LogicalType right) {
+        if (left.equals(LogicalType.NULL)) {
+            return right;
+        }
+        if (right.equals(LogicalType.NULL) || left.equals(right)) {
+            return left;
+        }
+        if (isNumeric(left) && isNumeric(right)) {
+            return left.equals(LogicalType.DOUBLE) || right.equals(LogicalType.DOUBLE)
+                    ? LogicalType.DOUBLE : LogicalType.BIGINT;
+        }
+        throw new FunctionException("Scalar function " + name + " arguments are incompatible: "
+                + left.id() + " and " + right.id());
     }
 
     public boolean isAggregate(String name) {

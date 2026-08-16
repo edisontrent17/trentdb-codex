@@ -1,42 +1,29 @@
 package dev.trentdb.cli;
 
-import dev.trentdb.ast.ColumnDefinition;
-import dev.trentdb.ast.QualifiedName;
-import dev.trentdb.ast.Statement;
-import dev.trentdb.ast.TypeName;
-import dev.trentdb.catalog.Catalog;
-import dev.trentdb.execution.QueryExecutor;
+import dev.trentdb.TrentDbConnection;
 import dev.trentdb.execution.QueryResult;
-import dev.trentdb.parser.SqlParser;
-import dev.trentdb.planner.Binder;
-import dev.trentdb.planner.logical.LogicalPlanner;
-import dev.trentdb.storage.StorageManager;
-import dev.trentdb.transaction.TransactionManager;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
 
-public final class TrentDbCli {
-    private final SqlParser parser = new SqlParser();
-    private final LogicalPlanner logicalPlanner = new LogicalPlanner();
-    private final Catalog catalog = new Catalog();
-    private final TransactionManager transactionManager = new TransactionManager();
-    private final StorageManager storageManager = new StorageManager();
-    private final dev.trentdb.transaction.Transaction transaction;
+/** Interactive legacy entrypoint backed by the public transactional connection facade. */
+public final class TrentDbCli implements AutoCloseable {
+    private final TrentDbConnection connection;
 
     private TrentDbCli() {
-        transaction = transactionManager.startTransaction();
+        connection = TrentDbConnection.openTemporary();
         seedCatalog();
     }
 
     public static void main(String[] args) {
-        var cli = new TrentDbCli();
-        if (args.length > 0) {
-            cli.execute(String.join(" ", args));
-            return;
+        try (var cli = new TrentDbCli()) {
+            if (args.length > 0) {
+                cli.execute(String.join(" ", args));
+                return;
+            }
+            cli.repl();
         }
-        cli.repl();
     }
 
     private void repl() {
@@ -58,7 +45,7 @@ public final class TrentDbCli {
                 if (statement.isEmpty() && isExitCommand(line)) {
                     return;
                 }
-                statement.append(line).append('\n');
+                statement.append(line).append((char) 10);
                 if (line.endsWith(";")) {
                     execute(statement.toString());
                     statement.setLength(0);
@@ -73,17 +60,10 @@ public final class TrentDbCli {
 
     private void execute(String sql) {
         try {
-            var result = executeStatement(parser.parse(sql));
-            print(result);
+            print(connection.execute(sql));
         } catch (RuntimeException exception) {
             System.err.println("ERROR: " + exception.getMessage());
         }
-    }
-
-    private QueryResult executeStatement(Statement statement) {
-        var bound = new Binder(catalog).bind(transaction, statement);
-        var logical = logicalPlanner.plan(bound);
-        return new QueryExecutor(storageManager).execute(logical);
     }
 
     private void print(QueryResult result) {
@@ -140,16 +120,12 @@ public final class TrentDbCli {
     }
 
     private void seedCatalog() {
-        var table = catalog.createTable(
-                transaction,
-                new QualifiedName(List.of("people")),
-                List.of(
-                        new ColumnDefinition("id", TypeName.BIGINT),
-                        new ColumnDefinition("name", TypeName.TEXT)
-                )
-        );
-        var storage = storageManager.createTable(table);
-        storage.appendRow(List.of(1L, "Alice"));
-        storage.appendRow(List.of(2L, "Bob"));
+        connection.execute("CREATE TABLE people (id BIGINT, name TEXT)");
+        connection.execute("INSERT INTO people VALUES (1, 'Alice'), (2, 'Bob')");
+    }
+
+    @Override
+    public void close() {
+        connection.close();
     }
 }

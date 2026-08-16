@@ -25,6 +25,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SqlParserTest {
     private final SqlParser parser = new SqlParser();
@@ -39,6 +40,34 @@ class SqlParserTest {
         assertEquals("id", create.columns().getFirst().name());
         assertEquals(TypeName.DATE, create.columns().get(2).type());
     }
+
+    @Test
+    void parsesIntegerAsDuckdbIntAlias() {
+        CreateTableStatement create = assertInstanceOf(
+                CreateTableStatement.class, parser.parse("CREATE TABLE integers (value INTEGER)"));
+
+        assertEquals(TypeName.INT, create.columns().getFirst().type());
+    }
+
+    @Test
+    void parsesVarcharAliasesAsTextWithAnIgnoredPositiveLength() {
+        CreateTableStatement create = assertInstanceOf(CreateTableStatement.class,
+                parser.parse("CREATE TABLE strings (plain VARCHAR, sized VARCHAR(30), text_value TEXT)"));
+
+        assertEquals(TypeName.TEXT, create.columns().get(0).type());
+        assertEquals(TypeName.TEXT, create.columns().get(1).type());
+        assertEquals(TypeName.TEXT, create.columns().get(2).type());
+    }
+
+    @Test
+    void rejectsMalformedOrNonPositiveVarcharLengthSyntax() {
+        assertThrows(ParsingException.class, () -> parser.parse("CREATE TABLE invalid (value VARCHAR())"));
+        assertThrows(ParsingException.class, () -> parser.parse("CREATE TABLE invalid (value VARCHAR(0))"));
+        assertThrows(ParsingException.class, () -> parser.parse("CREATE TABLE invalid (value VARCHAR(-1))"));
+        assertThrows(ParsingException.class, () -> parser.parse("CREATE TABLE invalid (value VARCHAR(1.5))"));
+        assertThrows(ParsingException.class, () -> parser.parse("CREATE TABLE invalid (value VARCHAR(1, 2))"));
+    }
+
 
     @Test
     void preservesQuotedIdentifierCase() {
@@ -152,6 +181,15 @@ class SqlParserTest {
         assertInstanceOf(LiteralExpression.class, between.lower());
         assertInstanceOf(LiteralExpression.class, between.upper());
     }
+
+    @Test
+    void parsesNotBetweenPredicate() {
+        SelectStatement select = assertInstanceOf(SelectStatement.class, parser.parse("SELECT id FROM people WHERE id NOT BETWEEN 1 AND 2"));
+
+        BetweenExpression between = assertInstanceOf(BetweenExpression.class, select.where());
+        assertEquals(true, between.negated());
+    }
+
 
     @Test
     void parsesInPredicate() {
@@ -269,6 +307,20 @@ class SqlParserTest {
         assertEquals(1, caseExpression.branches().size());
         assertInstanceOf(BinaryExpression.class, caseExpression.branches().getFirst().condition());
         assertInstanceOf(LiteralExpression.class, caseExpression.elseExpression());
+    }
+
+    @Test
+    void parsesSimpleCaseExpressionWithBase() {
+        Statement statement = parser.parse("SELECT CASE id WHEN 1 THEN 'one' ELSE 'other' END FROM people");
+
+        SelectStatement select = assertInstanceOf(SelectStatement.class, statement);
+        CaseExpression caseExpression = assertInstanceOf(
+                CaseExpression.class,
+                select.selectItems().getFirst().expression()
+        );
+        assertInstanceOf(ColumnReferenceExpression.class, caseExpression.baseExpression());
+        assertEquals(1, caseExpression.branches().size());
+        assertInstanceOf(LiteralExpression.class, caseExpression.branches().getFirst().condition());
     }
 
     @Test

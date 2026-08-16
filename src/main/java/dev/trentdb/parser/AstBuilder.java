@@ -9,6 +9,14 @@ import dev.trentdb.ast.ColumnDefinition;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CommonTableExpression;
 import dev.trentdb.ast.CreateTableStatement;
+import dev.trentdb.ast.CreateIndexStatement;
+import dev.trentdb.ast.DropTableStatement;
+import dev.trentdb.ast.DropIndexStatement;
+import dev.trentdb.ast.DeleteStatement;
+import dev.trentdb.ast.UpdateStatement;
+import dev.trentdb.ast.BeginTransactionStatement;
+import dev.trentdb.ast.CommitStatement;
+import dev.trentdb.ast.RollbackStatement;
 import dev.trentdb.ast.ExplainStatement;
 import dev.trentdb.ast.Expression;
 import dev.trentdb.ast.ExistsExpression;
@@ -29,6 +37,8 @@ import dev.trentdb.ast.QualifiedName;
 import dev.trentdb.ast.SelectItem;
 import dev.trentdb.ast.SelectStatement;
 import dev.trentdb.ast.SortDirection;
+import dev.trentdb.ast.SetOperation;
+import dev.trentdb.ast.IndexKey;
 import dev.trentdb.ast.StarExpression;
 import dev.trentdb.ast.Statement;
 import dev.trentdb.ast.SubqueryExpression;
@@ -39,6 +49,7 @@ import dev.trentdb.ast.UnaryOperator;
 import dev.trentdb.parser.sql.TrentDbSqlParser;
 
 import java.time.LocalDate;
+import java.math.BigInteger;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,8 +64,22 @@ final class AstBuilder {
         if (context.explain() != null) {
             return explain(context.explain());
         }
+        if (context.beginTransaction() != null) return new BeginTransactionStatement();
+        if (context.commitTransaction() != null) return new CommitStatement();
+        if (context.rollbackTransaction() != null) return new RollbackStatement();
         if (context.createTable() != null) {
             return createTable(context.createTable());
+        }
+        if (context.dropTable() != null) {
+            return dropTable(context.dropTable());
+        }
+        if (context.createIndex() != null) return createIndex(context.createIndex());
+        if (context.dropIndex() != null) return dropIndex(context.dropIndex());
+        if (context.delete() != null) {
+            return delete(context.delete());
+        }
+        if (context.update() != null) {
+            return update(context.update());
         }
         if (context.insert() != null) {
             return insert(context.insert());
@@ -77,40 +102,95 @@ final class AstBuilder {
         return new CreateTableStatement(qualifiedName(context.qualifiedName()), columns);
     }
 
+    private DropTableStatement dropTable(TrentDbSqlParser.DropTableContext context) {
+        return new DropTableStatement(qualifiedName(context.qualifiedName()));
+    }
+
+
+    private CreateIndexStatement createIndex(TrentDbSqlParser.CreateIndexContext context) {
+        if (context.UNIQUE() != null) throw new ParsingException("UNIQUE indexes are not supported");
+        var keys = new ArrayList<IndexKey>(context.indexKey().size());
+        for (var key : context.indexKey()) keys.add(new IndexKey(
+                unquote(key.identifier().getText()), key.DESC() == null ? SortDirection.ASC : SortDirection.DESC));
+        return new CreateIndexStatement(qualifiedName(context.qualifiedName(0)), qualifiedName(context.qualifiedName(1)), keys);
+    }
+
+    private DropIndexStatement dropIndex(TrentDbSqlParser.DropIndexContext context) {
+        return new DropIndexStatement(qualifiedName(context.qualifiedName()));
+    }
+
     private ColumnDefinition columnDef(TrentDbSqlParser.ColumnDefContext context) {
         return new ColumnDefinition(unquote(context.identifier().getText()), typeName(context.typeName()));
     }
+
+    private DeleteStatement delete(TrentDbSqlParser.DeleteContext context) {
+        return new DeleteStatement(qualifiedName(context.qualifiedName()), context.expression() == null ? null : expression(context.expression()));
+    }
+    private UpdateStatement update(TrentDbSqlParser.UpdateContext context) {
+        return new UpdateStatement(qualifiedName(context.qualifiedName()), unquote(context.identifier().getText()), expression(context.expression(0)), context.expression().size() == 2 ? expression(context.expression(1)) : null);
+    }
+
 
     private InsertStatement insert(TrentDbSqlParser.InsertContext context) {
         List<String> columns = List.of();
         if (context.identifierList() != null) {
             columns = context.identifierList().identifier().stream().map(identifier -> unquote(identifier.getText())).toList();
         }
-        return new InsertStatement(
-                qualifiedName(context.qualifiedName()),
-                columns,
-                expressionList(context.expressionList())
-        );
+        var rows = context.expressionList().stream().map(this::expressionList).toList();
+        return new InsertStatement(qualifiedName(context.qualifiedName()), columns, rows.getFirst(), rows);
     }
 
     private SelectStatement select(TrentDbSqlParser.SelectContext context) {
-        List<CommonTableExpression> commonTableExpressions = context.withClause() == null
-                ? List.of()
-                : commonTableExpressions(context.withClause());
+        List<CommonTableExpression> commonTableExpressions = context.withClause() == null ? List.of() : commonTableExpressions(context.withClause());
+        List<OrderByItem> orderBy = context.orderByClause() == null ? List.of() : orderByItems(context.orderByClause());
+        Long limit = context.limitClause() == null ? null : Long.parseLong(context.limitClause().integerLiteral().getText());
+        return unionExcept(context.unionExcept()).withOuterClauses(commonTableExpressions, orderBy, limit);
+    }
+
+    private SelectStatement unionExcept(TrentDbSqlParser.UnionExceptContext context) {
+        SelectStatement result = intersect(context.intersect(0));
+        int child = 1;
+        for (int index = 1; index < context.intersect().size(); index++) {
+            String operator = context.getChild(child++).getText().toUpperCase(Locale.ROOT);
+            if ("UNION".equals(operator) && "ALL".equalsIgnoreCase(context.getChild(child).getText())) {
+                operator = "UNION ALL";
+                child++;
+            }
+            result = SelectStatement.setOperation(setOperation(operator), result, intersect(context.intersect(index)));
+            child++;
+        }
+        return result;
+    }
+
+    private SelectStatement intersect(TrentDbSqlParser.IntersectContext context) {
+        SelectStatement result = selectCore(context.selectCore(0));
+        for (int index = 1; index < context.selectCore().size(); index++) {
+            result = SelectStatement.setOperation(SetOperation.INTERSECT, result, selectCore(context.selectCore(index)));
+        }
+        return result;
+    }
+
+
+    private SetOperation setOperation(String text) {
+        return switch (text) {
+            case "UNION" -> SetOperation.UNION;
+            case "UNION ALL" -> SetOperation.UNION_ALL;
+            case "EXCEPT" -> SetOperation.EXCEPT;
+            default -> throw new ParsingException("Unsupported set operation: " + text);
+        };
+    }
+
+    private SelectStatement selectCore(TrentDbSqlParser.SelectCoreContext context) {
         ArrayList<SelectItem> selectItems = new ArrayList<>(context.selectItemList().selectItem().size());
         for (TrentDbSqlParser.SelectItemContext itemContext : context.selectItemList().selectItem()) {
             selectItems.add(selectItem(itemContext));
         }
-
         Expression where = context.whereClause() == null ? null : expression(context.whereClause().expression());
-        List<Expression> groupBy = context.groupByClause() == null
-                ? List.of()
-                : expressionList(context.groupByClause().expressionList());
+        List<Expression> groupBy = context.groupByClause() == null ? List.of() : expressionList(context.groupByClause().expressionList());
         Expression having = context.havingClause() == null ? null : expression(context.havingClause().expression());
-        List<OrderByItem> orderBy = context.orderByClause() == null ? List.of() : orderByItems(context.orderByClause());
-        Long limit = context.limitClause() == null ? null : Long.parseLong(context.limitClause().integerLiteral().getText());
-        return new SelectStatement(commonTableExpressions, selectItems, fromItem(context.fromItem()), where, groupBy, having, orderBy, limit);
+        return new SelectStatement(List.of(), selectItems, fromItem(context.fromItem()), where, groupBy, having, List.of(), null);
     }
+
 
     private List<CommonTableExpression> commonTableExpressions(TrentDbSqlParser.WithClauseContext context) {
         ArrayList<CommonTableExpression> expressions = new ArrayList<>(context.commonTableExpression().size());
@@ -264,7 +344,8 @@ final class AstBuilder {
             return new BetweenExpression(
                     valueExpression(betweenPredicate.valueExpression(0)),
                     valueExpression(betweenPredicate.valueExpression(1)),
-                    valueExpression(betweenPredicate.valueExpression(2))
+                    valueExpression(betweenPredicate.valueExpression(2)),
+                    betweenPredicate.NOT() != null
             );
         }
         if (context instanceof TrentDbSqlParser.InListPredicateContext inPredicate) {
@@ -446,7 +527,8 @@ final class AstBuilder {
             ));
         }
         Expression elseExpression = context.ELSE() == null ? null : expression(context.expression());
-        return new CaseExpression(branches, elseExpression);
+        Expression baseExpression = context.caseOperand() == null ? null : expression(context.caseOperand().expression());
+        return new CaseExpression(baseExpression, branches, elseExpression);
     }
 
     private LiteralExpression literal(TrentDbSqlParser.LiteralContext context) {
@@ -514,6 +596,13 @@ final class AstBuilder {
         }
         if (context.BOOLEAN_T() != null) {
             return TypeName.BOOLEAN;
+        }
+        if (context.VARCHAR_T() != null) {
+            if (context.positiveInteger() != null
+                    && new BigInteger(context.positiveInteger().getText()).signum() <= 0) {
+                throw new ParsingException("VARCHAR length must be positive");
+            }
+            return TypeName.TEXT;
         }
         if (context.TEXT_T() != null) {
             return TypeName.TEXT;

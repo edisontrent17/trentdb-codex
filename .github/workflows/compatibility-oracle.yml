@@ -1,0 +1,27 @@
+name: Compatibility Oracle
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  duckdb-sqllogic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Verify pinned DuckDB oracle and inventory corpus
+        run: mvn -B -Pduckdb-compatibility validate
+
+      - name: Run opt-in SQLLogic compatibility gate
+        run: mvn -B -Pduckdb-compatibility test

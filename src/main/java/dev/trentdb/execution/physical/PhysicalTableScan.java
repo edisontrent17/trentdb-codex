@@ -14,15 +14,21 @@ public final class PhysicalTableScan implements PhysicalSource {
     private final StorageManager storageManager;
     private final BoundTableRef tableRef;
     private final List<Integer> projectedOrdinals;
+    private final dev.trentdb.transaction.Transaction transaction;
 
     public PhysicalTableScan(StorageManager storageManager, BoundTableRef tableRef) {
-        this(storageManager, tableRef, allOrdinals(tableRef));
+        this(storageManager, tableRef, allOrdinals(tableRef), null);
     }
 
     public PhysicalTableScan(StorageManager storageManager, BoundTableRef tableRef, List<Integer> projectedOrdinals) {
+        this(storageManager, tableRef, projectedOrdinals, null);
+    }
+
+    public PhysicalTableScan(StorageManager storageManager, BoundTableRef tableRef, List<Integer> projectedOrdinals, dev.trentdb.transaction.Transaction transaction) {
         this.storageManager = storageManager;
         this.tableRef = tableRef;
         this.projectedOrdinals = List.copyOf(projectedOrdinals);
+        this.transaction = transaction;
     }
 
     public BoundTableRef tableRef() {
@@ -43,7 +49,7 @@ public final class PhysicalTableScan implements PhysicalSource {
         long scanStart = ExecutionProfiler.start();
         List<DataChunk> chunks = tableRef.isReplacementScan()
                 ? tableRef.replacementScan().scanFunction().scan()
-                : storageManager.getTable(tableRef.table()).scanChunks();
+                : storageManager.getTable(tableRef.table()).scanChunks(transaction);
         chunks = projectChunks(chunks, projectedOrdinals);
         int rowCount = 0;
         for (DataChunk chunk : chunks) {

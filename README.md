@@ -98,6 +98,21 @@ Run the CLI with:
 mvn exec:java
 ```
 
+## DuckDB compatibility oracle
+
+The pinned `third_party/duckdb` submodule is an opt-in upstream test oracle only; it is
+not a runtime native dependency. Generate the C0 inventory and run the cumulative
+compatibility gate with:
+
+```bash
+git submodule update --init --recursive
+mvn -Pduckdb-compatibility test
+```
+
+The C0 manifest is generated under `target/compatibility/`; SQLLogic reports are generated
+under `target/sqllogic/`. See [the compatibility-oracle contract](docs/compatibility-oracle.md)
+for classifications, reproducibility, and CI behavior.
+
 ## Design rule
 
 For the supported subset, syntax and semantics should follow DuckDB as closely as practical. Architecture should stay recognizable to someone familiar with DuckDB's parser, binder, logical planning, physical planning, and vectorized execution pipeline.

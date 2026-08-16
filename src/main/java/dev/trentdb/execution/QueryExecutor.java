@@ -1,6 +1,7 @@
 package dev.trentdb.execution;
 
 import dev.trentdb.execution.physical.PhysicalPlanner;
+import dev.trentdb.execution.ddl.TransactionalDdlExecutor;
 import dev.trentdb.execution.physical.Pipeline;
 import dev.trentdb.execution.physical.PipelineExecutor;
 import dev.trentdb.optimizer.Optimizer;
@@ -11,9 +12,15 @@ public final class QueryExecutor {
     private static final ThreadLocal<Integer> EXECUTION_DEPTH = ThreadLocal.withInitial(() -> 0);
 
     private final StorageManager storageManager;
+    private final TransactionalDdlExecutor ddlExecutor;
 
     public QueryExecutor(StorageManager storageManager) {
+        this(storageManager, null);
+    }
+
+    public QueryExecutor(StorageManager storageManager, TransactionalDdlExecutor ddlExecutor) {
         this.storageManager = storageManager;
+        this.ddlExecutor = ddlExecutor;
     }
 
     public QueryResult execute(LogicalOperator operator) {
@@ -50,7 +57,7 @@ public final class QueryExecutor {
         );
 
         long planStart = ExecutionProfiler.start();
-        Pipeline pipeline = new PhysicalPlanner(storageManager).plan(optimized);
+        Pipeline pipeline = new PhysicalPlanner(storageManager, ddlExecutor).plan(optimized);
         ExecutionProfiler.log(
                 "QueryExecutor",
                 "plan",

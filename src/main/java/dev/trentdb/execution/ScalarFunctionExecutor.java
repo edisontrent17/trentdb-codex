@@ -6,6 +6,7 @@ import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.types.LogicalType;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Locale;
 
 final class ScalarFunctionExecutor {
@@ -16,6 +17,12 @@ final class ScalarFunctionExecutor {
     }
 
     Vector execute(BoundFunctionExpression function, DataChunk input) {
+        if (function.name().equalsIgnoreCase("coalesce")) {
+            return coalesce(function, input);
+        }
+        if (function.name().equalsIgnoreCase("abs")) {
+            return abs(function, input);
+        }
         if (function.name().equalsIgnoreCase("lower")) {
             return lower(function, input);
         }
@@ -26,6 +33,88 @@ final class ScalarFunctionExecutor {
             return substring(function, input);
         }
         throw new ExecutionException("Unsupported scalar function: " + function.name());
+    }
+
+    private Vector coalesce(BoundFunctionExpression function, DataChunk input) {
+        if (function.arguments().isEmpty()) {
+            throw new ExecutionException("coalesce expects at least one argument");
+        }
+        if (function.logicalType().equals(LogicalType.NULL)) {
+            return Vector.constantNull(LogicalType.NULL, input.cardinality());
+        }
+        List<Vector> arguments = function.arguments().stream()
+                .map(argument -> expressionExecutor.execute(argument, input))
+                .toList();
+        Vector result = new Vector(function.logicalType(), input.cardinality());
+        for (int rowIndex = 0; rowIndex < input.cardinality(); rowIndex++) {
+            boolean found = false;
+            for (Vector argument : arguments) {
+                if (argument.isNull(rowIndex)) {
+                    continue;
+                }
+                writeCoalesceValue(result, rowIndex, argument, rowIndex);
+                found = true;
+                break;
+            }
+            if (!found) {
+                result.setNull(rowIndex);
+            }
+        }
+        return result;
+    }
+
+    private void writeCoalesceValue(Vector target, int targetIndex, Vector source, int sourceIndex) {
+        if (target.logicalType().equals(source.logicalType())) {
+            target.copyFrom(targetIndex, source, sourceIndex);
+            return;
+        }
+        if (target.logicalType().equals(LogicalType.DOUBLE)) {
+            if (source.logicalType().equals(LogicalType.INTEGER)) {
+                target.setDouble(targetIndex, source.getInteger(sourceIndex));
+                return;
+            }
+            if (source.logicalType().equals(LogicalType.BIGINT)) {
+                target.setDouble(targetIndex, source.getBigint(sourceIndex));
+                return;
+            }
+        }
+        if (target.logicalType().equals(LogicalType.BIGINT) && source.logicalType().equals(LogicalType.INTEGER)) {
+            target.setBigint(targetIndex, source.getInteger(sourceIndex));
+            return;
+        }
+        throw new ExecutionException("Cannot coalesce " + source.logicalType().id().name()
+                + " into " + target.logicalType().id().name());
+    }
+
+    private Vector abs(BoundFunctionExpression function, DataChunk input) {
+        Vector argument = expressionExecutor.execute(function.arguments().getFirst(), input);
+        LogicalType type = argument.logicalType();
+        if (!type.equals(LogicalType.INTEGER) && !type.equals(LogicalType.BIGINT) && !type.equals(LogicalType.DOUBLE)) {
+            throw new ExecutionException("abs expects numeric input");
+        }
+        Vector result = new Vector(function.logicalType(), input.cardinality());
+        for (int index = 0; index < input.cardinality(); index++) {
+            if (argument.isNull(index)) {
+                result.setNull(index);
+                continue;
+            }
+            if (type.equals(LogicalType.INTEGER)) {
+                int value = argument.getInteger(index);
+                if (value == Integer.MIN_VALUE) {
+                    throw new ExecutionException("abs cannot represent the absolute value of INTEGER minimum");
+                }
+                result.setInteger(index, Math.abs(value));
+            } else if (type.equals(LogicalType.BIGINT)) {
+                long value = argument.getBigint(index);
+                if (value == Long.MIN_VALUE) {
+                    throw new ExecutionException("abs cannot represent the absolute value of BIGINT minimum");
+                }
+                result.setBigint(index, Math.abs(value));
+            } else {
+                result.setDouble(index, Math.abs(argument.getDouble(index)));
+            }
+        }
+        return result;
     }
 
     private Vector lower(BoundFunctionExpression function, DataChunk input) {

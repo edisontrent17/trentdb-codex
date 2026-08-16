@@ -17,6 +17,7 @@ import dev.trentdb.planner.BoundInExpression;
 import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundNullCheckExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.storage.StorageManager;
@@ -54,6 +55,7 @@ public final class ExpressionExecutor {
             case BoundExistsSubqueryExpression exists -> subqueryEvaluator.exists(exists, input);
             case BoundCastExpression cast -> cast(cast, input);
             case BoundCaseExpression caseExpression -> caseExpression(caseExpression, input);
+            case BoundNullCheckExpression nullCheck -> nullCheck(nullCheck, input);
             case BoundIntervalExpression interval -> throw new ExecutionException(
                     "Standalone INTERVAL literal is not supported yet: " + interval.amount() + " " + interval.unit());
             case BoundSubqueryExpression subquery -> subqueryEvaluator.scalar(subquery, input);
@@ -100,7 +102,11 @@ public final class ExpressionExecutor {
         for (int index = 0; index < input.cardinality(); index++) {
             byte lower = compareNullable(inputValues, lowerValues, index, Comparison.GREATER_THAN_OR_EQUAL);
             byte upper = compareNullable(inputValues, upperValues, index, Comparison.LESS_THAN_OR_EQUAL);
-            writeSqlTruth(result, index, sqlAnd(lower, upper));
+            byte value = sqlAnd(lower, upper);
+            if (between.negated()) {
+                value = negateSqlTruth(value);
+            }
+            writeSqlTruth(result, index, value);
         }
         return result;
     }
@@ -163,7 +169,19 @@ public final class ExpressionExecutor {
         throw new ExecutionException("Unsupported cast to " + targetType.id());
     }
 
+    private Vector nullCheck(BoundNullCheckExpression nullCheck, DataChunk input) {
+        Vector child = execute(nullCheck.expression(), input);
+        Vector result = new Vector(LogicalType.BOOLEAN, input.cardinality());
+        for (int index = 0; index < input.cardinality(); index++) {
+            boolean isNull = child.isNull(index);
+            result.setBoolean(index, nullCheck.negated() ? !isNull : isNull);
+        }
+        return result;
+    }
+
     private Vector caseExpression(BoundCaseExpression caseExpression, DataChunk input) {
+        Vector baseVector = caseExpression.baseExpression() == null
+                ? null : execute(caseExpression.baseExpression(), input);
         List<Vector> conditionVectors = caseExpression.branches().stream()
                 .map(branch -> execute(branch.condition(), input))
                 .toList();
@@ -177,13 +195,19 @@ public final class ExpressionExecutor {
             boolean matched = false;
             for (int branchIndex = 0; branchIndex < conditionVectors.size(); branchIndex++) {
                 Vector conditionVector = conditionVectors.get(branchIndex);
-                if (conditionVector.isNull(rowIndex)) {
-                    continue;
+                boolean branchMatches;
+                if (baseVector != null) {
+                    branchMatches = compareNullable(baseVector, conditionVector, rowIndex, Comparison.EQUAL) == SQL_TRUE;
+                } else {
+                    if (conditionVector.isNull(rowIndex)) {
+                        continue;
+                    }
+                    if (!conditionVector.logicalType().equals(LogicalType.BOOLEAN)) {
+                        throw new ExecutionException("CASE WHEN condition did not evaluate to BOOLEAN");
+                    }
+                    branchMatches = conditionVector.getBoolean(rowIndex);
                 }
-                if (!conditionVector.logicalType().equals(LogicalType.BOOLEAN)) {
-                    throw new ExecutionException("CASE WHEN condition did not evaluate to BOOLEAN");
-                }
-                if (conditionVector.getBoolean(rowIndex)) {
+                if (branchMatches) {
                     writeCastValue(result, rowIndex, resultVectors.get(branchIndex), rowIndex);
                     matched = true;
                     break;

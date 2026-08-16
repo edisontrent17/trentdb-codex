@@ -18,6 +18,7 @@ import dev.trentdb.planner.BoundInExpression;
 import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundNullCheckExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.storage.StorageManager;
@@ -48,6 +49,11 @@ final class OptimizerExpressionRewriter extends BoundExpressionRewriter {
     @Override
     protected BoundExpression visitCase(BoundCaseExpression caseExpression) {
         return fold(super.visitCase(caseExpression));
+    }
+
+    @Override
+    protected BoundExpression visitNullCheck(BoundNullCheckExpression nullCheck) {
+        return fold(super.visitNullCheck(nullCheck));
     }
 
     @Override
@@ -226,6 +232,7 @@ final class OptimizerExpressionRewriter extends BoundExpressionRewriter {
                     && isFoldable(between.upper());
             case BoundBinaryExpression binary -> isFoldable(binary.left()) && isFoldable(binary.right());
             case BoundCaseExpression caseExpression -> isFoldableCase(caseExpression);
+            case BoundNullCheckExpression nullCheck -> isFoldable(nullCheck.expression());
             case BoundCastExpression cast -> isFoldable(cast.child());
             case BoundColumnRefExpression ignored -> false;
             case BoundExistsSubqueryExpression ignored -> false;
@@ -240,6 +247,9 @@ final class OptimizerExpressionRewriter extends BoundExpressionRewriter {
     }
 
     private boolean isFoldableCase(BoundCaseExpression caseExpression) {
+        if (caseExpression.baseExpression() != null && !isFoldable(caseExpression.baseExpression())) {
+            return false;
+        }
         for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
             if (!isFoldable(branch.condition()) || !isFoldable(branch.result())) {
                 return false;

@@ -19,6 +19,7 @@ import dev.trentdb.planner.BoundInExpression;
 import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundNullCheckExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSelectStatement;
 import dev.trentdb.planner.BoundSubqueryExpression;
@@ -27,6 +28,8 @@ import dev.trentdb.storage.StorageManager;
 import dev.trentdb.types.LogicalType;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 
 public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOperator {
@@ -75,7 +78,7 @@ public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOper
                 "PhysicalCorrelatedScalarAggregateJoin",
                 "build_single_lookup",
                 start,
-                "keys=" + lookup.keyCount() + " keyColumns=" + plan.equalities().size()
+                "keys=" + lookup.keyCount() + " keyColumns=" + (plan.equalities().size() + plan.comparisons().size())
         );
         return new ScalarAggregateLocalState(lookup);
     }
@@ -94,6 +97,9 @@ public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOper
 
     private ScalarAggregateLookup buildLookup(ScalarAggregatePlan plan) {
         List<DataChunk> chunks = scanChunks(plan.table());
+        if (!plan.comparisons().isEmpty()) {
+            return new ScalarAggregateLookup(plan, chunks, emptyResult(plan));
+        }
         ScalarAggregateHashTable aggregates = new ScalarAggregateHashTable(plan.equalities().size(), countRows(chunks));
         for (DataChunk chunk : chunks) {
             Vector residual = plan.residual() == null ? null : expressionExecutor.execute(plan.residual(), chunk);
@@ -119,13 +125,17 @@ public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOper
             }
         }
         aggregates.finish(plan.aggregate(), plan.outputExpression(), marker.logicalType(), expressionExecutor);
-        ScalarAggregateValue emptyResult = ScalarAggregateHashTable.emptyResult(
+        ScalarAggregateValue emptyResult = emptyResult(plan);
+        return new ScalarAggregateLookup(plan.equalities(), aggregates, emptyResult);
+    }
+
+    private ScalarAggregateValue emptyResult(ScalarAggregatePlan plan) {
+        return ScalarAggregateHashTable.emptyResult(
                 plan.aggregate(),
                 plan.outputExpression(),
                 marker.logicalType(),
                 expressionExecutor
         );
-        return new ScalarAggregateLookup(plan.equalities(), aggregates, emptyResult);
     }
 
     private ScalarAggregatePlan scalarAggregatePlan() {
@@ -144,22 +154,29 @@ public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOper
 
         ArrayList<BoundExpression> residuals = new ArrayList<>();
         ArrayList<CorrelatedEquality> equalities = new ArrayList<>();
+        ArrayList<CorrelatedComparison> comparisons = new ArrayList<>();
         ArrayList<BoundExpression> conjuncts = new ArrayList<>();
         flattenConjuncts(statement.where(), conjuncts);
         for (BoundExpression conjunct : conjuncts) {
             CorrelatedEquality equality = correlatedEquality(conjunct);
             if (equality != null) {
                 equalities.add(equality);
-            } else if (containsOuterReference(conjunct)) {
-                throw new ExecutionException("Correlated scalar aggregate currently supports equality predicates only");
-            } else {
-                residuals.add(conjunct);
+                continue;
             }
+            CorrelatedComparison comparison = correlatedComparison(conjunct);
+            if (comparison != null) {
+                comparisons.add(comparison);
+                continue;
+            }
+            if (containsOuterReference(conjunct)) {
+                throw new ExecutionException("Correlated scalar aggregate currently supports at most two equality or ordered comparison predicates");
+            }
+            residuals.add(conjunct);
         }
-        if (equalities.isEmpty() || equalities.size() > 2) {
-            throw new ExecutionException("Correlated scalar aggregate currently supports one or two equality keys");
+        if ((equalities.isEmpty() && comparisons.isEmpty()) || equalities.size() + comparisons.size() > 2) {
+            throw new ExecutionException("Correlated scalar aggregate currently supports one or two equality or ordered comparison predicates");
         }
-        return new ScalarAggregatePlan(table, equalities, combineConjuncts(residuals), output.aggregate(), output.expression());
+        return new ScalarAggregatePlan(table, equalities, comparisons, combineConjuncts(residuals), output.aggregate(), output.expression());
     }
 
     private AggregateRewrite rewriteAggregateOutput(BoundExpression expression) {
@@ -227,6 +244,56 @@ public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOper
         return new CorrelatedEquality(inner.ordinal(), outerOrdinal, inner.logicalType());
     }
 
+    private CorrelatedComparison correlatedComparison(BoundExpression expression) {
+        if (!(expression instanceof BoundBinaryExpression binary) || !isOrderedComparison(binary.operator())) {
+            return null;
+        }
+        if (!(binary.left() instanceof BoundColumnRefExpression left)
+                || !(binary.right() instanceof BoundColumnRefExpression right)) {
+            return null;
+        }
+        CorrelatedComparison leftInner = correlatedComparison(left, right, binary.operator());
+        return leftInner == null ? correlatedComparison(right, left, invert(binary.operator())) : leftInner;
+    }
+
+    private CorrelatedComparison correlatedComparison(
+            BoundColumnRefExpression inner,
+            BoundColumnRefExpression outer,
+            BinaryOperator operator
+    ) {
+        if (inner.ordinal() >= scalarSubquery.localColumnCount() || outer.ordinal() < scalarSubquery.localColumnCount()) {
+            return null;
+        }
+        if (!inner.logicalType().equals(outer.logicalType()) || !supportsKeyType(inner.logicalType())) {
+            throw new ExecutionException("Correlated scalar aggregate comparison key type is not supported");
+        }
+        int correlatedIndex = outer.ordinal() - scalarSubquery.localColumnCount();
+        if (correlatedIndex < 0 || correlatedIndex >= scalarSubquery.correlatedColumns().size()) {
+            throw new ExecutionException("Correlated scalar aggregate outer reference is outside the correlation list");
+        }
+        int outerOrdinal = scalarSubquery.correlatedColumns().get(correlatedIndex).outerOrdinal();
+        return new CorrelatedComparison(inner.ordinal(), outerOrdinal, inner.logicalType(), operator);
+    }
+
+    private boolean isOrderedComparison(BinaryOperator operator) {
+        return operator == BinaryOperator.NOT_EQUAL
+                || operator == BinaryOperator.LESS_THAN
+                || operator == BinaryOperator.LESS_THAN_OR_EQUAL
+                || operator == BinaryOperator.GREATER_THAN
+                || operator == BinaryOperator.GREATER_THAN_OR_EQUAL;
+    }
+
+    private BinaryOperator invert(BinaryOperator operator) {
+        return switch (operator) {
+            case NOT_EQUAL -> BinaryOperator.NOT_EQUAL;
+            case LESS_THAN -> BinaryOperator.GREATER_THAN;
+            case LESS_THAN_OR_EQUAL -> BinaryOperator.GREATER_THAN_OR_EQUAL;
+            case GREATER_THAN -> BinaryOperator.LESS_THAN;
+            case GREATER_THAN_OR_EQUAL -> BinaryOperator.LESS_THAN_OR_EQUAL;
+            default -> throw new IllegalArgumentException("Not an ordered comparison: " + operator);
+        };
+    }
+
     private RowKey innerKey(List<CorrelatedEquality> equalities, DataChunk chunk, int rowIndex) {
         KeyValue first = keyValue(chunk.column(equalities.get(0).innerOrdinal()), rowIndex, equalities.get(0).keyType());
         if (first.isNull()) {
@@ -287,6 +354,7 @@ public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOper
                     || containsOuterReference(between.upper());
             case BoundBinaryExpression binary -> containsOuterReference(binary.left()) || containsOuterReference(binary.right());
             case BoundCaseExpression caseExpression -> containsOuterReference(caseExpression);
+            case BoundNullCheckExpression nullCheck -> containsOuterReference(nullCheck.expression());
             case BoundCastExpression cast -> containsOuterReference(cast.child());
             case BoundColumnRefExpression column -> column.ordinal() >= scalarSubquery.localColumnCount();
             case BoundFunctionExpression function -> containsOuterReference(function.arguments());
@@ -393,12 +461,14 @@ public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOper
     private record ScalarAggregatePlan(
             BoundTableRef table,
             List<CorrelatedEquality> equalities,
+            List<CorrelatedComparison> comparisons,
             BoundExpression residual,
             BoundAggregateExpression aggregate,
             BoundExpression outputExpression
     ) {
         private ScalarAggregatePlan {
             equalities = List.copyOf(equalities);
+            comparisons = List.copyOf(comparisons);
         }
     }
 
@@ -406,6 +476,9 @@ public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOper
     }
 
     private record CorrelatedEquality(int innerOrdinal, int outerOrdinal, LogicalType keyType) {
+    }
+
+    private record CorrelatedComparison(int innerOrdinal, int outerOrdinal, LogicalType keyType, BinaryOperator operator) {
     }
 
     private record RowKey(boolean hasNull, long first, long second) {
@@ -428,6 +501,9 @@ public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOper
         private final List<CorrelatedEquality> equalities;
         private final ScalarAggregateHashTable results;
         private final ScalarAggregateValue emptyResult;
+        private final ScalarAggregatePlan orderedPlan;
+        private final List<DataChunk> orderedChunks;
+        private final Map<CorrelationKey, ScalarAggregateValue> orderedResults;
 
         private ScalarAggregateLookup(
                 List<CorrelatedEquality> equalities,
@@ -437,9 +513,29 @@ public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOper
             this.equalities = List.copyOf(equalities);
             this.results = results;
             this.emptyResult = emptyResult;
+            this.orderedPlan = null;
+            this.orderedChunks = List.of();
+            this.orderedResults = Map.of();
+        }
+
+        private ScalarAggregateLookup(
+                ScalarAggregatePlan orderedPlan,
+                List<DataChunk> orderedChunks,
+                ScalarAggregateValue emptyResult
+        ) {
+            this.equalities = List.of();
+            this.results = null;
+            this.emptyResult = emptyResult;
+            this.orderedPlan = orderedPlan;
+            this.orderedChunks = List.copyOf(orderedChunks);
+            this.orderedResults = new HashMap<>();
         }
 
         private void writeValue(DataChunk input, int rowIndex, Vector output) {
+            if (orderedPlan != null) {
+                writeOrderedValue(input, rowIndex, output);
+                return;
+            }
             RowKey key = outerKey(equalities, input, rowIndex);
             if (key.hasNull()) {
                 emptyResult.writeTo(output, rowIndex);
@@ -453,8 +549,94 @@ public final class PhysicalCorrelatedScalarAggregateJoin implements PhysicalOper
             value.writeTo(output, rowIndex);
         }
 
+        private void writeOrderedValue(DataChunk input, int rowIndex, Vector output) {
+            CorrelationKey key = orderedKey(input, rowIndex);
+            if (key == null) {
+                emptyResult.writeTo(output, rowIndex);
+                return;
+            }
+            ScalarAggregateValue value = orderedResults.get(key);
+            if (value == null) {
+                value = aggregateFor(key);
+                orderedResults.put(key, value);
+            }
+            value.writeTo(output, rowIndex);
+        }
+
+        private CorrelationKey orderedKey(DataChunk input, int rowIndex) {
+            ArrayList<KeyValue> values = new ArrayList<>(orderedPlan.equalities().size() + orderedPlan.comparisons().size());
+            for (CorrelatedEquality equality : orderedPlan.equalities()) {
+                KeyValue value = keyValue(input.column(equality.outerOrdinal()), rowIndex, equality.keyType());
+                if (value.isNull()) {
+                    return null;
+                }
+                values.add(value);
+            }
+            for (CorrelatedComparison comparison : orderedPlan.comparisons()) {
+                KeyValue value = keyValue(input.column(comparison.outerOrdinal()), rowIndex, comparison.keyType());
+                if (value.isNull()) {
+                    return null;
+                }
+                values.add(value);
+            }
+            return new CorrelationKey(List.copyOf(values));
+        }
+
+        private ScalarAggregateValue aggregateFor(CorrelationKey key) {
+            ScalarAggregateHashTable aggregates = new ScalarAggregateHashTable(1, countRows(orderedChunks));
+            for (DataChunk chunk : orderedChunks) {
+                Vector residual = orderedPlan.residual() == null ? null : expressionExecutor.execute(orderedPlan.residual(), chunk);
+                Vector argument = orderedPlan.aggregate().starArgument()
+                        ? null
+                        : expressionExecutor.execute(orderedPlan.aggregate().arguments().getFirst(), chunk);
+                for (int rowIndex = 0; rowIndex < chunk.cardinality(); rowIndex++) {
+                    if (!matchesResidual(residual, rowIndex) || !matchesOrderedCorrelations(key, chunk, rowIndex)) {
+                        continue;
+                    }
+                    aggregates.update(0L, 0L, orderedPlan.aggregate(), argument, rowIndex, orderedPlan.aggregate().starArgument());
+                }
+            }
+            aggregates.finish(orderedPlan.aggregate(), orderedPlan.outputExpression(), marker.logicalType(), expressionExecutor);
+            ScalarAggregateValue value = aggregates.result(0L, 0L);
+            return value == null ? emptyResult : value;
+        }
+
+        private boolean matchesOrderedCorrelations(CorrelationKey key, DataChunk chunk, int rowIndex) {
+            int index = 0;
+            for (CorrelatedEquality equality : orderedPlan.equalities()) {
+                KeyValue inner = keyValue(chunk.column(equality.innerOrdinal()), rowIndex, equality.keyType());
+                if (inner.isNull() || inner.value() != key.values().get(index++).value()) {
+                    return false;
+                }
+            }
+            for (CorrelatedComparison comparison : orderedPlan.comparisons()) {
+                KeyValue inner = keyValue(chunk.column(comparison.innerOrdinal()), rowIndex, comparison.keyType());
+                if (inner.isNull() || !matchesComparison(inner.value(), key.values().get(index++).value(), comparison.operator())) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private boolean matchesComparison(long inner, long outer, BinaryOperator operator) {
+            return switch (operator) {
+                case NOT_EQUAL -> inner != outer;
+                case LESS_THAN -> inner < outer;
+                case LESS_THAN_OR_EQUAL -> inner <= outer;
+                case GREATER_THAN -> inner > outer;
+                case GREATER_THAN_OR_EQUAL -> inner >= outer;
+                default -> throw new IllegalArgumentException("Not an ordered comparison: " + operator);
+            };
+        }
+
         private int keyCount() {
-            return results.size();
+            return orderedPlan == null ? results.size() : orderedResults.size();
+        }
+    }
+
+    private record CorrelationKey(List<KeyValue> values) {
+        private CorrelationKey {
+            values = List.copyOf(values);
         }
     }
 

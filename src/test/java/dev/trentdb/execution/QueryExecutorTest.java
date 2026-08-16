@@ -207,6 +207,58 @@ class QueryExecutorTest {
     }
 
     @Test
+    void executesOrderedCorrelatedExistsPredicateWithNullSafeSemantics() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+        TableCatalogEntry orders = fixture.catalog().lookupTable(fixture.transaction(), new QualifiedName(List.of("orders")));
+        InMemoryTableStorage orderStorage = fixture.storageManager().getTable(orders);
+        for (long personId = 3L; personId <= 20L; personId++) {
+            orderStorage.appendRow(List.of(personId, 0L));
+        }
+
+        QueryResult lessThan = execute(
+                fixture,
+                "SELECT name FROM people p WHERE EXISTS (SELECT 1 FROM orders o WHERE o.person_id < p.id) ORDER BY name"
+        );
+        QueryResult reversed = execute(
+                fixture,
+                "SELECT name FROM people p WHERE EXISTS (SELECT 1 FROM orders o WHERE p.id > o.person_id) ORDER BY name"
+        );
+
+        assertEquals(List.of(List.of("Bob"), List.of("Charlie")), lessThan.rows());
+        assertEquals(lessThan.rows(), reversed.rows());
+    }
+
+    @Test
+    void executesOrderedCorrelatedScalarCountWithCachingNullsAndResiduals() {
+        Fixture fixture = peopleOrdersWithUnmatchedFixture();
+        TableCatalogEntry people = fixture.catalog().lookupTable(fixture.transaction(), new QualifiedName(List.of("people")));
+        TableCatalogEntry orders = fixture.catalog().lookupTable(fixture.transaction(), new QualifiedName(List.of("orders")));
+        fixture.storageManager().getTable(people).appendRow(java.util.Arrays.asList(null, "Nobody"));
+        InMemoryTableStorage orderStorage = fixture.storageManager().getTable(orders);
+        orderStorage.appendRow(List.of(0L, 0L));
+        for (long personId = 3L; personId <= 20L; personId++) {
+            orderStorage.appendRow(List.of(personId, 0L));
+        }
+
+        QueryResult ordered = execute(fixture, "SELECT name, (SELECT count(*) FROM orders o WHERE o.person_id < p.id) FROM people p ORDER BY name");
+        QueryResult reversed = execute(fixture, "SELECT name, (SELECT count(*) FROM orders o WHERE p.id > o.person_id) FROM people p ORDER BY name");
+        QueryResult residual = execute(fixture, "SELECT name, (SELECT count(*) FROM orders o WHERE o.person_id < p.id AND o.total > 15) FROM people p ORDER BY name");
+        QueryResult twoPredicates = execute(fixture, "SELECT name, (SELECT count(*) FROM orders o WHERE o.person_id < p.id AND o.total < p.id) FROM people p ORDER BY name");
+
+        assertEquals(List.of(
+                List.of("Alice", 1L), List.of("Bob", 3L), List.of("Charlie", 4L), List.of("Nobody", 0L)
+        ), ordered.rows());
+        assertEquals(ordered.rows(), reversed.rows());
+        assertEquals(List.of(
+                List.of("Alice", 0L), List.of("Bob", 1L), List.of("Charlie", 2L), List.of("Nobody", 0L)
+        ), residual.rows());
+        assertEquals(List.of(
+                List.of("Alice", 1L), List.of("Bob", 1L), List.of("Charlie", 1L), List.of("Nobody", 0L)
+        ), twoPredicates.rows());
+    }
+
+    @Test
+
     void executesLikePredicate() {
         Fixture fixture = peopleFixture();
 
@@ -237,6 +289,84 @@ class QueryExecutorTest {
 
         assertEquals(List.of("label"), result.columns());
         assertEquals(List.of(List.of("one"), List.of("two")), result.rows());
+    }
+
+    @Test
+    void executesSimpleCaseWithNumericCoercion() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(
+                fixture,
+                "SELECT CASE id WHEN 1.0 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END AS label FROM people"
+        );
+
+        assertEquals(List.of("label"), result.columns());
+        assertEquals(List.of(List.of("one"), List.of("two")), result.rows());
+    }
+
+    @Test
+    void executesNullChecksAcrossTypesAndFilterRows() {
+        Fixture fixture = peopleWithNullFixture();
+
+        QueryResult projections = execute(fixture, "SELECT id IS NULL AS id_null, name IS NULL AS name_null, name IS NOT NULL AS has_name FROM people ORDER BY id");
+        QueryResult filter = execute(fixture, "SELECT id FROM people WHERE name IS NULL");
+
+        assertEquals(List.of(List.of(false, false, true), List.of(false, true, false)), projections.rows());
+        assertEquals(List.of(List.of(2L)), filter.rows());
+    }
+
+    @Test
+    void foldsConstantNullChecksToNonNullBooleans() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT NULL IS NULL AS null_value, CAST(NULL AS BIGINT) IS NOT NULL AS typed_null, 1 IS NOT NULL AS integer_value, 'text' IS NULL AS text_value FROM people LIMIT 1");
+
+        assertEquals(List.of(List.of(true, false, true, false)), result.rows());
+    }
+
+    @Test
+    void executesNotBetweenWithNumericCoercionAndThreeValuedLogic() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult numeric = execute(fixture, "SELECT id NOT BETWEEN 1.0 AND 1.0 AS outside_range FROM people ORDER BY id");
+        QueryResult nulls = execute(fixture, "SELECT id NOT BETWEEN NULL AND 2 AS unknown_range FROM people ORDER BY id");
+        QueryResult filter = execute(fixture, "SELECT id FROM people WHERE id NOT BETWEEN 1 AND 1");
+
+        assertEquals(List.of(List.of(false), List.of(true)), numeric.rows());
+        assertEquals(java.util.Arrays.asList(java.util.Arrays.asList((Object) null), java.util.Arrays.asList((Object) null)), nulls.rows());
+        assertEquals(List.of(List.of(2L)), filter.rows());
+    }
+
+
+    @Test
+    void executesVariadicCoalesceLeftToRightWithNulls() {
+        Fixture fixture = peopleWithNullFixture();
+
+        QueryResult result = execute(fixture, "SELECT coalesce(name, 'unknown', 'unused') AS name FROM people ORDER BY id");
+
+        assertEquals(List.of("name"), result.columns());
+        assertEquals(List.of(List.of("Alice"), List.of("unknown")), result.rows());
+    }
+
+    @Test
+    void coalesceWidensNumericArgumentsAndPreservesAllNullRows() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult numeric = execute(fixture, "SELECT coalesce(NULL, id, 3.5) AS value FROM people ORDER BY id");
+        QueryResult nulls = execute(fixture, "SELECT coalesce(NULL, NULL) AS value FROM people LIMIT 1");
+
+        assertEquals(List.of(List.of(1.0d), List.of(2.0d)), numeric.rows());
+        assertEquals(List.of(java.util.Arrays.asList((Object) null)), nulls.rows());
+    }
+
+    @Test
+    void simpleCaseDoesNotMatchNullBaseToNullWhenValue() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT CASE NULL WHEN NULL THEN 1 ELSE 2 END AS value FROM people LIMIT 1");
+
+        assertEquals(List.of("value"), result.columns());
+        assertEquals(List.of(List.of(2L)), result.rows());
     }
 
     @Test
@@ -826,6 +956,19 @@ class QueryExecutorTest {
         assertEquals(List.of(
                 List.of("alice"),
                 List.of("bob")
+        ), result.rows());
+    }
+
+    @Test
+    void executesNumericAbsFunction() {
+        Fixture fixture = peopleFixture();
+
+        QueryResult result = execute(fixture, "SELECT abs(id - 3) AS distance FROM people ORDER BY id");
+
+        assertEquals(List.of("distance"), result.columns());
+        assertEquals(List.of(
+                List.of(2L),
+                List.of(1L)
         ), result.rows());
     }
 

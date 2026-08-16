@@ -42,7 +42,8 @@ final class HavingAliasResolver {
             case BetweenExpression between -> new BetweenExpression(
                     resolve(between.input()),
                     resolve(between.lower()),
-                    resolve(between.upper())
+                    resolve(between.upper()),
+                    between.negated()
             );
             case BinaryExpression binary -> new BinaryExpression(
                     resolve(binary.left()),

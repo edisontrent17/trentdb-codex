@@ -10,9 +10,29 @@ sqlScript
 
 statement
     : createTable
+    | dropTable
+    | createIndex
+    | dropIndex
     | insert
+    | delete
+    | update
+    | beginTransaction
+    | commitTransaction
+    | rollbackTransaction
     | select
     | explain
+    ;
+
+beginTransaction
+    : BEGIN TRANSACTION?
+    ;
+
+commitTransaction
+    : COMMIT
+    ;
+
+rollbackTransaction
+    : ROLLBACK
     ;
 
 explain
@@ -23,18 +43,54 @@ createTable
     : CREATE TABLE qualifiedName LPAREN columnDef (COMMA columnDef)* RPAREN
     ;
 
+dropTable
+    : DROP TABLE qualifiedName
+    ;
+
+createIndex
+    : CREATE UNIQUE? INDEX qualifiedName ON qualifiedName LPAREN indexKey (COMMA indexKey)* RPAREN
+    ;
+
+dropIndex
+    : DROP INDEX qualifiedName
+    ;
+
+indexKey
+    : identifier (ASC | DESC)?
+    ;
+
 columnDef
     : identifier typeName
     ;
 
+delete
+    : DELETE FROM qualifiedName (WHERE expression)?
+    ;
+
+update
+    : UPDATE qualifiedName SET identifier EQ expression (WHERE expression)?
+    ;
+
 insert
-    : INSERT INTO qualifiedName (LPAREN identifierList RPAREN)? VALUES LPAREN expressionList RPAREN
+    : INSERT INTO qualifiedName (LPAREN identifierList RPAREN)? VALUES LPAREN expressionList RPAREN (COMMA LPAREN expressionList RPAREN)*
     ;
 
 select
-    : withClause? SELECT selectItemList FROM fromItem (whereClause)? (groupByClause)? (havingClause)? (orderByClause)? (limitClause)?
+    : withClause? unionExcept (orderByClause)? (limitClause)?
     ;
 
+// INTERSECT binds tighter than the left-associative UNION and EXCEPT level.
+unionExcept
+    : intersect ((UNION ALL? | EXCEPT) intersect)*
+    ;
+
+intersect
+    : selectCore (INTERSECT selectCore)*
+    ;
+
+selectCore
+    : SELECT selectItemList FROM fromItem (whereClause)? (groupByClause)? (havingClause)?
+    ;
 withClause
     : WITH commonTableExpression (COMMA commonTableExpression)*
     ;
@@ -133,7 +189,7 @@ predicate
     | valueExpression NOT? LIKE valueExpression             #likePredicate
     | valueExpression NOT? IN LPAREN expressionList RPAREN  #inListPredicate
     | valueExpression NOT? IN LPAREN select RPAREN          #inSubqueryPredicate
-    | valueExpression BETWEEN valueExpression AND valueExpression #betweenPredicate
+    | valueExpression NOT? BETWEEN valueExpression AND valueExpression #betweenPredicate
     | valueExpression comparisonOperator valueExpression    #comparisonPredicate
     | valueExpression                                       #valuePredicate
     ;
@@ -203,7 +259,11 @@ castExpression
     ;
 
 caseExpression
-    : CASE caseWhenClause+ (ELSE expression)? END
+    : CASE caseOperand? caseWhenClause+ (ELSE expression)? END
+    ;
+
+caseOperand
+    : expression
     ;
 
 caseWhenClause
@@ -216,11 +276,17 @@ qualifiedName
 
 typeName
     : INT_T
+    | INTEGER_T
     | BIGINT_T
     | DOUBLE_T PRECISION_T?
     | BOOLEAN_T
     | TEXT_T
+    | VARCHAR_T (LPAREN positiveInteger RPAREN)?
     | DATE_T
+    ;
+
+positiveInteger
+    : INTEGER_LITERAL
     ;
 
 literal
@@ -251,6 +317,7 @@ integerLiteral
     : INTEGER_LITERAL
     ;
 
+
 decimalLiteral
     : DECIMAL_LITERAL
     ;
@@ -264,12 +331,26 @@ identifier
     | QUOTED_IDENTIFIER
     ;
 
+BEGIN: 'BEGIN';
+TRANSACTION: 'TRANSACTION';
+COMMIT: 'COMMIT';
+ROLLBACK: 'ROLLBACK';
 CREATE: 'CREATE';
+INDEX: 'INDEX';
+UNIQUE: 'UNIQUE';
+DROP: 'DROP';
 TABLE: 'TABLE';
 INSERT: 'INSERT';
+DELETE: 'DELETE';
+UPDATE: 'UPDATE';
+SET: 'SET';
 INTO: 'INTO';
 VALUES: 'VALUES';
 SELECT: 'SELECT';
+UNION: 'UNION';
+EXCEPT: 'EXCEPT';
+INTERSECT: 'INTERSECT';
+ALL: 'ALL';
 WITH: 'WITH';
 FROM: 'FROM';
 WHERE: 'WHERE';
@@ -313,11 +394,13 @@ ASC: 'ASC';
 DESC: 'DESC';
 DISTINCT: 'DISTINCT';
 INT_T: 'INT';
+INTEGER_T: 'INTEGER';
 BIGINT_T: 'BIGINT';
 DOUBLE_T: 'DOUBLE';
 PRECISION_T: 'PRECISION';
 BOOLEAN_T: 'BOOLEAN';
 TEXT_T: 'TEXT';
+VARCHAR_T: 'VARCHAR';
 DATE_T: 'DATE';
 
 EQ: '=';

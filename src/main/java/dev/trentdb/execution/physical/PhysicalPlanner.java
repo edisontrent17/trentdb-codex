@@ -4,6 +4,7 @@ import dev.trentdb.ast.BinaryOperator;
 import dev.trentdb.ast.JoinType;
 import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.execution.ExecutionException;
+import dev.trentdb.execution.ddl.TransactionalDdlExecutor;
 import dev.trentdb.execution.ExpressionExecutor;
 import dev.trentdb.planner.BoundAggregateExpression;
 import dev.trentdb.planner.BoundBetweenExpression;
@@ -18,11 +19,19 @@ import dev.trentdb.planner.BoundInExpression;
 import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundNullCheckExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundExpressionTypes;
 import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.planner.logical.LogicalAggregate;
 import dev.trentdb.planner.logical.LogicalDependentJoin;
+import dev.trentdb.planner.logical.LogicalCreateTable;
+import dev.trentdb.planner.logical.LogicalDropTable;
+import dev.trentdb.planner.logical.LogicalCreateIndex;
+import dev.trentdb.planner.logical.LogicalDropIndex;
+import dev.trentdb.planner.logical.LogicalInsert;
+import dev.trentdb.planner.logical.LogicalDelete;
+import dev.trentdb.planner.logical.LogicalUpdate;
 import dev.trentdb.planner.logical.LogicalExplain;
 import dev.trentdb.planner.logical.LogicalFilter;
 import dev.trentdb.planner.logical.LogicalGet;
@@ -31,6 +40,7 @@ import dev.trentdb.planner.logical.LogicalLimit;
 import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.planner.logical.LogicalOrder;
 import dev.trentdb.planner.logical.LogicalProjection;
+import dev.trentdb.planner.logical.LogicalSetOperation;
 import dev.trentdb.planner.BoundTableRef;
 import dev.trentdb.storage.StorageManager;
 import dev.trentdb.types.LogicalType;
@@ -52,14 +62,27 @@ public final class PhysicalPlanner {
 
     private final StorageManager storageManager;
     private final ExpressionExecutor expressionExecutor;
+    private final TransactionalDdlExecutor ddlExecutor;
 
     public PhysicalPlanner(StorageManager storageManager) {
+        this(storageManager, null);
+    }
+
+    public PhysicalPlanner(StorageManager storageManager, TransactionalDdlExecutor ddlExecutor) {
         this.storageManager = storageManager;
         this.expressionExecutor = new ExpressionExecutor(storageManager);
+        this.ddlExecutor = ddlExecutor;
     }
 
     public Pipeline plan(LogicalOperator logical) {
         PhysicalResultCollector sink = new PhysicalResultCollector();
+        if (logical instanceof LogicalCreateTable create) return new Pipeline(new PhysicalCreateTable(requireDdlExecutor(), create), java.util.List.of(), sink);
+        if (logical instanceof LogicalDropTable drop) return new Pipeline(new PhysicalDropTable(requireDdlExecutor(), drop), java.util.List.of(), sink);
+        if (logical instanceof LogicalCreateIndex create) return new Pipeline(new PhysicalCreateIndex(requireDdlExecutor(), create), java.util.List.of(), sink);
+        if (logical instanceof LogicalDropIndex drop) return new Pipeline(new PhysicalDropIndex(requireDdlExecutor(), drop), java.util.List.of(), sink);
+        if (logical instanceof LogicalInsert insert) return new Pipeline(new PhysicalInsert(requireDdlExecutor(), insert), java.util.List.of(), sink);
+        if (logical instanceof LogicalDelete delete) return new Pipeline(new PhysicalDelete(requireDdlExecutor(), delete), java.util.List.of(), sink);
+        if (logical instanceof LogicalUpdate update) return new Pipeline(new PhysicalUpdate(requireDdlExecutor(), update), java.util.List.of(), sink);
         if (logical instanceof LogicalExplain explain) {
             Pipeline physicalPlan = planQuery(explain.child());
             return new Pipeline(new PhysicalExplain(explain.child(), physicalPlan), java.util.List.of(), sink);
@@ -67,8 +90,20 @@ public final class PhysicalPlanner {
         return planQuery(logical);
     }
 
+    private TransactionalDdlExecutor requireDdlExecutor() {
+        if (ddlExecutor == null) throw new ExecutionException("Transactional DDL/DML execution context is required");
+        return ddlExecutor;
+    }
+
     private Pipeline planQuery(LogicalOperator logical) {
         PhysicalResultCollector sink = new PhysicalResultCollector();
+        if (logical instanceof LogicalCreateTable create) return new Pipeline(new PhysicalCreateTable(requireDdlExecutor(), create), java.util.List.of(), sink);
+        if (logical instanceof LogicalDropTable drop) return new Pipeline(new PhysicalDropTable(requireDdlExecutor(), drop), java.util.List.of(), sink);
+        if (logical instanceof LogicalCreateIndex create) return new Pipeline(new PhysicalCreateIndex(requireDdlExecutor(), create), java.util.List.of(), sink);
+        if (logical instanceof LogicalDropIndex drop) return new Pipeline(new PhysicalDropIndex(requireDdlExecutor(), drop), java.util.List.of(), sink);
+        if (logical instanceof LogicalInsert insert) return new Pipeline(new PhysicalInsert(requireDdlExecutor(), insert), java.util.List.of(), sink);
+        if (logical instanceof LogicalDelete delete) return new Pipeline(new PhysicalDelete(requireDdlExecutor(), delete), java.util.List.of(), sink);
+        if (logical instanceof LogicalUpdate update) return new Pipeline(new PhysicalUpdate(requireDdlExecutor(), update), java.util.List.of(), sink);
         ArrayList<PhysicalOperator> operators = new ArrayList<>();
         PhysicalSource source = buildPipeline(logical, operators);
         return new Pipeline(source, operators, sink);
@@ -144,8 +179,14 @@ public final class PhysicalPlanner {
             operators.add(new PhysicalOrder(order.orders(), expressionExecutor));
             return source;
         }
+        if (logical instanceof LogicalSetOperation set) {
+            List<ColumnCatalogEntry> columns = columns(set.left());
+            return new PhysicalSetOperation(
+                    set.operation(), planQuery(set.left()), planQuery(set.right()), names(columns), types(columns)
+            );
+        }
         if (logical instanceof LogicalGet get) {
-            return new PhysicalTableScan(storageManager, get.tableRef(), get.projectedOrdinals());
+            return new PhysicalTableScan(storageManager, get.tableRef(), get.projectedOrdinals(), ddlExecutor == null ? null : ddlExecutor.transaction());
         }
         if (logical instanceof LogicalJoin join) {
             PhysicalSource source = buildPipeline(join.left(), operators);
@@ -401,6 +442,7 @@ public final class PhysicalPlanner {
                     scopeOf(binary.right(), leftColumnCount, rightColumnCount)
             );
             case BoundCastExpression cast -> scopeOf(cast.child(), leftColumnCount, rightColumnCount);
+            case BoundNullCheckExpression nullCheck -> scopeOf(nullCheck.expression(), leftColumnCount, rightColumnCount);
             case BoundCaseExpression caseExpression -> {
                 PredicateScope scope = scopeOf(caseExpression.elseExpression(), leftColumnCount, rightColumnCount);
                 for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
@@ -474,7 +516,8 @@ public final class PhysicalPlanner {
             case BoundBetweenExpression between -> new BoundBetweenExpression(
                     rewriteForJoinSide(between.input(), leftColumnCount, side),
                     rewriteForJoinSide(between.lower(), leftColumnCount, side),
-                    rewriteForJoinSide(between.upper(), leftColumnCount, side)
+                    rewriteForJoinSide(between.upper(), leftColumnCount, side),
+                    between.negated()
             );
             case BoundBinaryExpression binary -> new BoundBinaryExpression(
                     rewriteForJoinSide(binary.left(), leftColumnCount, side),
@@ -486,6 +529,8 @@ public final class PhysicalPlanner {
                     rewriteForJoinSide(cast.child(), leftColumnCount, side),
                     cast.logicalType()
             );
+            case BoundNullCheckExpression nullCheck -> new BoundNullCheckExpression(
+                    rewriteForJoinSide(nullCheck.expression(), leftColumnCount, side), nullCheck.negated());
             case BoundCaseExpression caseExpression -> {
                 ArrayList<BoundCaseExpression.WhenClause> branches = new ArrayList<>(caseExpression.branches().size());
                 for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
@@ -599,6 +644,9 @@ public final class PhysicalPlanner {
                 ));
             }
             return result;
+        }
+        if (logical instanceof LogicalSetOperation set) {
+            return columns(set.left());
         }
         throw new ExecutionException("Cannot derive output columns for " + logical.getClass().getSimpleName());
     }
