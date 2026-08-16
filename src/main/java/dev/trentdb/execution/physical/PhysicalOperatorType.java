@@ -12,5 +12,16 @@ public enum PhysicalOperatorType {
     ORDER_BY,
     HASH_GROUP_BY,
     EXPLAIN,
-    RESULT_COLLECTOR
+    CREATE_TABLE,
+    DROP_TABLE,
+    CREATE_INDEX,
+    DROP_INDEX,
+    INSERT,
+    DELETE,
+    UPDATE,
+    RESULT_COLLECTOR,
+    UNION,
+    UNION_ALL,
+    EXCEPT,
+    INTERSECT
 }

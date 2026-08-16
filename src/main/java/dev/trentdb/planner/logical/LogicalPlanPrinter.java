@@ -21,6 +21,34 @@ public final class LogicalPlanPrinter {
 
     private Node node(LogicalOperator operator) {
         return switch (operator) {
+            case LogicalCreateTable create -> Node.of(
+                    "CREATE_TABLE",
+                    List.of(Entry.of("Table", String.join(".", create.statement().statement().name().parts()))),
+                    List.of()
+            );
+            case LogicalDelete delete -> new Node("DELETE", List.of(Entry.of("table", delete.statement().table().name())), List.of());
+            case LogicalUpdate update -> new Node("UPDATE", List.of(Entry.of("table", update.statement().table().name()), Entry.of("column", update.statement().table().columns().get(update.statement().targetOrdinal()).name())), List.of());
+            case LogicalInsert insert -> Node.of(
+                    "INSERT",
+                    List.of(Entry.of("Table", insert.statement().table().schema().name() + "." + insert.statement().table().name())),
+                    List.of()
+            );
+            case LogicalDropTable drop -> Node.of(
+                    "DROP_TABLE",
+                    List.of(Entry.of("Table", String.join(".", drop.statement().statement().name().parts()))),
+                    List.of()
+            );
+            case LogicalCreateIndex create -> Node.of(
+                    "CREATE_INDEX",
+                    List.of(Entry.of("Index", String.join(".", create.statement().statement().name().parts())),
+                            Entry.of("Table", String.join(".", create.statement().statement().tableName().parts()))),
+                    List.of()
+            );
+            case LogicalDropIndex drop -> Node.of(
+                    "DROP_INDEX",
+                    List.of(Entry.of("Index", String.join(".", drop.statement().statement().name().parts()))),
+                    List.of()
+            );
             case LogicalAggregate aggregate -> Node.of(
                     "AGGREGATE",
                     aggregateEntries(aggregate),
@@ -56,6 +84,9 @@ public final class LogicalPlanPrinter {
                     "ORDER_BY",
                     List.of(Entry.of("Order By", orderEntries(order.orders()))),
                     List.of(node(order.child()))
+            );
+            case LogicalSetOperation set -> Node.of(
+                    set.operation().name(), List.of(), List.of(node(set.left()), node(set.right()))
             );
             case LogicalGet get -> getNode(get);
         };

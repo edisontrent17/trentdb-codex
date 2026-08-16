@@ -10,10 +10,11 @@ public final class BoundExpressionPrinter {
                     + (aggregate.distinct() ? "DISTINCT " : "")
                     + (aggregate.starArgument() ? "*" : printList(aggregate.arguments())) + ")";
             case BoundBetweenExpression between -> "(" + print(between.input())
-                    + " BETWEEN " + print(between.lower()) + " AND " + print(between.upper()) + ")";
+                    + (between.negated() ? " NOT BETWEEN " : " BETWEEN ") + print(between.lower()) + " AND " + print(between.upper()) + ")";
             case BoundBinaryExpression binary -> "(" + print(binary.left())
                     + " " + binary.operator().name() + " " + print(binary.right()) + ")";
             case BoundCaseExpression caseExpression -> printCase(caseExpression);
+            case BoundNullCheckExpression nullCheck -> print(nullCheck.expression()) + (nullCheck.negated() ? " IS NOT NULL" : " IS NULL");
             case BoundCastExpression cast -> "CAST(" + print(cast.child()) + " AS " + cast.logicalType().id().name() + ")";
             case BoundColumnRefExpression column -> column.name() + "#" + column.ordinal();
             case BoundFunctionExpression function -> function.name() + "(" + printList(function.arguments()) + ")";

@@ -128,6 +128,84 @@ class BinderTest {
     }
 
     @Test
+    void bindsTypeAgnosticNullChecksAsBooleanPredicates() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT id IS NULL, name IS NOT NULL FROM people");
+
+        BoundNullCheckExpression nullCheck = assertInstanceOf(BoundNullCheckExpression.class, bound.selectList().get(0));
+        assertEquals(LogicalType.BOOLEAN, nullCheck.logicalType());
+        assertEquals(false, nullCheck.negated());
+        assertInstanceOf(BoundColumnRefExpression.class, nullCheck.expression());
+        BoundNullCheckExpression notNullCheck = assertInstanceOf(BoundNullCheckExpression.class, bound.selectList().get(1));
+        assertEquals(true, notNullCheck.negated());
+    }
+
+    @Test
+    void bindsNotBetweenWithoutDuplicatingItsInputExpression() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT abs(id) NOT BETWEEN 1.5 AND 2.5 FROM people");
+
+        BoundBetweenExpression between = assertInstanceOf(BoundBetweenExpression.class, bound.selectList().getFirst());
+        assertEquals(true, between.negated());
+        assertInstanceOf(BoundFunctionExpression.class, between.input());
+        assertEquals(LogicalType.BOOLEAN, between.logicalType());
+    }
+
+
+
+    @Test
+    void bindsVariadicCoalesceWithLeastCommonNumericType() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(fixture, "SELECT coalesce(NULL, id, 3.5) FROM people");
+
+        BoundFunctionExpression function = assertInstanceOf(BoundFunctionExpression.class, bound.selectList().getFirst());
+        assertEquals("coalesce", function.name());
+        assertEquals(3, function.arguments().size());
+        assertEquals(LogicalType.DOUBLE, function.logicalType());
+    }
+
+    @Test
+    void coalesceRejectsZeroArguments() {
+        Fixture fixture = peopleFixture();
+
+        FunctionException error = assertThrows(FunctionException.class, () -> bindSelect(fixture, "SELECT coalesce() FROM people"));
+
+        assertEquals("Scalar function coalesce expects at least 1 argument", error.getMessage());
+    }
+
+    @Test
+    void coalesceRejectsIncompatibleArgumentTypes() {
+        Fixture fixture = peopleFixture();
+
+        FunctionException error = assertThrows(
+                FunctionException.class,
+                () -> bindSelect(fixture, "SELECT coalesce(id, name) FROM people")
+        );
+
+        assertEquals("Scalar function coalesce arguments are incompatible: BIGINT and TEXT", error.getMessage());
+    }
+
+    @Test
+    void bindsSimpleCaseWithSeparateBaseAndMatchExpressions() {
+        Fixture fixture = peopleFixture();
+
+        BoundSelectStatement bound = bindSelect(
+                fixture,
+                "SELECT CASE id WHEN 1.0 THEN 'one' ELSE 'other' END FROM people"
+        );
+
+        BoundCaseExpression caseExpression = assertInstanceOf(BoundCaseExpression.class, bound.selectList().getFirst());
+        BoundColumnRefExpression base = assertInstanceOf(BoundColumnRefExpression.class, caseExpression.baseExpression());
+        assertEquals("id", base.name());
+        BoundLiteralExpression match = assertInstanceOf(
+                BoundLiteralExpression.class, caseExpression.branches().getFirst().condition());
+        assertEquals(LogicalType.DOUBLE, match.logicalType());
+    }
+
+    @Test
     void bindsExtractAsDatePartFunction() {
         Fixture fixture = peopleFixture();
 
@@ -394,6 +472,29 @@ class BinderTest {
     }
 
     @Test
+    void bindsOrderedCorrelatedExistsWithItsOuterReference() {
+        Fixture fixture = peopleFixture();
+        fixture.catalog.createTable(
+                fixture.transaction,
+                new QualifiedName(List.of("orders")),
+                List.of(new ColumnDefinition("person_id", TypeName.BIGINT))
+        );
+
+        BoundSelectStatement bound = bindSelect(
+                fixture,
+                "SELECT id FROM people p WHERE EXISTS (SELECT 1 FROM orders o WHERE o.person_id < p.id)"
+        );
+
+        BoundExistsSubqueryExpression exists = assertInstanceOf(BoundExistsSubqueryExpression.class, bound.where());
+        BoundBinaryExpression comparison = assertInstanceOf(BoundBinaryExpression.class, exists.subquery().where());
+        assertTrue(exists.isCorrelated());
+        assertEquals(2, exists.correlatedColumns().size());
+        assertEquals(BinaryOperator.LESS_THAN, comparison.operator());
+        assertEquals(0, exists.correlatedColumns().getFirst().outerOrdinal());
+    }
+
+    @Test
+
     void bindsWhereInSubqueryPredicate() {
         Fixture fixture = peopleFixture();
         fixture.catalog.createTable(
@@ -820,6 +921,20 @@ class BinderTest {
         LogicalAggregate aggregate = assertInstanceOf(LogicalAggregate.class, projection.child());
         assertEquals(LogicalOperatorType.LOGICAL_AGGREGATE_AND_GROUP_BY, aggregate.type());
     }
+
+    @Test
+    void bindsVarcharCreateColumnsAsText() {
+        Fixture fixture = emptyFixture();
+        Statement statement = parser.parse("CREATE TABLE strings (plain VARCHAR, sized VARCHAR(30), text_value TEXT)");
+
+        BoundCreateTableStatement create = assertInstanceOf(
+                BoundCreateTableStatement.class, new Binder(fixture.catalog).bind(fixture.transaction, statement));
+        assertEquals(TypeName.TEXT, create.statement().columns().get(0).type());
+        assertEquals(TypeName.TEXT, create.statement().columns().get(1).type());
+        assertEquals(TypeName.TEXT, create.statement().columns().get(2).type());
+        assertEquals(LogicalType.TEXT, LogicalType.from(create.statement().columns().get(1).type()));
+    }
+
 
     @Test
     void bindsExplainSelect() {

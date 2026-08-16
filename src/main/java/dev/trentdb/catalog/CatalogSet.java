@@ -31,6 +31,7 @@ final class CatalogSet<T extends CatalogEntry> {
             case SCHEMA -> "Schema";
             case TABLE -> "Table";
             case COLUMN -> "Column";
+            case INDEX -> "Index";
         };
     }
 }

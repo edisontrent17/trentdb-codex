@@ -12,6 +12,13 @@ import dev.trentdb.planner.BoundExistsSubqueryExpression;
 import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundExpressionTypes;
 import dev.trentdb.planner.BoundExplainStatement;
+import dev.trentdb.planner.BoundCreateTableStatement;
+import dev.trentdb.planner.BoundDropTableStatement;
+import dev.trentdb.planner.BoundCreateIndexStatement;
+import dev.trentdb.planner.BoundDropIndexStatement;
+import dev.trentdb.planner.BoundDeleteStatement;
+import dev.trentdb.planner.BoundUpdateStatement;
+import dev.trentdb.planner.BoundInsertStatement;
 import dev.trentdb.planner.BoundFrom;
 import dev.trentdb.planner.BoundFunctionExpression;
 import dev.trentdb.planner.BoundInExpression;
@@ -19,6 +26,7 @@ import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundJoinRef;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundNullCheckExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSelectStatement;
 import dev.trentdb.planner.BoundStatement;
@@ -58,6 +66,27 @@ public final class LogicalPlanner {
         if (statement instanceof BoundExplainStatement explain) {
             return new LogicalExplain(plan(explain.statement()));
         }
+        if (statement instanceof BoundCreateTableStatement create) {
+            return new LogicalCreateTable(create);
+        }
+        if (statement instanceof BoundDropTableStatement drop) {
+            return new LogicalDropTable(drop);
+        }
+        if (statement instanceof BoundCreateIndexStatement create) {
+            return new LogicalCreateIndex(create);
+        }
+        if (statement instanceof BoundDropIndexStatement drop) {
+            return new LogicalDropIndex(drop);
+        }
+        if (statement instanceof BoundDeleteStatement delete) {
+            return new LogicalDelete(delete);
+        }
+        if (statement instanceof BoundUpdateStatement update) {
+            return new LogicalUpdate(update);
+        }
+        if (statement instanceof BoundInsertStatement insert) {
+            return new LogicalInsert(insert);
+        }
         if (statement instanceof BoundSelectStatement select) {
             return planSelect(select);
         }
@@ -65,6 +94,9 @@ public final class LogicalPlanner {
     }
 
     private LogicalOperator planSelect(BoundSelectStatement statement) {
+        if (statement.isCompound()) {
+            return new LogicalSetOperation(statement.setOperation(), planSelect(statement.left()), planSelect(statement.right()));
+        }
         LogicalOperator root = planFrom(statement.from());
         if (statement.where() != null) {
             root = planWhere(root, statement.where());
@@ -194,7 +226,8 @@ public final class LogicalPlanner {
             case BoundBetweenExpression between -> new BoundBetweenExpression(
                     rewriteAggregateProjection(between.input(), groups, outputs, names),
                     rewriteAggregateProjection(between.lower(), groups, outputs, names),
-                    rewriteAggregateProjection(between.upper(), groups, outputs, names)
+                    rewriteAggregateProjection(between.upper(), groups, outputs, names),
+                    between.negated()
             );
             case BoundBinaryExpression binary -> new BoundBinaryExpression(
                     rewriteAggregateProjection(binary.left(), groups, outputs, names),
@@ -203,6 +236,8 @@ public final class LogicalPlanner {
                     binary.logicalType()
             );
             case BoundCaseExpression caseExpression -> rewriteCaseExpression(caseExpression, groups, outputs, names);
+            case BoundNullCheckExpression nullCheck -> new BoundNullCheckExpression(
+                    rewriteAggregateProjection(nullCheck.expression(), groups, outputs, names), nullCheck.negated());
             case BoundCastExpression cast -> new BoundCastExpression(
                     rewriteAggregateProjection(cast.child(), groups, outputs, names),
                     cast.logicalType()
@@ -238,6 +273,8 @@ public final class LogicalPlanner {
             ));
         }
         return new BoundCaseExpression(
+                caseExpression.baseExpression() == null ? null
+                        : rewriteAggregateProjection(caseExpression.baseExpression(), groups, outputs, names),
                 branches,
                 rewriteAggregateProjection(caseExpression.elseExpression(), groups, outputs, names),
                 caseExpression.logicalType()
@@ -316,6 +353,10 @@ public final class LogicalPlanner {
             case BoundBetweenExpression between -> rewriteBetween(root, between);
             case BoundBinaryExpression binary -> rewriteBinary(root, binary);
             case BoundCaseExpression caseExpression -> rewriteCase(root, caseExpression);
+            case BoundNullCheckExpression nullCheck -> {
+                DependentRewrite child = rewriteDependentSubqueries(root, nullCheck.expression());
+                yield new DependentRewrite(child.root(), new BoundNullCheckExpression(child.expression(), nullCheck.negated()));
+            }
             case BoundCastExpression cast -> {
                 DependentRewrite child = rewriteDependentSubqueries(root, cast.child());
                 yield new DependentRewrite(child.root(), new BoundCastExpression(child.expression(), cast.logicalType()));
@@ -347,6 +388,7 @@ public final class LogicalPlanner {
             case BoundBinaryExpression binary -> containsDependentSubquery(binary.left())
                     || containsDependentSubquery(binary.right());
             case BoundCaseExpression caseExpression -> containsDependentSubquery(caseExpression);
+            case BoundNullCheckExpression nullCheck -> containsDependentSubquery(nullCheck.expression());
             case BoundCastExpression cast -> containsDependentSubquery(cast.child());
             case BoundExistsSubqueryExpression exists -> exists.isCorrelated();
             case BoundFunctionExpression function -> containsDependentSubquery(function.arguments());
@@ -432,12 +474,17 @@ public final class LogicalPlanner {
         DependentRewrite upper = rewriteDependentSubqueries(lower.root(), between.upper());
         return new DependentRewrite(
                 upper.root(),
-                new BoundBetweenExpression(input.expression(), lower.expression(), upper.expression())
+                new BoundBetweenExpression(input.expression(), lower.expression(), upper.expression(), between.negated())
         );
     }
 
     private DependentRewrite rewriteCase(LogicalOperator root, BoundCaseExpression caseExpression) {
         DependentRewrite current = new DependentRewrite(root, null);
+        BoundExpression baseExpression = null;
+        if (caseExpression.baseExpression() != null) {
+            current = rewriteDependentSubqueries(current.root(), caseExpression.baseExpression());
+            baseExpression = current.expression();
+        }
         ArrayList<BoundCaseExpression.WhenClause> branches = new ArrayList<>(caseExpression.branches().size());
         for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
             DependentRewrite condition = rewriteDependentSubqueries(current.root(), branch.condition());
@@ -448,7 +495,7 @@ public final class LogicalPlanner {
         DependentRewrite elseExpression = rewriteDependentSubqueries(current.root(), caseExpression.elseExpression());
         return new DependentRewrite(
                 elseExpression.root(),
-                new BoundCaseExpression(branches, elseExpression.expression(), caseExpression.logicalType())
+                new BoundCaseExpression(baseExpression, branches, elseExpression.expression(), caseExpression.logicalType())
         );
     }
 
@@ -527,15 +574,16 @@ public final class LogicalPlanner {
     private boolean decorrelatableCorrelations(BoundSubqueryExpression subquery, BoundExpression where) {
         ArrayList<BoundExpression> conjuncts = new ArrayList<>();
         flattenConjuncts(where, conjuncts);
-        int equalityCount = 0;
+        int correlationCount = 0;
         for (BoundExpression conjunct : conjuncts) {
-            if (decorrelatableCorrelationEquality(subquery, conjunct)) {
-                equalityCount++;
+            if (decorrelatableCorrelationEquality(subquery, conjunct)
+                    || decorrelatableCorrelationComparison(subquery, conjunct)) {
+                correlationCount++;
             } else if (containsOuterReference(subquery, conjunct)) {
                 return false;
             }
         }
-        return equalityCount > 0 && equalityCount <= 2;
+        return correlationCount > 0 && correlationCount <= 2;
     }
 
     private void flattenConjuncts(BoundExpression expression, List<BoundExpression> output) {
@@ -577,6 +625,26 @@ public final class LogicalPlanner {
         return correlatedIndex >= 0 && correlatedIndex < subquery.correlatedColumns().size();
     }
 
+    private boolean decorrelatableCorrelationComparison(BoundSubqueryExpression subquery, BoundExpression expression) {
+        if (!(expression instanceof BoundBinaryExpression binary) || !isOrderedCorrelationOperator(binary.operator())) {
+            return false;
+        }
+        if (!(binary.left() instanceof BoundColumnRefExpression left)
+                || !(binary.right() instanceof BoundColumnRefExpression right)) {
+            return false;
+        }
+        return decorrelatableCorrelationEquality(subquery, left, right)
+                || decorrelatableCorrelationEquality(subquery, right, left);
+    }
+
+    private boolean isOrderedCorrelationOperator(BinaryOperator operator) {
+        return operator == BinaryOperator.NOT_EQUAL
+                || operator == BinaryOperator.LESS_THAN
+                || operator == BinaryOperator.LESS_THAN_OR_EQUAL
+                || operator == BinaryOperator.GREATER_THAN
+                || operator == BinaryOperator.GREATER_THAN_OR_EQUAL;
+    }
+
     private boolean containsOuterReference(BoundSubqueryExpression subquery, BoundExpression expression) {
         if (expression == null) {
             return false;
@@ -589,6 +657,7 @@ public final class LogicalPlanner {
             case BoundBinaryExpression binary -> containsOuterReference(subquery, binary.left())
                     || containsOuterReference(subquery, binary.right());
             case BoundCaseExpression caseExpression -> containsOuterReference(subquery, caseExpression);
+            case BoundNullCheckExpression nullCheck -> containsOuterReference(subquery, nullCheck.expression());
             case BoundCastExpression cast -> containsOuterReference(subquery, cast.child());
             case BoundColumnRefExpression column -> column.ordinal() >= subquery.localColumnCount();
             case BoundFunctionExpression function -> containsOuterReference(subquery, function.arguments());

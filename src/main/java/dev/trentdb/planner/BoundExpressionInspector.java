@@ -27,6 +27,7 @@ final class BoundExpressionInspector {
                     || containsAggregate(between.upper());
             case BoundCastExpression cast -> containsAggregate(cast.child());
             case BoundCaseExpression caseExpression -> containsCaseAggregate(caseExpression);
+            case BoundNullCheckExpression nullCheck -> containsAggregate(nullCheck.expression());
             case BoundColumnRefExpression ignored -> false;
             case BoundInExpression in -> containsInAggregate(in);
             case BoundExistsSubqueryExpression ignored -> false;
@@ -86,6 +87,7 @@ final class BoundExpressionInspector {
                     || containsColumnOrdinalAtLeast(between.upper(), ordinal);
             case BoundCastExpression cast -> containsColumnOrdinalAtLeast(cast.child(), ordinal);
             case BoundCaseExpression caseExpression -> containsCaseColumnOrdinalAtLeast(caseExpression, ordinal);
+            case BoundNullCheckExpression nullCheck -> containsColumnOrdinalAtLeast(nullCheck.expression(), ordinal);
             case BoundColumnRefExpression column -> column.ordinal() >= ordinal;
             case BoundInExpression in -> containsInColumnOrdinalAtLeast(in, ordinal);
             case BoundExistsSubqueryExpression ignored -> false;

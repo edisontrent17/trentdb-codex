@@ -1,0 +1,1 @@
+package dev.trentdb.execution.ddl; public final class RecoveryException extends RuntimeException { public RecoveryException(String m){super(m);} public RecoveryException(String m,Throwable c){super(m,c);} }

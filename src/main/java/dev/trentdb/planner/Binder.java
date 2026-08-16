@@ -8,16 +8,24 @@ import dev.trentdb.ast.CastExpression;
 import dev.trentdb.ast.ColumnReferenceExpression;
 import dev.trentdb.ast.CommonTableExpression;
 import dev.trentdb.ast.ExplainStatement;
+import dev.trentdb.ast.CreateTableStatement;
+import dev.trentdb.ast.CreateIndexStatement;
+import dev.trentdb.ast.DropTableStatement;
+import dev.trentdb.ast.DropIndexStatement;
+import dev.trentdb.ast.DeleteStatement;
+import dev.trentdb.ast.UpdateStatement;
 import dev.trentdb.ast.Expression;
 import dev.trentdb.ast.ExistsExpression;
 import dev.trentdb.ast.FunctionCallExpression;
 import dev.trentdb.ast.InExpression;
 import dev.trentdb.ast.InSubqueryExpression;
 import dev.trentdb.ast.IntervalLiteralExpression;
+import dev.trentdb.ast.InsertStatement;
 import dev.trentdb.ast.JoinClause;
 import dev.trentdb.ast.JoinType;
 import dev.trentdb.ast.LiteralExpression;
 import dev.trentdb.ast.LiteralKind;
+import dev.trentdb.ast.NullCheckExpression;
 import dev.trentdb.ast.OrderByItem;
 import dev.trentdb.ast.SelectItem;
 import dev.trentdb.ast.SelectStatement;
@@ -26,12 +34,17 @@ import dev.trentdb.ast.Statement;
 import dev.trentdb.ast.SubqueryExpression;
 import dev.trentdb.ast.TableReference;
 import dev.trentdb.ast.UnaryExpression;
+import dev.trentdb.ast.UnaryOperator;
 import dev.trentdb.catalog.Catalog;
 import dev.trentdb.catalog.CatalogException;
 import dev.trentdb.catalog.ColumnCatalogEntry;
 import dev.trentdb.catalog.TableCatalogEntry;
 import dev.trentdb.function.FunctionRegistry;
 import dev.trentdb.replacement.ReplacementScanRegistry;
+import dev.trentdb.planner.BoundCreateTableStatement;
+import dev.trentdb.planner.BoundDropTableStatement;
+import dev.trentdb.planner.BoundCreateIndexStatement;
+import dev.trentdb.planner.BoundDropIndexStatement;
 import dev.trentdb.transaction.Transaction;
 import dev.trentdb.types.LogicalType;
 
@@ -70,11 +83,113 @@ public final class Binder {
         if (statement instanceof ExplainStatement explain) {
             return new BoundExplainStatement(bind(transaction, explain.statement()));
         }
+        if (statement instanceof CreateTableStatement create) {
+            return new BoundCreateTableStatement(create);
+        }
+        if (statement instanceof DropTableStatement drop) {
+            return new BoundDropTableStatement(drop);
+        }
+        if (statement instanceof CreateIndexStatement create) {
+            var table = catalog.lookupTable(transaction, create.tableName());
+            var names = new java.util.HashSet<String>();
+            for (var key : create.keys()) {
+                if (!names.add(key.columnName())) throw new BinderException("Index key specified more than once: " + key.columnName());
+                try {
+                    table.lookupColumn(key.columnName());
+                } catch (CatalogException failure) {
+                    throw new BinderException("Column not found for index: " + key.columnName());
+                }
+            }
+            try {
+                catalog.lookupIndex(transaction, create.name());
+                throw new BinderException("Index already exists: " + create.name().last());
+            } catch (CatalogException notFound) {
+                if (!notFound.getMessage().startsWith("Index not found:")) throw notFound;
+            }
+            return new BoundCreateIndexStatement(create);
+        }
+        if (statement instanceof DropIndexStatement drop) {
+            try {
+                catalog.lookupIndex(transaction, drop.name());
+            } catch (CatalogException failure) {
+                throw new BinderException(failure.getMessage());
+        }
+            return new BoundDropIndexStatement(drop);
+        }
+        if (statement instanceof DeleteStatement delete) {
+            var table = catalog.lookupTable(transaction, delete.tableName());
+            BoundExpression predicate = delete.where() == null ? null : bindExpression(bindingContext(new BindScope(transaction), new BoundTableRef(table, null)), delete.where(), false);
+            if (predicate != null && !logicalType(predicate).equals(LogicalType.BOOLEAN)) throw new BinderException("DELETE WHERE must evaluate to BOOLEAN");
+            if (predicate != null && !supportsDeletePredicate(predicate)) throw new BinderException("DELETE WHERE supports only row-local scalar expressions (columns, literals, casts, comparisons, AND/OR, BETWEEN, IN, and IS [NOT] NULL)");
+            return new BoundDeleteStatement(table, predicate);
+        }
+        if (statement instanceof UpdateStatement update) {
+            var table = catalog.lookupTable(transaction, update.tableName());
+            var context = bindingContext(new BindScope(transaction), new BoundTableRef(table, null));
+            var target = table.lookupColumn(update.columnName());
+            var value = bindExpression(context, update.value(), false);
+            value = coerceIntegerLiteral(update.value(), value, target.logicalType());
+            if (!supportsUpdateValue(value)) throw new BinderException("UPDATE SET supports only row-local columns, literals, casts, and binary scalar expressions");
+            if (!isInsertAssignable(logicalType(value), target.logicalType())) throw new BinderException("UPDATE value type " + typeName(logicalType(value)) + " cannot be assigned to " + typeName(target.logicalType()));
+            BoundExpression predicate = update.where() == null ? null : bindExpression(context, update.where(), false);
+            if (predicate != null && !logicalType(predicate).equals(LogicalType.BOOLEAN)) throw new BinderException("UPDATE WHERE must evaluate to BOOLEAN");
+            if (predicate != null && !supportsDeletePredicate(predicate)) throw new BinderException("UPDATE WHERE supports only row-local scalar expressions (columns, literals, casts, comparisons, AND/OR, BETWEEN, IN, and IS [NOT] NULL)");
+            return new BoundUpdateStatement(table, target.ordinal(), value, predicate);
+        }
+        if (statement instanceof InsertStatement insert) {
+            return bindInsert(transaction, insert);
+        }
         if (statement instanceof SelectStatement select) {
             return bindSelect(transaction, select);
         }
         throw new BinderException("Unsupported statement for binding: " + statement.getClass().getSimpleName());
     }
+
+    private boolean supportsDeletePredicate(BoundExpression expression) { if (expression instanceof BoundColumnRefExpression || expression instanceof BoundLiteralExpression) return true; if (expression instanceof BoundCastExpression cast) return supportsDeletePredicate(cast.child()); if (expression instanceof BoundNullCheckExpression check) return supportsDeletePredicate(check.expression()); if (expression instanceof BoundBinaryExpression binary) return supportsDeletePredicate(binary.left()) && supportsDeletePredicate(binary.right()); if (expression instanceof BoundBetweenExpression between) return supportsDeletePredicate(between.input()) && supportsDeletePredicate(between.lower()) && supportsDeletePredicate(between.upper()); if (expression instanceof BoundInExpression in) return supportsDeletePredicate(in.input()) && in.candidates().stream().allMatch(this::supportsDeletePredicate); return false; }
+    private boolean supportsUpdateValue(BoundExpression expression) { if (expression instanceof BoundColumnRefExpression || expression instanceof BoundLiteralExpression) return true; if (expression instanceof BoundCastExpression cast) return supportsUpdateValue(cast.child()); if (expression instanceof BoundBinaryExpression binary) return supportsUpdateValue(binary.left()) && supportsUpdateValue(binary.right()); return false; }
+    private BoundInsertStatement bindInsert(Transaction transaction, InsertStatement statement) {
+        var table = catalog.lookupTable(transaction, statement.tableName());
+        var targetOrdinals = new ArrayList<Integer>();
+        if (statement.columns().isEmpty()) { for (var column : table.columns()) targetOrdinals.add(column.ordinal()); } else { var seen = new java.util.HashSet<Integer>(); for (String name : statement.columns()) { var ordinal = table.lookupColumn(name).ordinal(); if (!seen.add(ordinal)) throw new BinderException("INSERT column specified more than once: " + name); targetOrdinals.add(ordinal); } }
+        if (statement.rows().isEmpty()) throw new BinderException("INSERT requires at least one VALUES row");
+        var context = new BindingContext(new BindScope(transaction), List.of(), 0); var rows = new ArrayList<List<BoundLiteralExpression>>(statement.rows().size());
+        for (int rowIndex = 0; rowIndex < statement.rows().size(); rowIndex++) { var source = statement.rows().get(rowIndex); if (source.size() != targetOrdinals.size()) throw new BinderException("INSERT row " + (rowIndex + 1) + " value count does not match target column count"); var values = new ArrayList<BoundLiteralExpression>(source.size()); for (int index = 0; index < source.size(); index++) { var targetType = table.columns().get(targetOrdinals.get(index)).logicalType(); values.add(bindInsertLiteral(context, source.get(index), targetType)); } rows.add(List.copyOf(values)); }
+        return new BoundInsertStatement(table, targetOrdinals, rows.getFirst(), rows);
+    }
+    private BoundLiteralExpression bindInsertLiteral(BindingContext context, Expression source, LogicalType target) {
+        if (!(source instanceof LiteralExpression) && !isSignedIntegerLiteral(source)) throw new BinderException("Only literal VALUES expressions are supported for INSERT");
+        BoundExpression bound = bindExpression(context, source, false);
+        bound = coerceIntegerLiteral(source, bound, target);
+        if (!(bound instanceof BoundLiteralExpression literal)) throw new BinderException("Only literal VALUES expressions are supported for INSERT");
+        if (!isInsertAssignable(literal.logicalType(), target)) throw new BinderException("INSERT value type " + typeName(literal.logicalType()) + " cannot be assigned to " + typeName(target));
+        return literal;
+    }
+    private boolean isSignedIntegerLiteral(Expression source) {
+        return source instanceof UnaryExpression unary && unary.operator() == UnaryOperator.MINUS
+                && unary.expression() instanceof LiteralExpression literal && literal.kind() == LiteralKind.INTEGER;
+    }
+    private BoundExpression coerceIntegerLiteral(Expression source, BoundExpression bound, LogicalType target) {
+        if (bound instanceof BoundLiteralExpression literal) return coerceIntegerLiteral(literal, target);
+        if (!isSignedIntegerLiteral(source)) return bound;
+        var unary = (UnaryExpression) source;
+        var literal = (LiteralExpression) unary.expression();
+        return coerceIntegerLiteral(new BoundLiteralExpression(LogicalType.BIGINT, -((Long) literal.value())), target);
+    }
+    private BoundLiteralExpression coerceIntegerLiteral(BoundLiteralExpression literal, LogicalType target) {
+        if (!literal.logicalType().equals(LogicalType.BIGINT) || !target.equals(LogicalType.INTEGER) || literal.value() == null) return literal;
+        long value = ((Number) literal.value()).longValue();
+        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) throw new BinderException("BIGINT literal is out of range for INTEGER: " + value);
+        return new BoundLiteralExpression(LogicalType.INTEGER, (int) value);
+    }
+
+
+
+    private boolean isInsertAssignable(LogicalType source, LogicalType target) {
+        return isNull(source) || source.equals(target)
+                || (source.equals(LogicalType.INTEGER) && (target.equals(LogicalType.BIGINT) || target.equals(LogicalType.DOUBLE)))
+                || (source.equals(LogicalType.BIGINT) && target.equals(LogicalType.DOUBLE));
+    }
+
 
     public BoundSelectStatement bindSelect(Transaction transaction, SelectStatement statement) {
         return bindSelect(new BindScope(transaction), statement);
@@ -90,6 +205,14 @@ public final class Binder {
             List<BoundColumnBinding> outerColumns
     ) {
         BindScope selectScope = scope.withCommonTableExpressions(statement.commonTableExpressions());
+        if (statement.isCompound()) {
+            if (!statement.orderBy().isEmpty() || statement.limit() != null) {
+                throw new BinderException("ORDER BY and LIMIT on compound SELECT are not supported yet");
+            }
+            BoundSelectStatement left = bindSelect(selectScope, statement.left(), outerColumns);
+            BoundSelectStatement right = bindSelect(selectScope, statement.right(), outerColumns);
+            return bindSetOperation(statement.setOperation(), left, right);
+        }
         BoundFrom boundFrom = bindFrom(selectScope, statement);
         BindingContext localContext = bindingContext(selectScope, boundFrom);
         BindingContext context = withOuterColumns(localContext, outerColumns);
@@ -112,6 +235,45 @@ public final class Binder {
                 || !groupBy.isEmpty();
         List<BoundOrderByItem> orderBy = bindOrderBy(context, statement.orderBy(), selectList, selectNames, aggregateQuery);
         return new BoundSelectStatement(boundFrom, selectList, selectNames, where, groupBy, having, orderBy, statement.limit());
+    }
+
+    private BoundSelectStatement bindSetOperation(
+            dev.trentdb.ast.SetOperation operation,
+            BoundSelectStatement left,
+            BoundSelectStatement right
+    ) {
+        if (left.selectList().size() != right.selectList().size()) {
+            throw new BinderException("Set operation column count mismatch: left has " + left.selectList().size()
+                    + " columns but right has " + right.selectList().size());
+        }
+        ArrayList<LogicalType> outputTypes = new ArrayList<>(left.selectList().size());
+        for (int index = 0; index < left.selectList().size(); index++) {
+            LogicalType leftType = logicalType(left.selectList().get(index));
+            LogicalType rightType = logicalType(right.selectList().get(index));
+            try {
+                outputTypes.add(commonCaseType(List.of(leftType, rightType)));
+            } catch (BinderException failure) {
+                throw new BinderException("Set operation column " + (index + 1) + " has incompatible types: "
+                        + typeName(leftType) + " and " + typeName(rightType));
+            }
+        }
+        return BoundSelectStatement.setOperation(operation, coerceSetOutputs(left, outputTypes), coerceSetOutputs(right, outputTypes), outputTypes);
+    }
+    private BoundSelectStatement coerceSetOutputs(BoundSelectStatement statement, List<LogicalType> outputTypes) {
+        ArrayList<BoundExpression> expressions = new ArrayList<>(outputTypes.size());
+        for (int index = 0; index < outputTypes.size(); index++) {
+            BoundExpression expression = statement.selectList().get(index);
+            LogicalType sourceType = logicalType(expression);
+            LogicalType targetType = outputTypes.get(index);
+            if (!sourceType.equals(targetType)) {
+                if (!canCast(sourceType, targetType)) {
+                    throw new BinderException("Set operation cannot cast " + typeName(sourceType) + " to " + typeName(targetType));
+                }
+                expression = new BoundCastExpression(expression, targetType);
+            }
+            expressions.add(expression);
+        }
+        return statement.withSelectList(expressions);
     }
 
     private BindingContext withOuterColumns(BindingContext localContext, List<BoundColumnBinding> outerColumns) {
@@ -420,6 +582,12 @@ public final class Binder {
         if (expression instanceof UnaryExpression unary) {
             return UnaryExpressionBinder.bind(unary.operator(), bindExpression(context, unary.expression(), allowAggregates));
         }
+        if (expression instanceof NullCheckExpression nullCheck) {
+            return new BoundNullCheckExpression(
+                    bindExpression(context, nullCheck.expression(), allowAggregates),
+                    nullCheck.negated()
+            );
+        }
         if (expression instanceof BetweenExpression between) {
             return bindBetweenExpression(context, between, allowAggregates);
         }
@@ -474,7 +642,7 @@ public final class Binder {
             throw new BinderException("BETWEEN upper bound cannot compare "
                     + typeName(inputType) + " and " + typeName(upperType));
         }
-        return new BoundBetweenExpression(input, lower, upper);
+        return new BoundBetweenExpression(input, lower, upper, between.negated());
     }
 
     private BoundInExpression bindInExpression(BindingContext context, InExpression in, boolean allowAggregates) {
@@ -563,13 +731,21 @@ public final class Binder {
             CaseExpression caseExpression,
             boolean allowAggregates
     ) {
+        BoundExpression baseExpression = caseExpression.baseExpression() == null
+                ? null
+                : bindExpression(context, caseExpression.baseExpression(), allowAggregates);
         ArrayList<BoundCaseExpression.WhenClause> branches = new ArrayList<>(caseExpression.branches().size());
         ArrayList<LogicalType> resultTypes = new ArrayList<>(caseExpression.branches().size() + 1);
         for (CaseExpression.WhenClause branch : caseExpression.branches()) {
             BoundExpression condition = bindExpression(context, branch.condition(), allowAggregates);
-            if (!logicalType(condition).equals(LogicalType.BOOLEAN) && !isNull(logicalType(condition))) {
-                throw new BinderException("CASE WHEN condition must evaluate to BOOLEAN but got "
-                        + typeName(logicalType(condition)));
+            if (baseExpression == null) {
+                if (!logicalType(condition).equals(LogicalType.BOOLEAN) && !isNull(logicalType(condition))) {
+                    throw new BinderException("CASE WHEN condition must evaluate to BOOLEAN but got "
+                            + typeName(logicalType(condition)));
+                }
+            } else {
+                // Simple CASE uses SQL equality semantics, including the normal numeric coercions.
+                bindBinaryType(BinaryOperator.EQUAL, logicalType(baseExpression), logicalType(condition));
             }
             BoundExpression result = bindExpression(context, branch.result(), allowAggregates);
             resultTypes.add(logicalType(result));
@@ -579,7 +755,7 @@ public final class Binder {
                 ? new BoundLiteralExpression(LogicalType.NULL, null)
                 : bindExpression(context, caseExpression.elseExpression(), allowAggregates);
         resultTypes.add(logicalType(elseExpression));
-        return new BoundCaseExpression(branches, elseExpression, commonCaseType(resultTypes));
+        return new BoundCaseExpression(baseExpression, branches, elseExpression, commonCaseType(resultTypes));
     }
 
     private BoundExpression bindFunctionCall(BindingContext context, FunctionCallExpression functionCall, boolean allowAggregates) {

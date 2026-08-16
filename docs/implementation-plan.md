@@ -14,7 +14,7 @@ This project is not a line-by-line port. The target is:
 
 ## Reference Systems
 
-DuckDB is the architectural and behavior reference. The checked-out source at `/home/manoj/Projects/duckdb` is the implementation guide for subsystem boundaries, data flow, operator design, and supported SQL semantics.
+DuckDB is the architectural and behavior reference. The pinned `third_party/duckdb` submodule is the reproducible implementation and SQLLogic test oracle for subsystem boundaries, data flow, operator design, and supported SQL semantics. It is never a TrentDB runtime dependency; see [the compatibility-oracle contract](compatibility-oracle.md).
 
 When behavior is visible to users, the default rule is:
 

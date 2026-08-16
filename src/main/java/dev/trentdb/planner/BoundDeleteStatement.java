@@ -1,0 +1,1 @@
+package dev.trentdb.planner; import dev.trentdb.catalog.TableCatalogEntry; public record BoundDeleteStatement(TableCatalogEntry table, BoundExpression predicate) implements BoundStatement { public BoundDeleteStatement(TableCatalogEntry table) { this(table, null); } }

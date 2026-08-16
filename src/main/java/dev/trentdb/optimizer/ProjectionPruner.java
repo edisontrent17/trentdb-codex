@@ -13,11 +13,19 @@ import dev.trentdb.planner.BoundInExpression;
 import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundNullCheckExpression;
 import dev.trentdb.planner.BoundOrderByItem;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.planner.logical.LogicalAggregate;
 import dev.trentdb.planner.logical.LogicalDependentJoin;
+import dev.trentdb.planner.logical.LogicalCreateTable;
+import dev.trentdb.planner.logical.LogicalDropTable;
+import dev.trentdb.planner.logical.LogicalCreateIndex;
+import dev.trentdb.planner.logical.LogicalDropIndex;
+import dev.trentdb.planner.logical.LogicalInsert;
+import dev.trentdb.planner.logical.LogicalDelete;
+import dev.trentdb.planner.logical.LogicalUpdate;
 import dev.trentdb.planner.logical.LogicalExplain;
 import dev.trentdb.planner.logical.LogicalFilter;
 import dev.trentdb.planner.logical.LogicalGet;
@@ -26,6 +34,7 @@ import dev.trentdb.planner.logical.LogicalLimit;
 import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.planner.logical.LogicalOrder;
 import dev.trentdb.planner.logical.LogicalProjection;
+import dev.trentdb.planner.logical.LogicalSetOperation;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -44,6 +53,13 @@ final class ProjectionPruner {
     private PruneResult prune(LogicalOperator operator, RequiredColumns required) {
         return switch (operator) {
             case LogicalAggregate aggregate -> pruneAggregate(aggregate, required);
+            case LogicalCreateTable create -> new PruneResult(create, OrdinalMapping.identity(0), 0);
+            case LogicalDropTable drop -> new PruneResult(drop, OrdinalMapping.identity(0), 0);
+            case LogicalCreateIndex create -> new PruneResult(create, OrdinalMapping.identity(0), 0);
+            case LogicalDropIndex drop -> new PruneResult(drop, OrdinalMapping.identity(0), 0);
+            case LogicalInsert insert -> new PruneResult(insert, OrdinalMapping.identity(0), 0);
+            case LogicalDelete delete -> new PruneResult(delete, OrdinalMapping.identity(0), 0);
+            case LogicalUpdate update -> new PruneResult(update, OrdinalMapping.identity(0), 0);
             case LogicalDependentJoin join -> new PruneResult(
                     join,
                     OrdinalMapping.identity(outputColumnCount(join)),
@@ -55,9 +71,25 @@ final class ProjectionPruner {
             case LogicalJoin join -> pruneJoin(join, required);
             case LogicalLimit limit -> pruneLimit(limit, required);
             case LogicalOrder order -> pruneOrder(order, required);
+            case LogicalSetOperation set -> pruneSetOperation(set);
             case LogicalProjection projection -> pruneProjection(projection, required);
         };
     }
+    private PruneResult pruneSetOperation(LogicalSetOperation set) {
+        int outputCount = outputColumnCount(set);
+        // DISTINCT set membership is defined over the complete tuple, so do
+        // not pass a parent projection's reduced column set into either arm.
+        PruneResult left = prune(set.left(), requiredAll(outputCount));
+        PruneResult right = prune(set.right(), requiredAll(outputCount));
+        LogicalSetOperation rewritten = new LogicalSetOperation(set.operation(), left.operator(), right.operator());
+        boolean unchanged = left.operator() == set.left() && right.operator() == set.right();
+        return new PruneResult(
+                unchanged ? set : rewritten,
+                OrdinalMapping.identity(outputCount),
+                outputCount
+        );
+    }
+
 
     private PruneResult pruneAggregate(LogicalAggregate aggregate, RequiredColumns required) {
         RequiredColumns aggregateOutputs = required.nonEmpty();
@@ -222,6 +254,7 @@ final class ProjectionPruner {
                 collectColumns(binary.right(), required, sourceColumnCount);
             }
             case BoundCaseExpression caseExpression -> collectCaseColumns(caseExpression, required, sourceColumnCount);
+            case BoundNullCheckExpression nullCheck -> collectColumns(nullCheck.expression(), required, sourceColumnCount);
             case BoundCastExpression cast -> collectColumns(cast.child(), required, sourceColumnCount);
             case BoundColumnRefExpression column -> required.addIfPresent(column.ordinal(), sourceColumnCount);
             case BoundExistsSubqueryExpression exists -> collectCorrelatedColumns(exists.correlatedColumns(), required);
@@ -247,6 +280,7 @@ final class ProjectionPruner {
             RequiredColumns required,
             int sourceColumnCount
     ) {
+        collectColumns(caseExpression.baseExpression(), required, sourceColumnCount);
         for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
             collectColumns(branch.condition(), required, sourceColumnCount);
             collectColumns(branch.result(), required, sourceColumnCount);
@@ -282,7 +316,8 @@ final class ProjectionPruner {
             case BoundBetweenExpression between -> new BoundBetweenExpression(
                     remap(between.input(), mapping),
                     remap(between.lower(), mapping),
-                    remap(between.upper(), mapping)
+                    remap(between.upper(), mapping),
+                    between.negated()
             );
             case BoundBinaryExpression binary -> new BoundBinaryExpression(
                     remap(binary.left(), mapping),
@@ -291,6 +326,8 @@ final class ProjectionPruner {
                     binary.logicalType()
             );
             case BoundCaseExpression caseExpression -> remapCase(caseExpression, mapping);
+            case BoundNullCheckExpression nullCheck -> new BoundNullCheckExpression(
+                    remap(nullCheck.expression(), mapping), nullCheck.negated());
             case BoundCastExpression cast -> new BoundCastExpression(remap(cast.child(), mapping), cast.logicalType());
             case BoundColumnRefExpression column -> new BoundColumnRefExpression(
                     column.column(),
@@ -348,6 +385,8 @@ final class ProjectionPruner {
             ));
         }
         return new BoundCaseExpression(
+                caseExpression.baseExpression() == null ? null
+                        : remap(caseExpression.baseExpression(), mapping),
                 branches,
                 remap(caseExpression.elseExpression(), mapping),
                 caseExpression.logicalType()
@@ -406,11 +445,19 @@ final class ProjectionPruner {
         return switch (operator) {
             case LogicalAggregate aggregate -> aggregate.selectList().size();
             case LogicalDependentJoin join -> outputColumnCount(join.child()) + 1;
+            case LogicalCreateTable ignored -> 0;
+            case LogicalDropTable ignored -> 0;
+            case LogicalCreateIndex ignored -> 0;
+            case LogicalDropIndex ignored -> 0;
+            case LogicalInsert ignored -> 0;
+            case LogicalDelete ignored -> 0;
+            case LogicalUpdate ignored -> 0;
             case LogicalExplain ignored -> 1;
             case LogicalFilter filter -> outputColumnCount(filter.child());
             case LogicalGet get -> get.projectedOrdinals().size();
             case LogicalJoin join -> outputColumnCount(join.left()) + outputColumnCount(join.right());
             case LogicalLimit limit -> outputColumnCount(limit.child());
+            case LogicalSetOperation set -> outputColumnCount(set.left());
             case LogicalOrder order -> outputColumnCount(order.child());
             case LogicalProjection projection -> projection.expressions().size();
         };

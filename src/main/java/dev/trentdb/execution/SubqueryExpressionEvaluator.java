@@ -17,6 +17,7 @@ import dev.trentdb.planner.BoundInExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundJoinRef;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundNullCheckExpression;
 import dev.trentdb.planner.BoundOrderByItem;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSelectStatement;
@@ -137,6 +138,24 @@ final class SubqueryExpressionEvaluator {
             DataChunk input,
             int rowIndex
     ) {
+        if (statement.isCompound()) {
+            BoundSelectStatement left = rewriteStatement(statement.left(), subquery, input, rowIndex);
+            BoundSelectStatement right = rewriteStatement(statement.right(), subquery, input, rowIndex);
+            return new BoundSelectStatement(
+                    statement.from(),
+                    statement.selectList(),
+                    statement.selectNames(),
+                    statement.where(),
+                    statement.groupBy(),
+                    statement.having(),
+                    statement.orderBy(),
+                    statement.limit(),
+                    statement.setOperation(),
+                    left,
+                    right
+            );
+        }
+
         return new BoundSelectStatement(
                 rewriteFrom(statement.from(), subquery, input, rowIndex),
                 rewriteExpressions(statement.selectList(), subquery, input, rowIndex),
@@ -188,7 +207,8 @@ final class SubqueryExpressionEvaluator {
             case BoundBetweenExpression between -> new BoundBetweenExpression(
                     rewriteExpression(between.input(), subquery, input, rowIndex),
                     rewriteExpression(between.lower(), subquery, input, rowIndex),
-                    rewriteExpression(between.upper(), subquery, input, rowIndex)
+                    rewriteExpression(between.upper(), subquery, input, rowIndex),
+                    between.negated()
             );
             case BoundBinaryExpression binary -> new BoundBinaryExpression(
                     rewriteExpression(binary.left(), subquery, input, rowIndex),
@@ -197,6 +217,8 @@ final class SubqueryExpressionEvaluator {
                     binary.logicalType()
             );
             case BoundCaseExpression caseExpression -> rewriteCase(caseExpression, subquery, input, rowIndex);
+            case BoundNullCheckExpression nullCheck -> new BoundNullCheckExpression(
+                    rewriteExpression(nullCheck.expression(), subquery, input, rowIndex), nullCheck.negated());
             case BoundCastExpression cast -> new BoundCastExpression(
                     rewriteExpression(cast.child(), subquery, input, rowIndex),
                     cast.logicalType()
@@ -251,6 +273,8 @@ final class SubqueryExpressionEvaluator {
                 ))
                 .toList();
         return new BoundCaseExpression(
+                caseExpression.baseExpression() == null ? null
+                        : rewriteExpression(caseExpression.baseExpression(), subquery, input, rowIndex),
                 branches,
                 rewriteExpression(caseExpression.elseExpression(), subquery, input, rowIndex),
                 caseExpression.logicalType()

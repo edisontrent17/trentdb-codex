@@ -4,6 +4,13 @@ import dev.trentdb.planner.BoundExpression;
 import dev.trentdb.planner.BoundOrderByItem;
 import dev.trentdb.planner.logical.LogicalAggregate;
 import dev.trentdb.planner.logical.LogicalDependentJoin;
+import dev.trentdb.planner.logical.LogicalCreateTable;
+import dev.trentdb.planner.logical.LogicalDropTable;
+import dev.trentdb.planner.logical.LogicalCreateIndex;
+import dev.trentdb.planner.logical.LogicalDropIndex;
+import dev.trentdb.planner.logical.LogicalInsert;
+import dev.trentdb.planner.logical.LogicalDelete;
+import dev.trentdb.planner.logical.LogicalUpdate;
 import dev.trentdb.planner.logical.LogicalExplain;
 import dev.trentdb.planner.logical.LogicalFilter;
 import dev.trentdb.planner.logical.LogicalGet;
@@ -12,6 +19,7 @@ import dev.trentdb.planner.logical.LogicalLimit;
 import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.planner.logical.LogicalOrder;
 import dev.trentdb.planner.logical.LogicalProjection;
+import dev.trentdb.planner.logical.LogicalSetOperation;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -31,12 +39,20 @@ class LogicalOperatorRewriter {
         LogicalOperator rewritten = switch (operator) {
             case LogicalAggregate aggregate -> rewriteAggregate(aggregate);
             case LogicalDependentJoin join -> rewriteDependentJoin(join);
+            case LogicalCreateTable create -> create;
+            case LogicalDropTable drop -> drop;
+            case LogicalCreateIndex create -> create;
+            case LogicalDropIndex drop -> drop;
+            case LogicalInsert insert -> insert;
+            case LogicalDelete delete -> delete;
+            case LogicalUpdate update -> update;
             case LogicalExplain explain -> rewriteExplain(explain);
             case LogicalFilter filter -> rewriteFilter(filter);
             case LogicalGet get -> get;
             case LogicalJoin join -> rewriteJoin(join);
             case LogicalLimit limit -> rewriteLimit(limit);
             case LogicalOrder order -> rewriteOrder(order);
+            case LogicalSetOperation set -> rewriteSetOperation(set);
             case LogicalProjection projection -> rewriteProjection(projection);
         };
         if (rewritten != operator) {
@@ -85,6 +101,15 @@ class LogicalOperatorRewriter {
         }
         return new LogicalJoin(left, right, condition, join.joinType());
     }
+    private LogicalOperator rewriteSetOperation(LogicalSetOperation set) {
+        LogicalOperator left = rewrite(set.left());
+        LogicalOperator right = rewrite(set.right());
+        return left == set.left() && right == set.right()
+                ? set
+                : new LogicalSetOperation(set.operation(), left, right);
+    }
+
+
 
     private LogicalOperator rewriteLimit(LogicalLimit limit) {
         LogicalOperator child = rewrite(limit.child());

@@ -47,6 +47,7 @@ final class AggregateBindingValidator {
             }
             case BoundCastExpression cast -> validateExpression(cast.child(), groupBy);
             case BoundCaseExpression caseExpression -> validateCaseExpression(caseExpression, groupBy);
+            case BoundNullCheckExpression nullCheck -> validateExpression(nullCheck.expression(), groupBy);
             case BoundFunctionExpression function -> validateExpressions(function.arguments(), groupBy);
             case BoundInExpression in -> {
                 validateExpression(in.input(), groupBy);

@@ -19,6 +19,7 @@ import dev.trentdb.planner.BoundInExpression;
 import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundNullCheckExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSelectStatement;
 import dev.trentdb.planner.BoundSubqueryExpression;
@@ -74,7 +75,7 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
                 "PhysicalCorrelatedExistsMarkJoin",
                 "build_mark_lookup",
                 start,
-                "keys=" + lookup.keyCount() + " keyType=" + lookup.keyType().id().name()
+                "keys=" + lookup.keyCount() + " keyType=" + lookup.keyTypeName()
         );
         return new CorrelatedExistsLocalState(lookup);
     }
@@ -101,7 +102,7 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
             throw new ExecutionException("Correlated EXISTS currently supports filtered scan subqueries only");
         }
         if (subquery.where() == null) {
-            throw new ExecutionException("Correlated EXISTS currently requires a correlated equality predicate");
+            throw new ExecutionException("Correlated EXISTS currently requires one correlated comparison predicate");
         }
         CorrelatedExistsPlan plan = correlatedExistsPlan(subquery.where());
         List<DataChunk> chunks = scanChunks(tableRef);
@@ -112,34 +113,28 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
         ArrayList<BoundExpression> conjuncts = new ArrayList<>();
         flattenConjuncts(predicate, conjuncts);
         CorrelatedEquality equality = null;
-        CorrelatedInequality inequality = null;
+        CorrelatedComparison comparison = null;
         ArrayList<BoundExpression> residuals = new ArrayList<>();
         for (BoundExpression conjunct : conjuncts) {
-            CorrelatedEquality candidate = correlatedEquality(conjunct);
-            if (candidate != null && equality == null) {
-                equality = candidate;
+            CorrelatedEquality equalityCandidate = correlatedEquality(conjunct);
+            if (equalityCandidate != null && equality == null) {
+                equality = equalityCandidate;
                 continue;
             }
-            CorrelatedInequality inequalityCandidate = correlatedInequality(conjunct);
-            if (inequalityCandidate != null && inequality == null) {
-                inequality = inequalityCandidate;
+            CorrelatedComparison comparisonCandidate = correlatedComparison(conjunct);
+            if (comparisonCandidate != null && comparison == null) {
+                comparison = comparisonCandidate;
                 continue;
             }
             if (containsOuterReference(conjunct)) {
-                throw new ExecutionException("Correlated EXISTS currently supports one equality and one inequality predicate");
+                throw new ExecutionException("Correlated EXISTS currently supports one equality and one comparison predicate");
             }
             residuals.add(conjunct);
         }
-        if (equality == null) {
-            throw new ExecutionException("Correlated EXISTS currently requires a correlated equality predicate");
+        if (equality == null && comparison == null) {
+            throw new ExecutionException("Correlated EXISTS currently requires one correlated comparison predicate");
         }
-        return new CorrelatedExistsPlan(
-                equality.innerOrdinal(),
-                equality.outerOrdinal(),
-                equality.keyType(),
-                inequality,
-                combineConjuncts(residuals)
-        );
+        return new CorrelatedExistsPlan(equality, comparison, combineConjuncts(residuals));
     }
 
     private CorrelatedEquality correlatedEquality(BoundExpression expression) {
@@ -151,10 +146,7 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
             return null;
         }
         CorrelatedEquality leftInner = correlatedEquality(left, right);
-        if (leftInner != null) {
-            return leftInner;
-        }
-        return correlatedEquality(right, left);
+        return leftInner == null ? correlatedEquality(right, left) : leftInner;
     }
 
     private CorrelatedEquality correlatedEquality(BoundColumnRefExpression inner, BoundColumnRefExpression outer) {
@@ -175,58 +167,78 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
         return new CorrelatedEquality(inner.ordinal(), outerOrdinal, innerType);
     }
 
-    private CorrelatedInequality correlatedInequality(BoundExpression expression) {
-        if (!(expression instanceof BoundBinaryExpression binary) || binary.operator() != BinaryOperator.NOT_EQUAL) {
+    private CorrelatedComparison correlatedComparison(BoundExpression expression) {
+        if (!(expression instanceof BoundBinaryExpression binary) || !isCorrelatedComparison(binary.operator())) {
             return null;
         }
         if (!(binary.left() instanceof BoundColumnRefExpression left)
                 || !(binary.right() instanceof BoundColumnRefExpression right)) {
             return null;
         }
-        CorrelatedInequality leftInner = correlatedInequality(left, right);
-        if (leftInner != null) {
-            return leftInner;
-        }
-        return correlatedInequality(right, left);
+        CorrelatedComparison leftInner = correlatedComparison(left, right, binary.operator());
+        return leftInner == null ? correlatedComparison(right, left, invert(binary.operator())) : leftInner;
     }
 
-    private CorrelatedInequality correlatedInequality(BoundColumnRefExpression inner, BoundColumnRefExpression outer) {
+    private CorrelatedComparison correlatedComparison(
+            BoundColumnRefExpression inner,
+            BoundColumnRefExpression outer,
+            BinaryOperator operator
+    ) {
         if (inner.ordinal() >= exists.localColumnCount() || outer.ordinal() < exists.localColumnCount()) {
             return null;
         }
         LogicalType innerType = inner.logicalType();
         LogicalType outerType = outer.logicalType();
         if (!innerType.equals(outerType) || !supportsKeyType(innerType)) {
-            throw new ExecutionException("Correlated EXISTS inequality key type is not supported: "
-                    + innerType.id().name() + " <> " + outerType.id().name());
+            throw new ExecutionException("Correlated EXISTS comparison key type is not supported: "
+                    + innerType.id().name() + " " + operator + " " + outerType.id().name());
         }
         int correlatedIndex = outer.ordinal() - exists.localColumnCount();
         if (correlatedIndex < 0 || correlatedIndex >= exists.correlatedColumns().size()) {
             throw new ExecutionException("Correlated EXISTS outer reference is outside the bound correlation list");
         }
         int outerOrdinal = exists.correlatedColumns().get(correlatedIndex).outerOrdinal();
-        return new CorrelatedInequality(inner.ordinal(), outerOrdinal, innerType);
+        return new CorrelatedComparison(inner.ordinal(), outerOrdinal, innerType, operator);
+    }
+
+    private boolean isCorrelatedComparison(BinaryOperator operator) {
+        return operator == BinaryOperator.NOT_EQUAL
+                || operator == BinaryOperator.LESS_THAN
+                || operator == BinaryOperator.LESS_THAN_OR_EQUAL
+                || operator == BinaryOperator.GREATER_THAN
+                || operator == BinaryOperator.GREATER_THAN_OR_EQUAL;
+    }
+
+    private BinaryOperator invert(BinaryOperator operator) {
+        return switch (operator) {
+            case NOT_EQUAL -> BinaryOperator.NOT_EQUAL;
+            case LESS_THAN -> BinaryOperator.GREATER_THAN;
+            case LESS_THAN_OR_EQUAL -> BinaryOperator.GREATER_THAN_OR_EQUAL;
+            case GREATER_THAN -> BinaryOperator.LESS_THAN;
+            case GREATER_THAN_OR_EQUAL -> BinaryOperator.LESS_THAN_OR_EQUAL;
+            default -> throw new IllegalArgumentException("Not a correlated comparison: " + operator);
+        };
     }
 
     private CorrelatedExistsLookup buildLookup(List<DataChunk> chunks, CorrelatedExistsPlan plan) {
-        if (plan.inequality() == null) {
+        if (plan.comparison() == null) {
             LongHashSet keys = buildKeySet(chunks, plan);
-            return CorrelatedExistsLookup.forEquality(plan.keyType(), plan.outerOrdinal(), keys);
+            return CorrelatedExistsLookup.forEquality(plan.equality().keyType(), plan.equality().outerOrdinal(), keys);
         }
         LongMultiValueSet values = buildKeyValueSet(chunks, plan);
-        return CorrelatedExistsLookup.forInequality(plan.keyType(), plan.outerOrdinal(), plan.inequality(), values);
+        return CorrelatedExistsLookup.forComparison(plan.equality(), plan.comparison(), values);
     }
 
     private LongHashSet buildKeySet(List<DataChunk> chunks, CorrelatedExistsPlan plan) {
         LongHashSet keys = new LongHashSet(countRows(chunks));
         for (DataChunk chunk : chunks) {
             Vector residual = plan.residual() == null ? null : expressionExecutor.execute(plan.residual(), chunk);
-            Vector keyVector = chunk.column(plan.innerOrdinal());
+            Vector keyVector = chunk.column(plan.equality().innerOrdinal());
             for (int rowIndex = 0; rowIndex < chunk.cardinality(); rowIndex++) {
                 if (keyVector.isNull(rowIndex) || !matchesResidual(residual, rowIndex)) {
                     continue;
                 }
-                keys.add(keyAsLong(keyVector, rowIndex, plan.keyType()));
+                keys.add(keyAsLong(keyVector, rowIndex, plan.equality().keyType()));
             }
         }
         return keys;
@@ -234,17 +246,18 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
 
     private LongMultiValueSet buildKeyValueSet(List<DataChunk> chunks, CorrelatedExistsPlan plan) {
         LongMultiValueSet values = new LongMultiValueSet(countRows(chunks));
-        CorrelatedInequality inequality = plan.inequality();
+        CorrelatedComparison comparison = plan.comparison();
         for (DataChunk chunk : chunks) {
             Vector residual = plan.residual() == null ? null : expressionExecutor.execute(plan.residual(), chunk);
-            Vector keyVector = chunk.column(plan.innerOrdinal());
-            Vector valueVector = chunk.column(inequality.innerOrdinal());
+            Vector keyVector = plan.equality() == null ? null : chunk.column(plan.equality().innerOrdinal());
+            Vector valueVector = chunk.column(comparison.innerOrdinal());
             for (int rowIndex = 0; rowIndex < chunk.cardinality(); rowIndex++) {
-                if (keyVector.isNull(rowIndex) || valueVector.isNull(rowIndex) || !matchesResidual(residual, rowIndex)) {
+                if ((keyVector != null && keyVector.isNull(rowIndex))
+                        || valueVector.isNull(rowIndex) || !matchesResidual(residual, rowIndex)) {
                     continue;
                 }
-                long key = keyAsLong(keyVector, rowIndex, plan.keyType());
-                long value = keyAsLong(valueVector, rowIndex, inequality.keyType());
+                long key = keyVector == null ? 0L : keyAsLong(keyVector, rowIndex, plan.equality().keyType());
+                long value = keyAsLong(valueVector, rowIndex, comparison.keyType());
                 values.add(key, value);
             }
         }
@@ -272,6 +285,7 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
                     || containsOuterReference(between.upper());
             case BoundBinaryExpression binary -> containsOuterReference(binary.left()) || containsOuterReference(binary.right());
             case BoundCaseExpression caseExpression -> containsOuterReference(caseExpression);
+            case BoundNullCheckExpression nullCheck -> containsOuterReference(nullCheck.expression());
             case BoundCastExpression cast -> containsOuterReference(cast.child());
             case BoundColumnRefExpression column -> column.ordinal() >= exists.localColumnCount();
             case BoundExistsSubqueryExpression ignored -> false;
@@ -381,57 +395,65 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
     private record CorrelatedEquality(int innerOrdinal, int outerOrdinal, LogicalType keyType) {
     }
 
-    private record CorrelatedInequality(int innerOrdinal, int outerOrdinal, LogicalType keyType) {
+    private record CorrelatedComparison(int innerOrdinal, int outerOrdinal, LogicalType keyType, BinaryOperator operator) {
     }
 
     private record CorrelatedExistsPlan(
-            int innerOrdinal,
-            int outerOrdinal,
-            LogicalType keyType,
-            CorrelatedInequality inequality,
+            CorrelatedEquality equality,
+            CorrelatedComparison comparison,
             BoundExpression residual
     ) {
     }
 
     private record CorrelatedExistsLookup(
-            LogicalType keyType,
-            int outerOrdinal,
+            CorrelatedEquality equality,
             LongHashSet keys,
-            CorrelatedInequality inequality,
+            CorrelatedComparison comparison,
             LongMultiValueSet values
     ) {
         static CorrelatedExistsLookup forEquality(LogicalType keyType, int outerOrdinal, LongHashSet keys) {
-            return new CorrelatedExistsLookup(keyType, outerOrdinal, keys, null, null);
+            return new CorrelatedExistsLookup(new CorrelatedEquality(-1, outerOrdinal, keyType), keys, null, null);
         }
 
-        static CorrelatedExistsLookup forInequality(
-                LogicalType keyType,
-                int outerOrdinal,
-                CorrelatedInequality inequality,
+        static CorrelatedExistsLookup forComparison(
+                CorrelatedEquality equality,
+                CorrelatedComparison comparison,
                 LongMultiValueSet values
         ) {
-            return new CorrelatedExistsLookup(keyType, outerOrdinal, null, inequality, values);
+            return new CorrelatedExistsLookup(equality, null, comparison, values);
         }
 
         boolean matches(DataChunk input, int rowIndex) {
-            Vector keyVector = input.column(outerOrdinal);
-            if (keyVector.isNull(rowIndex)) {
-                return false;
-            }
-            long key = keyAsLong(keyVector, rowIndex, keyType);
-            if (inequality == null) {
+            if (comparison == null) {
+                Vector keyVector = input.column(equality.outerOrdinal());
+                if (keyVector.isNull(rowIndex)) {
+                    return false;
+                }
+                long key = keyAsLong(keyVector, rowIndex, equality.keyType());
                 return keys.contains(key);
             }
-            Vector valueVector = input.column(inequality.outerOrdinal());
+            long key = 0L;
+            if (equality != null) {
+                Vector keyVector = input.column(equality.outerOrdinal());
+                if (keyVector.isNull(rowIndex)) {
+                    return false;
+                }
+                key = keyAsLong(keyVector, rowIndex, equality.keyType());
+            }
+            Vector valueVector = input.column(comparison.outerOrdinal());
             if (valueVector.isNull(rowIndex)) {
                 return false;
             }
-            long value = keyAsLong(valueVector, rowIndex, inequality.keyType());
-            return values.containsDifferent(key, value);
+            long value = keyAsLong(valueVector, rowIndex, comparison.keyType());
+            return values.containsMatching(key, value, comparison.operator());
         }
 
         int keyCount() {
-            return inequality == null ? keys.size() : values.keyCount();
+            return comparison == null ? keys.size() : values.keyCount();
+        }
+
+        String keyTypeName() {
+            return comparison == null ? equality.keyType().id().name() : comparison.keyType().id().name();
         }
 
         private long keyAsLong(Vector keyVector, int rowIndex, LogicalType keyType) {
@@ -464,9 +486,9 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
     }
 
     private static final class LongHashSet {
-        private final long[] keys;
-        private final boolean[] occupied;
-        private final int mask;
+        private long[] keys;
+        private boolean[] occupied;
+        private int mask;
         private int size;
 
         private LongHashSet(int rowCapacity) {
@@ -478,6 +500,13 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
         }
 
         private void add(long key) {
+            if ((size + 1) * 2 > keys.length) {
+                grow();
+            }
+            insert(key);
+        }
+
+        private void insert(long key) {
             int bucket = bucket(key);
             while (occupied[bucket]) {
                 if (keys[bucket] == key) {
@@ -488,6 +517,24 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
             occupied[bucket] = true;
             keys[bucket] = key;
             size++;
+        }
+
+        private void grow() {
+            long[] previousKeys = keys;
+            boolean[] previousOccupied = occupied;
+            keys = new long[previousKeys.length << 1];
+            occupied = new boolean[keys.length];
+            mask = keys.length - 1;
+            int previousSize = size;
+            size = 0;
+            for (int bucket = 0; bucket < previousKeys.length; bucket++) {
+                if (previousOccupied[bucket]) {
+                    insert(previousKeys[bucket]);
+                }
+            }
+            if (size != previousSize) {
+                throw new IllegalStateException("Correlated EXISTS hash-set rehash lost a key");
+            }
         }
 
         private boolean contains(long key) {
@@ -501,13 +548,24 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
             return false;
         }
 
-        private boolean containsDifferent(long excludedKey) {
+        private boolean containsMatching(long outerValue, BinaryOperator operator) {
             for (int bucket = 0; bucket < occupied.length; bucket++) {
-                if (occupied[bucket] && keys[bucket] != excludedKey) {
+                if (occupied[bucket] && matches(keys[bucket], outerValue, operator)) {
                     return true;
                 }
             }
             return false;
+        }
+
+        private boolean matches(long innerValue, long outerValue, BinaryOperator operator) {
+            return switch (operator) {
+                case NOT_EQUAL -> innerValue != outerValue;
+                case LESS_THAN -> innerValue < outerValue;
+                case LESS_THAN_OR_EQUAL -> innerValue <= outerValue;
+                case GREATER_THAN -> innerValue > outerValue;
+                case GREATER_THAN_OR_EQUAL -> innerValue >= outerValue;
+                default -> throw new IllegalArgumentException("Not a correlated comparison: " + operator);
+            };
         }
 
         private int size() {
@@ -567,11 +625,11 @@ public final class PhysicalCorrelatedExistsMarkJoin implements PhysicalOperator 
             size++;
         }
 
-        private boolean containsDifferent(long key, long excludedValue) {
+        private boolean containsMatching(long key, long outerValue, BinaryOperator operator) {
             int bucket = bucket(key);
             while (occupied[bucket]) {
                 if (keys[bucket] == key) {
-                    return values[bucket].containsDifferent(excludedValue);
+                    return values[bucket].containsMatching(outerValue, operator);
                 }
                 bucket = (bucket + 1) & mask;
             }

@@ -15,6 +15,7 @@ import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundJoinRef;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundNullCheckExpression;
 import dev.trentdb.planner.BoundOrderByItem;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSelectStatement;
@@ -45,6 +46,7 @@ class BoundExpressionRewriter {
             case BoundBetweenExpression between -> visitBetween(between);
             case BoundBinaryExpression binary -> visitBinary(binary);
             case BoundCaseExpression caseExpression -> visitCase(caseExpression);
+            case BoundNullCheckExpression nullCheck -> visitNullCheck(nullCheck);
             case BoundCastExpression cast -> visitCast(cast);
             case BoundColumnRefExpression column -> visitColumnRef(column);
             case BoundExistsSubqueryExpression exists -> visitExistsSubquery(exists);
@@ -64,6 +66,27 @@ class BoundExpressionRewriter {
 
     BoundSelectStatement rewriteSelect(BoundSelectStatement statement) {
         selectStatementsVisited++;
+        if (statement.isCompound()) {
+            BoundSelectStatement left = rewriteSelect(statement.left());
+            BoundSelectStatement right = rewriteSelect(statement.right());
+            if (left == statement.left() && right == statement.right()) {
+                return statement;
+            }
+            selectStatementsRebuilt++;
+            return new BoundSelectStatement(
+                    statement.from(),
+                    statement.selectList(),
+                    statement.selectNames(),
+                    statement.where(),
+                    statement.groupBy(),
+                    statement.having(),
+                    statement.orderBy(),
+                    statement.limit(),
+                    statement.setOperation(),
+                    left,
+                    right
+            );
+        }
         BoundFrom from = rewriteFrom(statement.from());
         ExpressionList selectList = rewriteList(statement.selectList());
         ExpressionList groupBy = rewriteList(statement.groupBy());
@@ -137,7 +160,7 @@ class BoundExpressionRewriter {
         if (input == between.input() && lower == between.lower() && upper == between.upper()) {
             return between;
         }
-        return new BoundBetweenExpression(input, lower, upper);
+        return new BoundBetweenExpression(input, lower, upper, between.negated());
     }
 
     protected BoundExpression visitBinary(BoundBinaryExpression binary) {
@@ -151,6 +174,8 @@ class BoundExpressionRewriter {
 
     protected BoundExpression visitCase(BoundCaseExpression caseExpression) {
         ArrayList<BoundCaseExpression.WhenClause> branches = new ArrayList<>(caseExpression.branches().size());
+        BoundExpression baseExpression = caseExpression.baseExpression() == null
+                ? null : rewrite(caseExpression.baseExpression());
         boolean changed = false;
         for (BoundCaseExpression.WhenClause branch : caseExpression.branches()) {
             BoundExpression condition = rewrite(branch.condition());
@@ -161,10 +186,15 @@ class BoundExpressionRewriter {
             branches.add(new BoundCaseExpression.WhenClause(condition, result));
         }
         BoundExpression elseExpression = rewrite(caseExpression.elseExpression());
-        if (!changed && elseExpression == caseExpression.elseExpression()) {
+        if (!changed && baseExpression == caseExpression.baseExpression() && elseExpression == caseExpression.elseExpression()) {
             return caseExpression;
         }
-        return new BoundCaseExpression(branches, elseExpression, caseExpression.logicalType());
+        return new BoundCaseExpression(baseExpression, branches, elseExpression, caseExpression.logicalType());
+    }
+
+    protected BoundExpression visitNullCheck(BoundNullCheckExpression nullCheck) {
+        BoundExpression child = rewrite(nullCheck.expression());
+        return child == nullCheck.expression() ? nullCheck : new BoundNullCheckExpression(child, nullCheck.negated());
     }
 
     protected BoundExpression visitCast(BoundCastExpression cast) {

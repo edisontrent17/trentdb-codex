@@ -15,10 +15,18 @@ import dev.trentdb.planner.BoundInExpression;
 import dev.trentdb.planner.BoundInSubqueryExpression;
 import dev.trentdb.planner.BoundIntervalExpression;
 import dev.trentdb.planner.BoundLiteralExpression;
+import dev.trentdb.planner.BoundNullCheckExpression;
 import dev.trentdb.planner.BoundOutputColumnExpression;
 import dev.trentdb.planner.BoundSubqueryExpression;
 import dev.trentdb.planner.logical.LogicalAggregate;
 import dev.trentdb.planner.logical.LogicalDependentJoin;
+import dev.trentdb.planner.logical.LogicalCreateTable;
+import dev.trentdb.planner.logical.LogicalDropTable;
+import dev.trentdb.planner.logical.LogicalCreateIndex;
+import dev.trentdb.planner.logical.LogicalDropIndex;
+import dev.trentdb.planner.logical.LogicalInsert;
+import dev.trentdb.planner.logical.LogicalDelete;
+import dev.trentdb.planner.logical.LogicalUpdate;
 import dev.trentdb.planner.logical.LogicalExplain;
 import dev.trentdb.planner.logical.LogicalFilter;
 import dev.trentdb.planner.logical.LogicalGet;
@@ -27,6 +35,7 @@ import dev.trentdb.planner.logical.LogicalLimit;
 import dev.trentdb.planner.logical.LogicalOperator;
 import dev.trentdb.planner.logical.LogicalOrder;
 import dev.trentdb.planner.logical.LogicalProjection;
+import dev.trentdb.planner.logical.LogicalSetOperation;
 import dev.trentdb.types.LogicalType;
 
 import java.util.ArrayList;
@@ -41,12 +50,20 @@ final class FilterPushdown {
         return switch (operator) {
             case LogicalAggregate aggregate -> pushAggregate(aggregate);
             case LogicalDependentJoin join -> pushDependentJoin(join);
+            case LogicalCreateTable create -> create;
+            case LogicalDropTable drop -> drop;
+            case LogicalCreateIndex create -> create;
+            case LogicalDropIndex drop -> drop;
+            case LogicalInsert insert -> insert;
+            case LogicalDelete delete -> delete;
+            case LogicalUpdate update -> update;
             case LogicalExplain explain -> pushExplain(explain);
             case LogicalFilter filter -> pushFilter(filter.predicate(), push(filter.child()));
             case LogicalGet get -> get;
             case LogicalJoin join -> pushJoin(join);
             case LogicalLimit limit -> pushLimit(limit);
             case LogicalOrder order -> pushOrder(order);
+            case LogicalSetOperation set -> pushSetOperation(set);
             case LogicalProjection projection -> pushProjection(projection);
         };
     }
@@ -77,6 +94,15 @@ final class FilterPushdown {
                 ? join
                 : new LogicalJoin(left, right, join.condition(), join.joinType());
     }
+    private LogicalOperator pushSetOperation(LogicalSetOperation set) {
+        LogicalOperator left = push(set.left());
+        LogicalOperator right = push(set.right());
+        return left == set.left() && right == set.right()
+                ? set
+                : new LogicalSetOperation(set.operation(), left, right);
+    }
+
+
 
     private LogicalOperator pushLimit(LogicalLimit limit) {
         LogicalOperator child = push(limit.child());
@@ -155,7 +181,8 @@ final class FilterPushdown {
             case BoundBetweenExpression between -> new BoundBetweenExpression(
                     substituteProjection(between.input(), projectionExpressions),
                     substituteProjection(between.lower(), projectionExpressions),
-                    substituteProjection(between.upper(), projectionExpressions)
+                    substituteProjection(between.upper(), projectionExpressions),
+                    between.negated()
             );
             case BoundBinaryExpression binary -> new BoundBinaryExpression(
                     substituteProjection(binary.left(), projectionExpressions),
@@ -164,6 +191,8 @@ final class FilterPushdown {
                     binary.logicalType()
             );
             case BoundCaseExpression caseExpression -> substituteProjectionCase(caseExpression, projectionExpressions);
+            case BoundNullCheckExpression nullCheck -> new BoundNullCheckExpression(
+                    substituteProjection(nullCheck.expression(), projectionExpressions), nullCheck.negated());
             case BoundCastExpression cast -> new BoundCastExpression(
                     substituteProjection(cast.child(), projectionExpressions),
                     cast.logicalType()
@@ -231,6 +260,7 @@ final class FilterPushdown {
                     scopeOf(binary.right(), leftColumnCount, rightColumnCount)
             );
             case BoundCaseExpression caseExpression -> scopeOfCase(caseExpression, leftColumnCount, rightColumnCount);
+            case BoundNullCheckExpression nullCheck -> scopeOf(nullCheck.expression(), leftColumnCount, rightColumnCount);
             case BoundCastExpression cast -> scopeOf(cast.child(), leftColumnCount, rightColumnCount);
             case BoundColumnRefExpression column -> columnScope(column.ordinal(), leftColumnCount, rightColumnCount);
             case BoundExistsSubqueryExpression ignored -> PredicateScope.MIXED;
@@ -304,7 +334,8 @@ final class FilterPushdown {
             case BoundBetweenExpression between -> new BoundBetweenExpression(
                     rewriteForJoinSide(between.input(), leftColumnCount),
                     rewriteForJoinSide(between.lower(), leftColumnCount),
-                    rewriteForJoinSide(between.upper(), leftColumnCount)
+                    rewriteForJoinSide(between.upper(), leftColumnCount),
+                    between.negated()
             );
             case BoundBinaryExpression binary -> new BoundBinaryExpression(
                     rewriteForJoinSide(binary.left(), leftColumnCount),
@@ -313,6 +344,8 @@ final class FilterPushdown {
                     binary.logicalType()
             );
             case BoundCaseExpression caseExpression -> rewriteCaseForJoinSide(caseExpression, leftColumnCount);
+            case BoundNullCheckExpression nullCheck -> new BoundNullCheckExpression(
+                    rewriteForJoinSide(nullCheck.expression(), leftColumnCount), nullCheck.negated());
             case BoundCastExpression cast -> new BoundCastExpression(
                     rewriteForJoinSide(cast.child(), leftColumnCount),
                     cast.logicalType()
@@ -374,6 +407,7 @@ final class FilterPushdown {
                     || containsSubquery(between.upper());
             case BoundBinaryExpression binary -> containsSubquery(binary.left()) || containsSubquery(binary.right());
             case BoundCaseExpression caseExpression -> containsSubqueryCase(caseExpression);
+            case BoundNullCheckExpression nullCheck -> containsSubquery(nullCheck.expression());
             case BoundCastExpression cast -> containsSubquery(cast.child());
             case BoundColumnRefExpression ignored -> false;
             case BoundExistsSubqueryExpression ignored -> true;
@@ -436,6 +470,14 @@ final class FilterPushdown {
         return switch (operator) {
             case LogicalAggregate aggregate -> aggregate.selectList().size();
             case LogicalDependentJoin join -> outputColumnCount(join.child()) + 1;
+            case LogicalCreateTable ignored -> 0;
+            case LogicalDropTable ignored -> 0;
+            case LogicalCreateIndex ignored -> 0;
+            case LogicalSetOperation set -> outputColumnCount(set.left());
+            case LogicalDropIndex ignored -> 0;
+            case LogicalInsert ignored -> 0;
+            case LogicalDelete ignored -> 0;
+            case LogicalUpdate ignored -> 0;
             case LogicalExplain ignored -> 1;
             case LogicalFilter filter -> outputColumnCount(filter.child());
             case LogicalGet get -> get.projectedOrdinals().size();

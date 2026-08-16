@@ -1,0 +1,1 @@
+package dev.trentdb.planner.logical; import dev.trentdb.planner.BoundDeleteStatement; public record LogicalDelete(BoundDeleteStatement statement) implements LogicalOperator { @Override public LogicalOperatorType type() { return LogicalOperatorType.LOGICAL_DELETE; } }
